@@ -1,0 +1,333 @@
+/* ============================================================
+   SeinARTS Framework — Documentation Theme
+
+   Professional dark-first palette inspired by RTS command interfaces.
+   Colors evoke the tactical clarity of Company of Heroes briefing screens.
+   ============================================================ */
+
+/* --- Color Tokens --- */
+:root {
+  /* Brand palette */
+  --sein-gold:        #D4A843;
+  --sein-gold-light:  #E8C96A;
+  --sein-gold-dim:    #A07D2E;
+  --sein-blue:        #4A9ED6;
+  --sein-blue-light:  #7BB8E0;
+  --sein-red:         #D44A4A;
+  --sein-green:       #5CB85C;
+  --sein-surface:     #1A1D23;
+  --sein-surface-alt: #22262E;
+  --sein-border:      #2E3440;
+  --sein-text:        #D8DEE9;
+  --sein-text-dim:    #8892A0;
+
+  /* Material overrides */
+  --md-primary-fg-color:        var(--sein-gold);
+  --md-primary-fg-color--light: var(--sein-gold-light);
+  --md-primary-fg-color--dark:  var(--sein-gold-dim);
+  --md-accent-fg-color:         var(--sein-blue);
+  --md-accent-fg-color--transparent: rgba(74, 158, 214, 0.12);
+}
+
+/* --- Dark Scheme (Default) --- */
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color:       var(--sein-surface);
+  --md-default-fg-color:       var(--sein-text);
+  --md-default-fg-color--light: var(--sein-text-dim);
+  --md-code-bg-color:          var(--sein-surface-alt);
+  --md-typeset-a-color:        var(--sein-blue);
+  --md-primary-fg-color:       var(--sein-gold);
+  --md-accent-fg-color:        var(--sein-blue);
+}
+
+/* --- Light Scheme --- */
+[data-md-color-scheme="seinarts-light"] {
+  --md-default-bg-color:       #F8F9FB;
+  --md-default-fg-color:       #1E2128;
+  --md-default-fg-color--light: #5A6270;
+  --md-code-bg-color:          #ECEEF2;
+  --md-typeset-a-color:        #2E7BB5;
+  --md-primary-fg-color:       #8B6914;
+  --md-accent-fg-color:        #2E7BB5;
+}
+
+/* --- Header --- */
+.md-header {
+  background: linear-gradient(135deg, #12141A 0%, #1A1D23 50%, #1E2230 100%);
+  border-bottom: 1px solid var(--sein-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.md-header__title {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Gold accent line under header */
+.md-header::after {
+  content: "";
+  display: block;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--sein-gold-dim) 20%,
+    var(--sein-gold) 50%,
+    var(--sein-gold-dim) 80%,
+    transparent 100%
+  );
+}
+
+/* --- Navigation Tabs --- */
+.md-tabs {
+  background: #12141A;
+  border-bottom: 1px solid var(--sein-border);
+}
+
+.md-tabs__link--active,
+.md-tabs__link:hover {
+  color: var(--sein-gold) !important;
+}
+
+/* --- Sidebar --- */
+.md-sidebar__scrollwrap {
+  scrollbar-color: var(--sein-border) transparent;
+}
+
+.md-nav__link--active {
+  color: var(--sein-gold) !important;
+  font-weight: 600;
+}
+
+.md-nav__link:hover {
+  color: var(--sein-blue-light) !important;
+}
+
+/* --- Content --- */
+.md-typeset h1 {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--sein-gold);
+  border-bottom: 2px solid var(--sein-border);
+  padding-bottom: 0.4em;
+}
+
+.md-typeset h2 {
+  font-weight: 700;
+  color: var(--md-default-fg-color);
+  border-bottom: 1px solid var(--sein-border);
+  padding-bottom: 0.3em;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  color: var(--sein-gold-light);
+}
+
+/* --- Code Blocks --- */
+.md-typeset code {
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  font-size: 0.85em;
+}
+
+.md-typeset pre > code {
+  border-radius: 8px;
+  border: 1px solid var(--sein-border);
+}
+
+.highlight .hll {
+  background-color: rgba(212, 168, 67, 0.12);
+}
+
+/* Line numbers */
+.md-typeset .linenums ol li {
+  border-left: 2px solid var(--sein-border);
+}
+
+.md-typeset .linenums ol li:hover {
+  border-left-color: var(--sein-gold);
+}
+
+/* --- Admonitions --- */
+/* Custom "sim" admonition for simulation-layer notes */
+.md-typeset .admonition.sim,
+.md-typeset details.sim {
+  border-color: var(--sein-gold);
+}
+
+.md-typeset .sim > .admonition-title,
+.md-typeset .sim > summary {
+  background-color: rgba(212, 168, 67, 0.1);
+}
+
+.md-typeset .sim > .admonition-title::before,
+.md-typeset .sim > summary::before {
+  background-color: var(--sein-gold);
+  -webkit-mask-image: var(--md-admonition-icon--abstract);
+          mask-image: var(--md-admonition-icon--abstract);
+}
+
+/* Custom "render" admonition for render-layer notes */
+.md-typeset .admonition.render,
+.md-typeset details.render {
+  border-color: var(--sein-blue);
+}
+
+.md-typeset .render > .admonition-title,
+.md-typeset .render > summary {
+  background-color: rgba(74, 158, 214, 0.1);
+}
+
+.md-typeset .render > .admonition-title::before,
+.md-typeset .render > summary::before {
+  background-color: var(--sein-blue);
+  -webkit-mask-image: var(--md-admonition-icon--info);
+          mask-image: var(--md-admonition-icon--info);
+}
+
+/* --- Tables --- */
+.md-typeset table:not([class]) {
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--sein-border);
+}
+
+.md-typeset table:not([class]) th {
+  background: var(--sein-surface-alt);
+  color: var(--sein-gold);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75em;
+  letter-spacing: 0.06em;
+}
+
+.md-typeset table:not([class]) tr:hover td {
+  background: rgba(74, 158, 214, 0.04);
+}
+
+/* --- Footer --- */
+.md-footer {
+  background: #12141A;
+  border-top: 1px solid var(--sein-border);
+}
+
+/* --- Search --- */
+.md-search__input {
+  border-radius: 8px;
+}
+
+/* --- Misc --- */
+.md-typeset .md-button--primary {
+  background-color: var(--sein-gold);
+  border-color: var(--sein-gold);
+  color: #12141A;
+  font-weight: 700;
+}
+
+.md-typeset .md-button--primary:hover {
+  background-color: var(--sein-gold-light);
+  border-color: var(--sein-gold-light);
+}
+
+/* Blueprint-style callout boxes */
+.md-typeset .bp-node {
+  background: var(--sein-surface-alt);
+  border: 1px solid var(--sein-border);
+  border-left: 4px solid var(--sein-blue);
+  border-radius: 6px;
+  padding: 1em 1.2em;
+  margin: 1em 0;
+}
+
+.md-typeset .bp-node code {
+  color: var(--sein-blue-light);
+}
+
+/* Tag pills */
+.md-typeset .tag {
+  display: inline-block;
+  background: var(--sein-surface-alt);
+  border: 1px solid var(--sein-border);
+  border-radius: 12px;
+  padding: 0.1em 0.6em;
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.md-typeset .tag.sim { color: var(--sein-gold); border-color: var(--sein-gold-dim); }
+.md-typeset .tag.render { color: var(--sein-blue); border-color: var(--sein-blue); }
+.md-typeset .tag.bp { color: var(--sein-green); border-color: var(--sein-green); }
+
+/* Hero section for landing page */
+.sein-hero {
+  text-align: center;
+  padding: 3rem 1rem;
+  margin-bottom: 2rem;
+}
+
+.sein-hero h1 {
+  font-size: 2.8rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--sein-gold) 0%, var(--sein-gold-light) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  border: none;
+  padding: 0;
+  margin-bottom: 0.5rem;
+}
+
+.sein-hero p {
+  font-size: 1.2rem;
+  color: var(--sein-text-dim);
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+/* Feature cards grid */
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.2rem;
+  margin: 2rem 0;
+}
+
+.feature-card {
+  background: var(--sein-surface-alt);
+  border: 1px solid var(--sein-border);
+  border-radius: 10px;
+  padding: 1.5rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.feature-card:hover {
+  border-color: var(--sein-gold-dim);
+  transform: translateY(-2px);
+}
+
+.feature-card h3 {
+  color: var(--sein-gold);
+  margin-top: 0;
+  font-size: 1.1rem;
+  border: none;
+  padding: 0;
+}
+
+.feature-card p {
+  color: var(--sein-text-dim);
+  font-size: 0.9rem;
+  margin-bottom: 0;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+  .sein-hero h1 {
+    font-size: 2rem;
+  }
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
+}

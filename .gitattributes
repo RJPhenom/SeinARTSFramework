@@ -1,0 +1,6 @@
+# UE binary assets
+*.uasset binary
+*.umap binary
+
+# Auto-normalize line endings for text files
+* text=auto

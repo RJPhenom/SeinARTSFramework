@@ -1,0 +1,27 @@
+# UE build artifacts
+Binaries/
+Intermediate/
+DerivedDataCache/
+Saved/
+
+# VS / Rider
+.vs/
+.idea/
+*.sln
+*.vcxproj*
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# MkDocs build output
+docs/site/
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local state
+.claude/
+CLAUDE.md
+PLAN.md

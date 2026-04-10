@@ -1,0 +1,82 @@
+/**
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinPlayerStart.h
+ * @brief   RTS player start with player slot assignment and per-faction spawn entity.
+ */
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/PlayerStart.h"
+#include "Core/SeinPlayerID.h"
+#include "Core/SeinFactionID.h"
+#include "SeinPlayerStart.generated.h"
+
+class ASeinActor;
+
+/**
+ * RTS-aware player start point.
+ *
+ * Each SeinPlayerStart represents one player slot on the map. The GameMode
+ * matches connecting players to starts by PlayerSlot, then spawns the
+ * faction's SpawnEntity at this location.
+ *
+ * ## Editor Workflow
+ * Place one SeinPlayerStart per player position in the map. Set PlayerSlot
+ * to 1, 2, 3, etc. The GameMode assigns connecting players to slots in
+ * order (or via lobby/matchmaker assignment).
+ *
+ * ## SpawnEntity
+ * The SpawnEntity is an ASeinActor Blueprint that represents the faction's
+ * starting presence (e.g., a headquarters building). Its BeginPlay / abilities
+ * can trigger any game-start logic the designer wants (spawn workers, grant
+ * starting tech, etc.). This keeps start-of-game setup entirely in Blueprint.
+ *
+ * ## Networked / Lobby Use
+ * For matchmaking or skirmish lobbies, the lobby system assigns each player
+ * a target slot index before travel. The GameMode's HandleStartingNewPlayer
+ * then matches the player to the SeinPlayerStart with the corresponding
+ * PlayerSlot value.
+ */
+UCLASS(Blueprintable)
+class SEINARTSFRAMEWORK_API ASeinPlayerStart : public APlayerStart
+{
+	GENERATED_BODY()
+
+public:
+	ASeinPlayerStart(const FObjectInitializer& ObjectInitializer);
+
+	// ========== Slot Configuration ==========
+
+	/**
+	 * Which player slot this start belongs to (1-based).
+	 * The GameMode assigns players to starts by matching this value.
+	 * 0 = unassigned / available to any player.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|PlayerStart", meta = (ClampMin = "0", ClampMax = "8"))
+	int32 PlayerSlot = 0;
+
+	/**
+	 * Faction ID for this start position.
+	 * Overrides the GameMode's DefaultFactionID when set (Value != 0).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|PlayerStart")
+	FSeinFactionID FactionID;
+
+	/**
+	 * Team index for this start position.
+	 * Used for team-based game modes (FFA = each player unique team).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|PlayerStart", meta = (ClampMin = "0"))
+	uint8 TeamID = 0;
+
+	/**
+	 * The entity to spawn at this start location when a player claims this slot.
+	 * Typically a headquarters / base building Blueprint.
+	 * The spawned entity's BeginPlay can trigger any start-of-game logic
+	 * (spawn workers, grant tech, set rally points, etc.).
+	 * Leave null to skip spawn entity (player gets only camera + resources).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|PlayerStart")
+	TSubclassOf<ASeinActor> SpawnEntity;
+};

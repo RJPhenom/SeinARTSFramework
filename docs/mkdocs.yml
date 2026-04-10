@@ -1,0 +1,123 @@
+site_name: SeinARTS Framework
+site_description: A deterministic lockstep RTS framework for Unreal Engine 5
+site_url: https://docs.seinarts.dev
+repo_url: https://github.com/RJPhenom/SeinARTSFramework
+repo_name: SeinARTSFramework
+edit_uri: edit/main/docs/docs/
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  font:
+    text: Inter
+    code: JetBrains Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: seinarts-light
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/sword-cross
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+plugins:
+  - search
+  - tags
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/RJPhenom/SeinARTSFramework
+  generator: false
+
+extra_css:
+  - stylesheets/custom.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Architecture: getting-started/architecture.md
+  - Guides:
+      - Building UI with the Toolkit: guides/ui-toolkit.md
+      - Creating a Unit Info Panel: guides/unit-info-panel.md
+      - Selection & Control Groups: guides/selection.md
+  - Core Concepts:
+      - Sim/Render Separation: concepts/sim-render.md
+      - Entities & Components: concepts/entities.md
+      - Abilities: concepts/abilities.md
+      - Fixed-Point Math: concepts/fixed-point.md
+  - Reference:
+      - Overview: reference/index.md
+      - UI Toolkit Nodes: reference/ui-toolkit.md
+      - Entity Nodes: reference/entity.md
+      - Attribute & Modifier Nodes: reference/attributes.md
+      - Ability Nodes: reference/abilities.md
+      - Production & Tech Nodes: reference/production.md
+      - Navigation Nodes: reference/navigation.md
