@@ -1,15 +1,72 @@
-{% extends "base.html" %}
+{% extends "base.html" %} {% block announce %}
+<style>
+  .md-announce {
+    background: linear-gradient(
+      90deg,
+      rgba(212, 168, 67, 0.15) 0%,
+      rgba(74, 158, 214, 0.15) 100%
+    );
+    border-bottom: 1px solid rgba(212, 168, 67, 0.2);
+  }
+  .md-announce__inner {
+    font-size: 0.8rem;
+    color: var(--sein-text-dim);
+  }
+</style>
+SeinARTS Framework is in active development &mdash;
+<a href="https://github.com/RJPhenom/SeinARTSFramework">Star on GitHub</a>
+{% endblock %} {% block header %}
+<header class="md-header" data-md-component="header" data-md-state="shadow">
+  <nav
+    class="md-header__inner md-grid"
+    aria-label="{{ lang.t('header.title') }}"
+  >
+    <!-- Mobile drawer toggle -->
+    <label class="md-header__button md-icon" for="__drawer">
+      {% include ".icons/material/menu.svg" %}
+      <span class="md-visually-hidden">{{ lang.t("nav.open") }}</span>
+    </label>
 
-{% block announce %}
-  <style>
-    .md-announce {
-      background: linear-gradient(90deg, rgba(212, 168, 67, 0.15) 0%, rgba(74, 158, 214, 0.15) 100%);
-      border-bottom: 1px solid rgba(212, 168, 67, 0.2);
-    }
-    .md-announce__inner {
-      font-size: 0.8rem;
-      color: var(--sein-text-dim);
-    }
-  </style>
-  SeinARTS Framework is in active development &mdash; <a href="https://github.com/YOUR_USERNAME/SeinARTSFramework">Star on GitHub</a>
+    <!-- Logo — clickable home link -->
+    <a
+      href="{{ nav.homepage.url | url }}"
+      title="{{ config.site_name | e }}"
+      class="md-header__button md-logo"
+      aria-label="{{ config.site_name }}"
+    >
+      {% include "partials/logo.html" %}
+    </a>
+
+    <!-- Inline nav links (replaces site title) -->
+    <nav class="md-header__inline-nav" aria-label="Site navigation">
+      {% for nav_item in nav %} {% if nav_item.title != "Home" %}
+      <a
+        href="{{ (nav_item.url or (nav_item.children[0].url if nav_item.children else '#')) | url }}"
+        class="md-header-inline__link{% if nav_item.active %} md-header-inline__link--active{% endif %}"
+      >
+        {{ nav_item.title }}
+      </a>
+      {% endif %} {% endfor %}
+    </nav>
+
+    <!-- Spacer pushes controls to the right -->
+    <div class="md-header__spacer"></div>
+
+    <!-- Search -->
+    <label class="md-header__button md-icon" for="__search">
+      {% include ".icons/material/magnify.svg" %}
+      <span class="md-visually-hidden">{{ lang.t("search.placeholder") }}</span>
+    </label>
+    {% include "partials/search.html" %}
+
+    <!-- Palette toggle -->
+    {% if not config.theme.palette is mapping %} {% include
+    "partials/palette.html" %} {% endif %}
+
+    <!-- Repository -->
+    {% if config.repo_url %}
+    <div class="md-header__source">{% include "partials/source.html" %}</div>
+    {% endif %}
+  </nav>
+</header>
 {% endblock %}

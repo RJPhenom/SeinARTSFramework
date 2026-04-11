@@ -6,13 +6,18 @@ hide:
 
 <div class="sein-hero" markdown>
 
-# SeinARTS Framework
+<img src="assets/images/SeinARTSWordmark.svg" alt="SeinARTS Framework" class="sein-hero-wordmark sein-hero-wordmark--dark">
+<img src="assets/images/SeinARTSWordmarkDark.svg" alt="" aria-hidden="true" class="sein-hero-wordmark sein-hero-wordmark--light">
 
-Deterministic lockstep RTS framework for Unreal Engine 5.
-Build Company of Heroes-scale games with Blueprint-first design.
+<p class="sein-hero-byline">
+  <span class="sein-hero-byline__line">Deterministic lockstep RTS framework for</span>
+  <span class="sein-hero-byline__line">Unreal Engine 5.</span>
+</p>
 
-[Get Started](getting-started/index.md){ .md-button .md-button--primary }
-[View on GitHub](https://github.com/YOUR_USERNAME/SeinARTSFramework){ .md-button }
+<div class="sein-hero-buttons">
+  <a href="getting-started/index.md" class="md-button md-button--primary">Get Started</a>
+  <a href="https://github.com/RJPhenom/SeinARTSFramework" class="md-button sein-hero-button-secondary">View on GitHub</a>
+</div>
 
 </div>
 
@@ -54,18 +59,14 @@ ViewModel-based data binding for RTS interfaces. Entity, player, and selection V
 
 ## Modules
 
-| Module | Purpose | Status |
-|--------|---------|--------|
-| **SeinARTSCore** | Fixed-point math, vectors, quaternions, transforms, PRNG | Complete |
+| Module                 | Purpose                                                          | Status   |
+| ---------------------- | ---------------------------------------------------------------- | -------- |
+| **SeinARTSCore**       | Fixed-point math, vectors, quaternions, transforms, PRNG         | Complete |
 | **SeinARTSCoreEntity** | ECS, sim loop, abilities, effects, modifiers, production, squads | Complete |
-| **SeinARTSNavigation** | Deterministic grid pathfinding, flowfields, steering | Complete |
-| **SeinARTSUIToolkit** | Generic ViewModel-based UI data binding and utilities | Complete |
-| **SeinARTSEditor** | Content Browser factory, class picker, editor icons | Complete |
-| **SeinARTSFramework** | Player controller, camera, HUD, input bindings | Complete |
-
-## Inspiration
-
-Built with the design sensibility of **Company of Heroes** and **Dawn of War** by Relic Entertainment. Squad-based and individual units, cover systems, terrain types, veterancy, tech upgrades, and resource capture points.
+| **SeinARTSNavigation** | Deterministic grid pathfinding, flowfields, steering             | Complete |
+| **SeinARTSUIToolkit**  | Generic ViewModel-based UI data binding and utilities            | Complete |
+| **SeinARTSEditor**     | Content Browser factory, class picker, editor icons              | Complete |
+| **SeinARTSFramework**  | Player controller, camera, HUD, input bindings                   | Complete |
 
 ## Quick Links
 

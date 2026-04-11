@@ -1,16 +1,13 @@
 /**
- * ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
- * ██░▄▄▄░█░▄▄██▄██░▄▄▀█░▄▄▀██░▄▄▀█▄▄░▄▄██░▄▄▄░
- * ██▄▄▄▀▀█░▄▄██░▄█░██░█░▀▀░██░▀▀▄███░████▄▄▄▀▀
- * ██░▀▀▀░█▄▄▄█▄▄▄█▄██▄█░██░██░██░███░████░▀▀▀░
- * ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ * SeinARTS Framework 
  * Copyright (c) 2026 Phenom Studios, Inc.
  * 
- * @file:FixedPoint.h
+ * @file:		FixedPoint.h
  * @date:		1/16/2026
  * @author:		RJ Macklem
  * @brief:		Deterministic fixed-point number (32.32 format) for lockstep 
  * 				simulation. Provides deterministic arithmetic operations.
+ * @disclaimer: This code was generated in part by an AI language model.
  */
  
 #pragma once
@@ -158,17 +155,44 @@ public:
 	FORCEINLINE static FFixedPoint FromFloat(float FloatValue) { return FFixedPoint(static_cast<int64>(FloatValue * 4294967296.0)); }
 
 	// Conversion methods
+	// ===========================================================================================
+
+	/**
+	 * To int32. 
+	 * 
+	 * Be aware of potential overflow if the fixed-point value exceeds the representable range of int32.
+	 */
 	FORCEINLINE int32 ToInt() const { return static_cast<int32>(Value >> 32); }
+
+	/**
+	 * To int64. 
+	 * 
+	 * Be aware of potential overflow if the fixed-point value exceeds the representable range of int64.
+	 */
 	FORCEINLINE int64 ToInt64() const { return Value >> 32; }
 	
 	/**
+	 * To float.
+	 * 
 	 * WARNING: NON-DETERMINISTIC! Only use for visualization/debugging.
 	 * DO NOT use in simulation logic - results may vary across platforms.
 	 */
 	FORCEINLINE float ToFloat() const { return static_cast<float>(Value) / 4294967296.0f; }
+
+	/**
+	 * To string. 
+	 * 
+	 * WARNING: NON-DETERMINISTIC! Only use for visualization/debugging.
+	 * DO NOT use in simulation logic - results may vary across platforms.
+	 */
 	FORCEINLINE FString ToString() const { return FString::Printf(TEXT("%.6f"), ToFloat()); }
 
 	// Comparison utilities
+	// ===========================================================================================
+
+	/**
+	 * Checks if this fixed-point value is nearly equal to another within a tolerance.
+	 */
 	FORCEINLINE bool IsNearlyEqual(FFixedPoint Other, FFixedPoint Tolerance = FFixedPoint::Epsilon) const
 	{
 		FFixedPoint Diff = *this - Other;
