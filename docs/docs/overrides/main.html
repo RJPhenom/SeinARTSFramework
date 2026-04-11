@@ -39,7 +39,7 @@ SeinARTS Framework is in active development &mdash;
 
     <!-- Inline nav links (replaces site title) -->
     <nav class="md-header__inline-nav" aria-label="Site navigation">
-      {% for nav_item in nav %} {% if nav_item.title != "Home" %}
+      {% for nav_item in nav %} {% if nav_item != nav.homepage %}
       <a
         href="{{ (nav_item.url or (nav_item.children[0].url if nav_item.children else '#')) | url }}"
         class="md-header-inline__link{% if nav_item.active %} md-header-inline__link--active{% endif %}"
