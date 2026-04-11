@@ -1,16 +1,18 @@
 {% extends "base.html" %} {% block announce %}
 <style>
-  .md-announce {
-    background: linear-gradient(
-      90deg,
-      rgba(212, 168, 67, 0.15) 0%,
-      rgba(74, 158, 214, 0.15) 100%
-    );
-    border-bottom: 1px solid rgba(212, 168, 67, 0.2);
+  .md-banner {
+    background: #000;
+    border-bottom: 1px solid var(--sein-border);
   }
-  .md-announce__inner {
-    font-size: 0.8rem;
-    color: var(--sein-text-dim);
+  .md-banner__inner {
+    font-size: 0.67rem;
+    line-height: 1.2;
+    color: rgba(255, 255, 255, 0.82);
+    padding-top: 0.35rem;
+    padding-bottom: 0.35rem;
+  }
+  .md-banner__inner a {
+    color: var(--sein-blue);
   }
 </style>
 SeinARTS Framework is in active development &mdash;

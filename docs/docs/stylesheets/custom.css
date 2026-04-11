@@ -57,6 +57,19 @@
   --md-accent-fg-color: #2e7bb5;
 }
 
+/* Underlying page canvas for mobile overscroll / area beyond footer */
+html,
+body {
+  background: #000;
+}
+
+/* Keep the visible docs surfaces on the normal theme background */
+.md-container,
+.md-main,
+.md-main__inner {
+  background: var(--md-default-bg-color);
+}
+
 /* --- Header --- */
 .md-header {
   background: #000;
