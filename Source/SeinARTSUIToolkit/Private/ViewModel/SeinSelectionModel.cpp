@@ -7,7 +7,7 @@
 #include "ViewModel/SeinSelectionModel.h"
 #include "ViewModel/SeinEntityViewModel.h"
 #include "Core/SeinUISubsystem.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Actor/SeinActor.h"
 #include "Engine/World.h"
 
@@ -19,7 +19,7 @@ void USeinSelectionModel::Initialize(USeinUISubsystem* InOwningSubsystem)
 	UWorld* World = InOwningSubsystem ? InOwningSubsystem->GetWorld() : nullptr;
 	if (World)
 	{
-		CachedPlayerController = Cast<ASeinARTSPlayerController>(World->GetFirstPlayerController());
+		CachedPlayerController = Cast<ASeinPlayerController>(World->GetFirstPlayerController());
 		if (CachedPlayerController.IsValid())
 		{
 			CachedPlayerController->OnSelectionChanged.AddDynamic(this, &USeinSelectionModel::HandleSelectionChanged);
@@ -53,7 +53,7 @@ void USeinSelectionModel::RebuildFromController()
 		return;
 	}
 
-	ASeinARTSPlayerController* PC = CachedPlayerController.Get();
+	ASeinPlayerController* PC = CachedPlayerController.Get();
 	USeinUISubsystem* Subsystem = OwningSubsystem.Get();
 
 	CachedFocusIndex = PC->ActiveFocusIndex;

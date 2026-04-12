@@ -9,7 +9,7 @@ This guide covers how selection state flows through the framework — from mouse
 ```mermaid
 sequenceDiagram
     participant Mouse as Player Input
-    participant PC as SeinARTSPlayerController
+    participant PC as SeinPlayerController
     participant SM as SeinSelectionModel
     participant UI as Your Widget
 
@@ -24,7 +24,7 @@ sequenceDiagram
 
 ### Selection State
 
-`ASeinARTSPlayerController` manages the raw selection:
+`ASeinPlayerController` manages the raw selection:
 
 | Property | Type | Description |
 |----------|------|-------------|

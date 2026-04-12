@@ -18,7 +18,7 @@ class USeinActorBridgeSubsystem;
 class USeinSelectionModel;
 class USeinPlayerViewModel;
 class USeinEntityViewModel;
-class ASeinARTSPlayerController;
+class ASeinPlayerController;
 
 /**
  * Base class for SeinARTS UI widgets.
@@ -45,7 +45,7 @@ public:
 
 	/** The local player's SeinARTS player controller. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI")
-	TWeakObjectPtr<ASeinARTSPlayerController> SeinPlayerController;
+	TWeakObjectPtr<ASeinPlayerController> SeinPlayerController;
 
 	/** The simulation world subsystem. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI")

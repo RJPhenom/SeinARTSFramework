@@ -12,7 +12,7 @@
 #include "SeinHUD.generated.h"
 
 class ASeinActor;
-class ASeinARTSPlayerController;
+class ASeinPlayerController;
 class USeinCommandLogSubsystem;
 class UUserWidget;
 
@@ -81,7 +81,7 @@ protected:
 	void DrawCommandDragLine();
 	void DrawCommandLogPanel();
 
-	ASeinARTSPlayerController* GetSeinPlayerController() const;
+	ASeinPlayerController* GetSeinPlayerController() const;
 
 private:
 	bool bMarqueeWasActive = false;

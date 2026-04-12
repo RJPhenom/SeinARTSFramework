@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinARTSPlayerController.h
+ * @file    SeinPlayerController.h
  * @brief   RTS player controller with selection, smart command resolution,
  *          control groups, active focus cycling, and observer command logging.
  */
@@ -12,7 +12,7 @@
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinEntityHandle.h"
 #include "GameplayTagContainer.h"
-#include "SeinARTSPlayerController.generated.h"
+#include "SeinPlayerController.generated.h"
 
 class ASeinActor;
 class ASeinCameraPawn;
@@ -70,12 +70,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FSeinOnMenuPressed);
  * USeinWorldSubsystem::EnqueueCommand().
  */
 UCLASS(Blueprintable)
-class SEINARTSFRAMEWORK_API ASeinARTSPlayerController : public APlayerController
+class SEINARTSFRAMEWORK_API ASeinPlayerController : public APlayerController
 {
 	GENERATED_BODY()
 
 public:
-	ASeinARTSPlayerController();
+	ASeinPlayerController();
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;

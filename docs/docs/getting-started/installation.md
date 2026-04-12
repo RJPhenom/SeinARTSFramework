@@ -65,7 +65,7 @@ In **Project Settings > Maps & Modes**:
 
 ### Player Controller
 
-`ASeinARTSPlayerController` handles:
+`ASeinPlayerController` handles:
 
 - Selection (click, marquee, double-click-select-type)
 - Control groups (Ctrl+0–9 to assign, 0–9 to recall)

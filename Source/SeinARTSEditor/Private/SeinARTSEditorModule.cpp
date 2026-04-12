@@ -11,6 +11,9 @@
 #include "SeinARTSEditorStyle.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "ThumbnailRendering/ThumbnailManager.h"
+#include "Thumbnails/SeinBlueprintThumbnailRenderer.h"
+#include "Engine/Blueprint.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -30,6 +33,12 @@ void FSeinARTSEditorModule::StartupModule()
 			LOCTEXT("SeinARTSAssetCategory", "SeinARTS")
 		);
 	}
+
+	// Register custom thumbnail renderer for SeinARTS Blueprints (color bars)
+	UThumbnailManager::Get().RegisterCustomRenderer(
+		UBlueprint::StaticClass(),
+		USeinBlueprintThumbnailRenderer::StaticClass()
+	);
 }
 
 void FSeinARTSEditorModule::ShutdownModule()
@@ -45,7 +54,7 @@ EAssetTypeCategories::Type FSeinARTSEditorModule::GetAssetCategoryBit()
 
 void FSeinARTSEditorModule::RegisterAssetTypeActions()
 {
-	// Reserved for future asset type actions (custom colors, thumbnails, etc.)
+	// Reserved for future asset type actions
 }
 
 void FSeinARTSEditorModule::UnregisterAssetTypeActions()

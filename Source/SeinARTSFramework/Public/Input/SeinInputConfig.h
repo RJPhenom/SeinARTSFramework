@@ -19,7 +19,7 @@ class UInputMappingContext;
  * used by the RTS player controller and camera pawn.
  *
  * Create an instance of this asset in your content folder and assign it
- * to ASeinARTSPlayerController::InputConfig (or the GameMode's default).
+ * to ASeinPlayerController::InputConfig (or the GameMode's default).
  */
 UCLASS(BlueprintType, Const)
 class SEINARTSFRAMEWORK_API USeinInputConfig : public UDataAsset

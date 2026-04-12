@@ -6,7 +6,7 @@
 
 #include "GameMode/SeinGameMode.h"
 #include "GameMode/SeinPlayerStart.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Player/SeinCameraPawn.h"
 #include "HUD/SeinHUD.h"
 #include "Simulation/SeinWorldSubsystem.h"
@@ -21,7 +21,7 @@
 ASeinGameMode::ASeinGameMode()
 {
 	DefaultPawnClass = ASeinCameraPawn::StaticClass();
-	PlayerControllerClass = ASeinARTSPlayerController::StaticClass();
+	PlayerControllerClass = ASeinPlayerController::StaticClass();
 	HUDClass = ASeinHUD::StaticClass();
 }
 
@@ -108,10 +108,10 @@ void ASeinGameMode::HandleStartingNewPlayer_Implementation(APlayerController* Ne
 {
 	Super::HandleStartingNewPlayer_Implementation(NewPlayer);
 
-	ASeinARTSPlayerController* SeinPC = Cast<ASeinARTSPlayerController>(NewPlayer);
+	ASeinPlayerController* SeinPC = Cast<ASeinPlayerController>(NewPlayer);
 	if (!SeinPC)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SeinGameMode: NewPlayer is not ASeinARTSPlayerController. Skipping sim registration."));
+		UE_LOG(LogTemp, Warning, TEXT("SeinGameMode: NewPlayer is not ASeinPlayerController. Skipping sim registration."));
 		return;
 	}
 

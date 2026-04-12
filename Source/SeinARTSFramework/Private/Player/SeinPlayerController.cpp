@@ -1,10 +1,10 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinARTSPlayerController.cpp
+ * @file    SeinPlayerController.cpp
  * @brief   RTS player controller implementation.
  */
 
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Player/SeinCameraPawn.h"
 #include "Player/SeinSelectionComponent.h"
 #include "Input/SeinInputConfig.h"
@@ -20,7 +20,7 @@
 #include "GameFramework/HUD.h"
 #include "DrawDebugHelpers.h"
 
-ASeinARTSPlayerController::ASeinARTSPlayerController()
+ASeinPlayerController::ASeinPlayerController()
 {
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
@@ -36,7 +36,7 @@ ASeinARTSPlayerController::ASeinARTSPlayerController()
 	}
 }
 
-void ASeinARTSPlayerController::BeginPlay()
+void ASeinPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -50,7 +50,7 @@ void ASeinARTSPlayerController::BeginPlay()
 	}
 }
 
-void ASeinARTSPlayerController::Tick(float DeltaSeconds)
+void ASeinPlayerController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
@@ -62,115 +62,115 @@ void ASeinARTSPlayerController::Tick(float DeltaSeconds)
 
 // ==================== Input Setup ====================
 
-void ASeinARTSPlayerController::SetupInputComponent()
+void ASeinPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
 
 	if (!InputConfig)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SeinARTSPlayerController: No InputConfig assigned. Input will not function."));
+		UE_LOG(LogTemp, Warning, TEXT("SeinPlayerController: No InputConfig assigned. Input will not function."));
 		return;
 	}
 
 	UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(InputComponent);
 	if (!EIC)
 	{
-		UE_LOG(LogTemp, Error, TEXT("SeinARTSPlayerController: InputComponent is not UEnhancedInputComponent. Check project input settings."));
+		UE_LOG(LogTemp, Error, TEXT("SeinPlayerController: InputComponent is not UEnhancedInputComponent. Check project input settings."));
 		return;
 	}
 
 	// Selection
 	if (InputConfig->IA_Select)
 	{
-		EIC->BindAction(InputConfig->IA_Select, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnSelectPressed);
-		EIC->BindAction(InputConfig->IA_Select, ETriggerEvent::Completed, this, &ASeinARTSPlayerController::OnSelectReleased);
+		EIC->BindAction(InputConfig->IA_Select, ETriggerEvent::Started, this, &ASeinPlayerController::OnSelectPressed);
+		EIC->BindAction(InputConfig->IA_Select, ETriggerEvent::Completed, this, &ASeinPlayerController::OnSelectReleased);
 	}
 
 	// Command (fire on release for drag order support)
 	if (InputConfig->IA_Command)
 	{
-		EIC->BindAction(InputConfig->IA_Command, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnCommandStarted);
-		EIC->BindAction(InputConfig->IA_Command, ETriggerEvent::Completed, this, &ASeinARTSPlayerController::OnCommandReleased);
+		EIC->BindAction(InputConfig->IA_Command, ETriggerEvent::Started, this, &ASeinPlayerController::OnCommandStarted);
+		EIC->BindAction(InputConfig->IA_Command, ETriggerEvent::Completed, this, &ASeinPlayerController::OnCommandReleased);
 	}
 
 	// Camera — keyboard pan (WASD / arrows)
 	if (InputConfig->IA_KeyPan)
 	{
-		EIC->BindAction(InputConfig->IA_KeyPan, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraPan);
+		EIC->BindAction(InputConfig->IA_KeyPan, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraPan);
 	}
 	// Camera — keyboard rotate (Q/E)
 	if (InputConfig->IA_KeyRotate)
 	{
-		EIC->BindAction(InputConfig->IA_KeyRotate, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraRotate);
+		EIC->BindAction(InputConfig->IA_KeyRotate, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraRotate);
 	}
 	// Camera — mouse zoom (scroll wheel)
 	if (InputConfig->IA_MouseZoom)
 	{
-		EIC->BindAction(InputConfig->IA_MouseZoom, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraZoom);
+		EIC->BindAction(InputConfig->IA_MouseZoom, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraZoom);
 	}
 	// Camera — keyboard zoom (Z/X)
 	if (InputConfig->IA_KeyZoom)
 	{
-		EIC->BindAction(InputConfig->IA_KeyZoom, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraZoomKeyboard);
+		EIC->BindAction(InputConfig->IA_KeyZoom, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraZoomKeyboard);
 	}
 	// Camera — follow (F)
 	if (InputConfig->IA_FollowCamera)
 	{
-		EIC->BindAction(InputConfig->IA_FollowCamera, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnCameraFollowPressed);
+		EIC->BindAction(InputConfig->IA_FollowCamera, ETriggerEvent::Started, this, &ASeinPlayerController::OnCameraFollowPressed);
 	}
 	// Camera — reset rotation (Backspace)
 	if (InputConfig->IA_ResetCamera)
 	{
-		EIC->BindAction(InputConfig->IA_ResetCamera, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnCameraResetPressed);
+		EIC->BindAction(InputConfig->IA_ResetCamera, ETriggerEvent::Started, this, &ASeinPlayerController::OnCameraResetPressed);
 	}
 	// Camera — MMB pan (chorded in mapping context)
 	if (InputConfig->IA_MousePan)
 	{
-		EIC->BindAction(InputConfig->IA_MousePan, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraMMBPan);
+		EIC->BindAction(InputConfig->IA_MousePan, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraMMBPan);
 	}
 	// Camera — Alt+MMB rotate (chorded in mapping context)
 	if (InputConfig->IA_MouseRotate)
 	{
-		EIC->BindAction(InputConfig->IA_MouseRotate, ETriggerEvent::Triggered, this, &ASeinARTSPlayerController::OnCameraAltRotate);
+		EIC->BindAction(InputConfig->IA_MouseRotate, ETriggerEvent::Triggered, this, &ASeinPlayerController::OnCameraAltRotate);
 	}
 
 	// Ping (Ctrl+MMB)
 	if (InputConfig->IA_Ping)
 	{
-		EIC->BindAction(InputConfig->IA_Ping, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnPingPressed);
+		EIC->BindAction(InputConfig->IA_Ping, ETriggerEvent::Started, this, &ASeinPlayerController::OnPingPressed);
 	}
 
 	// Focus cycling
 	if (InputConfig->IA_CycleFocus)
 	{
-		EIC->BindAction(InputConfig->IA_CycleFocus, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnCycleFocusPressed);
+		EIC->BindAction(InputConfig->IA_CycleFocus, ETriggerEvent::Started, this, &ASeinPlayerController::OnCycleFocusPressed);
 	}
 
 	// Modifiers
 	if (InputConfig->IA_ModifierShift)
 	{
-		EIC->BindAction(InputConfig->IA_ModifierShift, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnModifierShift);
-		EIC->BindAction(InputConfig->IA_ModifierShift, ETriggerEvent::Completed, this, &ASeinARTSPlayerController::OnModifierShift);
+		EIC->BindAction(InputConfig->IA_ModifierShift, ETriggerEvent::Started, this, &ASeinPlayerController::OnModifierShift);
+		EIC->BindAction(InputConfig->IA_ModifierShift, ETriggerEvent::Completed, this, &ASeinPlayerController::OnModifierShift);
 	}
 	if (InputConfig->IA_ModifierCtrl)
 	{
-		EIC->BindAction(InputConfig->IA_ModifierCtrl, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnModifierCtrl);
-		EIC->BindAction(InputConfig->IA_ModifierCtrl, ETriggerEvent::Completed, this, &ASeinARTSPlayerController::OnModifierCtrl);
+		EIC->BindAction(InputConfig->IA_ModifierCtrl, ETriggerEvent::Started, this, &ASeinPlayerController::OnModifierCtrl);
+		EIC->BindAction(InputConfig->IA_ModifierCtrl, ETriggerEvent::Completed, this, &ASeinPlayerController::OnModifierCtrl);
 	}
 	if (InputConfig->IA_ModifierAlt)
 	{
-		EIC->BindAction(InputConfig->IA_ModifierAlt, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnModifierAlt);
-		EIC->BindAction(InputConfig->IA_ModifierAlt, ETriggerEvent::Completed, this, &ASeinARTSPlayerController::OnModifierAlt);
+		EIC->BindAction(InputConfig->IA_ModifierAlt, ETriggerEvent::Started, this, &ASeinPlayerController::OnModifierAlt);
+		EIC->BindAction(InputConfig->IA_ModifierAlt, ETriggerEvent::Completed, this, &ASeinPlayerController::OnModifierAlt);
 	}
 
 	// Control groups (0-9) — bind to individual handler methods since BindAction requires member function pointers
-	using HandlerFn = void (ASeinARTSPlayerController::*)(const FInputActionValue&);
+	using HandlerFn = void (ASeinPlayerController::*)(const FInputActionValue&);
 	static const HandlerFn ControlGroupHandlers[10] = {
-		&ASeinARTSPlayerController::OnControlGroup0, &ASeinARTSPlayerController::OnControlGroup1,
-		&ASeinARTSPlayerController::OnControlGroup2, &ASeinARTSPlayerController::OnControlGroup3,
-		&ASeinARTSPlayerController::OnControlGroup4, &ASeinARTSPlayerController::OnControlGroup5,
-		&ASeinARTSPlayerController::OnControlGroup6, &ASeinARTSPlayerController::OnControlGroup7,
-		&ASeinARTSPlayerController::OnControlGroup8, &ASeinARTSPlayerController::OnControlGroup9,
+		&ASeinPlayerController::OnControlGroup0, &ASeinPlayerController::OnControlGroup1,
+		&ASeinPlayerController::OnControlGroup2, &ASeinPlayerController::OnControlGroup3,
+		&ASeinPlayerController::OnControlGroup4, &ASeinPlayerController::OnControlGroup5,
+		&ASeinPlayerController::OnControlGroup6, &ASeinPlayerController::OnControlGroup7,
+		&ASeinPlayerController::OnControlGroup8, &ASeinPlayerController::OnControlGroup9,
 	};
 
 	for (int32 i = 0; i < InputConfig->IA_ControlGroups.Num() && i < 10; ++i)
@@ -182,14 +182,14 @@ void ASeinARTSPlayerController::SetupInputComponent()
 	}
 
 	// Action slot hotkeys (12 slots for ability/action panel)
-	using ActionSlotFn = void (ASeinARTSPlayerController::*)(const FInputActionValue&);
+	using ActionSlotFn = void (ASeinPlayerController::*)(const FInputActionValue&);
 	static const ActionSlotFn ActionSlotHandlers[12] = {
-		&ASeinARTSPlayerController::OnActionSlot0,  &ASeinARTSPlayerController::OnActionSlot1,
-		&ASeinARTSPlayerController::OnActionSlot2,  &ASeinARTSPlayerController::OnActionSlot3,
-		&ASeinARTSPlayerController::OnActionSlot4,  &ASeinARTSPlayerController::OnActionSlot5,
-		&ASeinARTSPlayerController::OnActionSlot6,  &ASeinARTSPlayerController::OnActionSlot7,
-		&ASeinARTSPlayerController::OnActionSlot8,  &ASeinARTSPlayerController::OnActionSlot9,
-		&ASeinARTSPlayerController::OnActionSlot10, &ASeinARTSPlayerController::OnActionSlot11,
+		&ASeinPlayerController::OnActionSlot0,  &ASeinPlayerController::OnActionSlot1,
+		&ASeinPlayerController::OnActionSlot2,  &ASeinPlayerController::OnActionSlot3,
+		&ASeinPlayerController::OnActionSlot4,  &ASeinPlayerController::OnActionSlot5,
+		&ASeinPlayerController::OnActionSlot6,  &ASeinPlayerController::OnActionSlot7,
+		&ASeinPlayerController::OnActionSlot8,  &ASeinPlayerController::OnActionSlot9,
+		&ASeinPlayerController::OnActionSlot10, &ASeinPlayerController::OnActionSlot11,
 	};
 
 	for (int32 i = 0; i < InputConfig->IA_ActionSlots.Num() && i < 12; ++i)
@@ -203,13 +203,13 @@ void ASeinARTSPlayerController::SetupInputComponent()
 	// Menu / Escape
 	if (InputConfig->IA_Menu)
 	{
-		EIC->BindAction(InputConfig->IA_Menu, ETriggerEvent::Started, this, &ASeinARTSPlayerController::OnMenuKeyPressed);
+		EIC->BindAction(InputConfig->IA_Menu, ETriggerEvent::Started, this, &ASeinPlayerController::OnMenuKeyPressed);
 	}
 }
 
 // ==================== Input Handlers ====================
 
-void ASeinARTSPlayerController::OnSelectPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnSelectPressed(const FInputActionValue& Value)
 {
 	bSelectHeld = true;
 
@@ -223,7 +223,7 @@ void ASeinARTSPlayerController::OnSelectPressed(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnSelectReleased(const FInputActionValue& Value)
+void ASeinPlayerController::OnSelectReleased(const FInputActionValue& Value)
 {
 	bSelectHeld = false;
 
@@ -285,7 +285,7 @@ void ASeinARTSPlayerController::OnSelectReleased(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCommandStarted(const FInputActionValue& Value)
+void ASeinPlayerController::OnCommandStarted(const FInputActionValue& Value)
 {
 	bRMBHeld = true;
 	bIsCommandDragging = false;
@@ -313,7 +313,7 @@ void ASeinARTSPlayerController::OnCommandStarted(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCommandReleased(const FInputActionValue& Value)
+void ASeinPlayerController::OnCommandReleased(const FInputActionValue& Value)
 {
 	bRMBHeld = false;
 
@@ -354,7 +354,7 @@ void ASeinARTSPlayerController::OnCommandReleased(const FInputActionValue& Value
 	bIsCommandDragging = false;
 }
 
-void ASeinARTSPlayerController::OnCameraPan(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraPan(const FInputActionValue& Value)
 {
 	if (ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn()))
 	{
@@ -363,7 +363,7 @@ void ASeinARTSPlayerController::OnCameraPan(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraRotate(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraRotate(const FInputActionValue& Value)
 {
 	if (ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn()))
 	{
@@ -372,7 +372,7 @@ void ASeinARTSPlayerController::OnCameraRotate(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraZoom(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraZoom(const FInputActionValue& Value)
 {
 	if (ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn()))
 	{
@@ -381,7 +381,7 @@ void ASeinARTSPlayerController::OnCameraZoom(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraZoomKeyboard(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraZoomKeyboard(const FInputActionValue& Value)
 {
 	if (ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn()))
 	{
@@ -390,7 +390,7 @@ void ASeinARTSPlayerController::OnCameraZoomKeyboard(const FInputActionValue& Va
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraFollowPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraFollowPressed(const FInputActionValue& Value)
 {
 	ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn());
 	if (!CamPawn)
@@ -418,7 +418,7 @@ void ASeinARTSPlayerController::OnCameraFollowPressed(const FInputActionValue& V
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraResetPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraResetPressed(const FInputActionValue& Value)
 {
 	if (ASeinCameraPawn* CamPawn = Cast<ASeinCameraPawn>(GetPawn()))
 	{
@@ -426,7 +426,7 @@ void ASeinARTSPlayerController::OnCameraResetPressed(const FInputActionValue& Va
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraMMBPan(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraMMBPan(const FInputActionValue& Value)
 {
 	// Block MMB pan while LMB (select) or RMB (command) are held —
 	// those use mouse delta for marquee/formation drag, not camera control.
@@ -442,7 +442,7 @@ void ASeinARTSPlayerController::OnCameraMMBPan(const FInputActionValue& Value)
 	}
 }
 
-void ASeinARTSPlayerController::OnCameraAltRotate(const FInputActionValue& Value)
+void ASeinPlayerController::OnCameraAltRotate(const FInputActionValue& Value)
 {
 	// Block orbit while LMB (select) or RMB (command) are held.
 	if (bSelectHeld || bRMBHeld)
@@ -458,7 +458,7 @@ void ASeinARTSPlayerController::OnCameraAltRotate(const FInputActionValue& Value
 	}
 }
 
-void ASeinARTSPlayerController::OnPingPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnPingPressed(const FInputActionValue& Value)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem)
@@ -514,27 +514,27 @@ void ASeinARTSPlayerController::OnPingPressed(const FInputActionValue& Value)
 	DrawDebugString(World, TextLocation, PingLabel, nullptr, PingColor, PingDisplayTime, true, 1.5f);
 }
 
-void ASeinARTSPlayerController::OnCycleFocusPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnCycleFocusPressed(const FInputActionValue& Value)
 {
 	CycleFocus();
 }
 
-void ASeinARTSPlayerController::OnModifierShift(const FInputActionValue& Value)
+void ASeinPlayerController::OnModifierShift(const FInputActionValue& Value)
 {
 	bShiftHeld = Value.Get<bool>();
 }
 
-void ASeinARTSPlayerController::OnModifierCtrl(const FInputActionValue& Value)
+void ASeinPlayerController::OnModifierCtrl(const FInputActionValue& Value)
 {
 	bCtrlHeld = Value.Get<bool>();
 }
 
-void ASeinARTSPlayerController::OnModifierAlt(const FInputActionValue& Value)
+void ASeinPlayerController::OnModifierAlt(const FInputActionValue& Value)
 {
 	bAltHeld = Value.Get<bool>();
 }
 
-void ASeinARTSPlayerController::HandleControlGroup(int32 GroupIndex)
+void ASeinPlayerController::HandleControlGroup(int32 GroupIndex)
 {
 	if (bCtrlHeld)
 	{
@@ -548,19 +548,19 @@ void ASeinARTSPlayerController::HandleControlGroup(int32 GroupIndex)
 
 // ==================== Action Slots & Menu ====================
 
-void ASeinARTSPlayerController::HandleActionSlot(int32 SlotIndex)
+void ASeinPlayerController::HandleActionSlot(int32 SlotIndex)
 {
 	OnActionSlotPressed.Broadcast(SlotIndex);
 }
 
-void ASeinARTSPlayerController::OnMenuKeyPressed(const FInputActionValue& Value)
+void ASeinPlayerController::OnMenuKeyPressed(const FInputActionValue& Value)
 {
 	OnMenuPressed.Broadcast();
 }
 
 // ==================== Selection ====================
 
-void ASeinARTSPlayerController::SetSelection(const TArray<ASeinActor*>& NewSelection)
+void ASeinPlayerController::SetSelection(const TArray<ASeinActor*>& NewSelection)
 {
 	// Deselect old
 	for (const TWeakObjectPtr<ASeinActor>& Weak : SelectedActors)
@@ -602,7 +602,7 @@ void ASeinARTSPlayerController::SetSelection(const TArray<ASeinActor*>& NewSelec
 	NotifySelectionUpdated();
 }
 
-void ASeinARTSPlayerController::AddToSelection(const TArray<ASeinActor*>& ActorsToAdd)
+void ASeinPlayerController::AddToSelection(const TArray<ASeinActor*>& ActorsToAdd)
 {
 	for (ASeinActor* Actor : ActorsToAdd)
 	{
@@ -635,7 +635,7 @@ void ASeinARTSPlayerController::AddToSelection(const TArray<ASeinActor*>& Actors
 	NotifySelectionUpdated();
 }
 
-void ASeinARTSPlayerController::ToggleSelection(ASeinActor* Actor)
+void ASeinPlayerController::ToggleSelection(ASeinActor* Actor)
 {
 	if (!Actor)
 	{
@@ -669,7 +669,7 @@ void ASeinARTSPlayerController::ToggleSelection(ASeinActor* Actor)
 	AddToSelection({Actor});
 }
 
-void ASeinARTSPlayerController::ClearSelection()
+void ASeinPlayerController::ClearSelection()
 {
 	for (const TWeakObjectPtr<ASeinActor>& Weak : SelectedActors)
 	{
@@ -688,7 +688,7 @@ void ASeinARTSPlayerController::ClearSelection()
 	NotifySelectionUpdated();
 }
 
-void ASeinARTSPlayerController::CycleFocus()
+void ASeinPlayerController::CycleFocus()
 {
 	if (SelectedActors.IsEmpty())
 	{
@@ -709,7 +709,7 @@ void ASeinARTSPlayerController::CycleFocus()
 	OnSelectionChanged.Broadcast();
 }
 
-ASeinActor* ASeinARTSPlayerController::GetFocusedActor() const
+ASeinActor* ASeinPlayerController::GetFocusedActor() const
 {
 	if (ActiveFocusIndex >= 0 && ActiveFocusIndex < SelectedActors.Num())
 	{
@@ -718,7 +718,7 @@ ASeinActor* ASeinARTSPlayerController::GetFocusedActor() const
 	return nullptr;
 }
 
-TArray<ASeinActor*> ASeinARTSPlayerController::GetValidSelectedActors()
+TArray<ASeinActor*> ASeinPlayerController::GetValidSelectedActors()
 {
 	TArray<ASeinActor*> Valid;
 	Valid.Reserve(SelectedActors.Num());
@@ -737,7 +737,7 @@ TArray<ASeinActor*> ASeinARTSPlayerController::GetValidSelectedActors()
 
 // ==================== Control Groups ====================
 
-void ASeinARTSPlayerController::AssignControlGroup(int32 GroupIndex)
+void ASeinPlayerController::AssignControlGroup(int32 GroupIndex)
 {
 	if (GroupIndex < 0 || GroupIndex >= 10)
 	{
@@ -757,7 +757,7 @@ void ASeinARTSPlayerController::AssignControlGroup(int32 GroupIndex)
 	}
 }
 
-void ASeinARTSPlayerController::RecallControlGroup(int32 GroupIndex)
+void ASeinPlayerController::RecallControlGroup(int32 GroupIndex)
 {
 	if (GroupIndex < 0 || GroupIndex >= 10)
 	{
@@ -797,7 +797,7 @@ void ASeinARTSPlayerController::RecallControlGroup(int32 GroupIndex)
 	}
 }
 
-TArray<FSeinEntityHandle> ASeinARTSPlayerController::GetControlGroup(int32 GroupIndex) const
+TArray<FSeinEntityHandle> ASeinPlayerController::GetControlGroup(int32 GroupIndex) const
 {
 	if (GroupIndex < 0 || GroupIndex >= 10)
 	{
@@ -806,7 +806,7 @@ TArray<FSeinEntityHandle> ASeinARTSPlayerController::GetControlGroup(int32 Group
 	return ControlGroups[GroupIndex];
 }
 
-int32 ASeinARTSPlayerController::GetControlGroupCount(int32 GroupIndex) const
+int32 ASeinPlayerController::GetControlGroupCount(int32 GroupIndex) const
 {
 	if (GroupIndex < 0 || GroupIndex >= 10)
 	{
@@ -817,7 +817,7 @@ int32 ASeinARTSPlayerController::GetControlGroupCount(int32 GroupIndex) const
 
 // ==================== Marquee Selection ====================
 
-void ASeinARTSPlayerController::ReceiveMarqueeSelection(const TArray<ASeinActor*>& ActorsInBox)
+void ASeinPlayerController::ReceiveMarqueeSelection(const TArray<ASeinActor*>& ActorsInBox)
 {
 	// Filter to owned entities
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
@@ -854,7 +854,7 @@ void ASeinARTSPlayerController::ReceiveMarqueeSelection(const TArray<ASeinActor*
 
 // ==================== Command Resolution ====================
 
-FGameplayTagContainer ASeinARTSPlayerController::BuildCommandContext_Implementation(
+FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 	ASeinActor* HitActor, const FVector& HitLocation) const
 {
 	FGameplayTagContainer Context;
@@ -900,7 +900,7 @@ FGameplayTagContainer ASeinARTSPlayerController::BuildCommandContext_Implementat
 	return Context;
 }
 
-void ASeinARTSPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASeinActor* TargetActor)
+void ASeinPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASeinActor* TargetActor)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem)
@@ -1028,7 +1028,7 @@ void ASeinARTSPlayerController::IssueSmartCommand(const FVector& WorldLocation, 
 	}
 }
 
-void ASeinARTSPlayerController::IssueSmartCommandEx(
+void ASeinPlayerController::IssueSmartCommandEx(
 	const FVector& WorldLocation, ASeinActor* TargetActor, bool bQueue, const FVector& FormationEnd)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
@@ -1150,7 +1150,7 @@ void ASeinARTSPlayerController::IssueSmartCommandEx(
 
 // ==================== Internal Helpers ====================
 
-bool ASeinARTSPlayerController::TraceUnderCursor(FHitResult& OutHit) const
+bool ASeinPlayerController::TraceUnderCursor(FHitResult& OutHit) const
 {
 	float MouseX, MouseY;
 	if (!GetMousePosition(MouseX, MouseY))
@@ -1172,7 +1172,7 @@ bool ASeinARTSPlayerController::TraceUnderCursor(FHitResult& OutHit) const
 	return GetWorld()->LineTraceSingleByChannel(OutHit, WorldOrigin, TraceEnd, SelectionTraceChannel, Params);
 }
 
-ASeinActor* ASeinARTSPlayerController::GetSeinActorFromHit(const FHitResult& Hit) const
+ASeinActor* ASeinPlayerController::GetSeinActorFromHit(const FHitResult& Hit) const
 {
 	if (!Hit.GetActor())
 	{
@@ -1182,7 +1182,7 @@ ASeinActor* ASeinARTSPlayerController::GetSeinActorFromHit(const FHitResult& Hit
 	return Cast<ASeinActor>(Hit.GetActor());
 }
 
-void ASeinARTSPlayerController::UpdateHover()
+void ASeinPlayerController::UpdateHover()
 {
 	FHitResult Hit;
 	ASeinActor* NewHovered = nullptr;
@@ -1236,7 +1236,7 @@ void ASeinARTSPlayerController::UpdateHover()
 	}
 }
 
-void ASeinARTSPlayerController::UpdateCommandDrag()
+void ASeinPlayerController::UpdateCommandDrag()
 {
 	if (!bRMBHeld)
 	{
@@ -1270,7 +1270,7 @@ void ASeinARTSPlayerController::UpdateCommandDrag()
 	}
 }
 
-void ASeinARTSPlayerController::PurgeStaleSelection()
+void ASeinPlayerController::PurgeStaleSelection()
 {
 	bool bChanged = false;
 
@@ -1295,7 +1295,7 @@ void ASeinARTSPlayerController::PurgeStaleSelection()
 	}
 }
 
-void ASeinARTSPlayerController::LogCameraUpdate()
+void ASeinPlayerController::LogCameraUpdate()
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem || !Subsystem->IsSimulationRunning())
@@ -1355,7 +1355,7 @@ void ASeinARTSPlayerController::LogCameraUpdate()
 	LastLoggedCameraZoom = Zoom;
 }
 
-void ASeinARTSPlayerController::LogSelectionChanged()
+void ASeinPlayerController::LogSelectionChanged()
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem || !Subsystem->IsSimulationRunning())
@@ -1381,13 +1381,13 @@ void ASeinARTSPlayerController::LogSelectionChanged()
 	Subsystem->EnqueueCommand(Cmd);
 }
 
-void ASeinARTSPlayerController::NotifySelectionUpdated()
+void ASeinPlayerController::NotifySelectionUpdated()
 {
 	LogSelectionChanged();
 	OnSelectionChanged.Broadcast();
 }
 
-USeinWorldSubsystem* ASeinARTSPlayerController::GetWorldSubsystem() const
+USeinWorldSubsystem* ASeinPlayerController::GetWorldSubsystem() const
 {
 	if (CachedWorldSubsystem.IsValid())
 	{

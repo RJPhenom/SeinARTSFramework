@@ -22,26 +22,58 @@ void FSeinARTSEditorStyle::Initialize()
 
 	StyleSet = MakeShared<FSlateStyleSet>(FName(TEXT("SeinARTSEditorStyle")));
 
-	// Locate the plugin's Resources directory
+	// Locate the plugin directories
 	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("SeinARTSFramework"));
-	if (Plugin.IsValid())
+	if (!Plugin.IsValid())
 	{
-		StyleSet->SetContentRoot(Plugin->GetBaseDir() / TEXT("Resources") / TEXT("BrandKit"));
+		return;
 	}
 
-	// Class icon (16x16) — shown in Content Browser list view
+	const FString PluginBaseDir = Plugin->GetBaseDir();
+	const FString BrandKitDir = PluginBaseDir / TEXT("Resources") / TEXT("BrandKit");
+	const FString IconsDir = PluginBaseDir / TEXT("Source") / TEXT("SeinARTSEditor") / TEXT("Assets");
+
+	StyleSet->SetContentRoot(BrandKitDir);
+
+	// ==================== Unit (SeinActor) ====================
+
 	StyleSet->Set(
 		"ClassIcon.SeinActor",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTS_GrayClassIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+		new FSlateImageBrush(IconsDir / TEXT("SeinUnitIcon16.png"), FVector2D(16.0f, 16.0f))
 	);
 
-	// Class thumbnail (64x64) — shown in Content Browser tile view
 	StyleSet->Set(
 		"ClassThumbnail.SeinActor",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTS_GrayClassIcon64"), TEXT(".png")), FVector2D(64.0f, 64.0f))
+		new FSlateImageBrush(IconsDir / TEXT("SeinUnitIcon92.png"), FVector2D(92.0f, 92.0f))
 	);
 
-	// Wordmark for dialog headers
+	// ==================== Ability (SeinAbility) ====================
+
+	StyleSet->Set(
+		"ClassIcon.SeinAbility",
+		new FSlateImageBrush(IconsDir / TEXT("SeinAbilityIcon16.png"), FVector2D(16.0f, 16.0f))
+	);
+
+	StyleSet->Set(
+		"ClassThumbnail.SeinAbility",
+		new FSlateImageBrush(IconsDir / TEXT("SeinAbilityIcon92.png"), FVector2D(92.0f, 92.0f))
+	);
+
+	// ==================== Component (UserDefinedStruct) ====================
+
+	// Registered for Slate style lookup; struct thumbnails use the renderer
+	StyleSet->Set(
+		"SeinARTS.ComponentIcon16",
+		new FSlateImageBrush(IconsDir / TEXT("SeinComponentIcon16.png"), FVector2D(16.0f, 16.0f))
+	);
+
+	StyleSet->Set(
+		"SeinARTS.ComponentIcon92",
+		new FSlateImageBrush(IconsDir / TEXT("SeinComponentIcon92.png"), FVector2D(92.0f, 92.0f))
+	);
+
+	// ==================== Branding ====================
+
 	StyleSet->Set(
 		"SeinARTS.Wordmark",
 		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTS_Wordmark_White_Small"), TEXT(".png")), FVector2D(165.0f, 52.0f))

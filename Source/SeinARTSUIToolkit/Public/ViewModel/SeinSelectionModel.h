@@ -14,7 +14,7 @@
 
 class USeinEntityViewModel;
 class USeinUISubsystem;
-class ASeinARTSPlayerController;
+class ASeinPlayerController;
 
 /** Broadcast when the selection or active focus changes. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSelectionModelChanged);
@@ -94,7 +94,7 @@ private:
 	TWeakObjectPtr<USeinUISubsystem> OwningSubsystem;
 
 	/** Cached player controller reference. */
-	TWeakObjectPtr<ASeinARTSPlayerController> CachedPlayerController;
+	TWeakObjectPtr<ASeinPlayerController> CachedPlayerController;
 
 	/** Current selection as entity ViewModels. */
 	UPROPERTY()

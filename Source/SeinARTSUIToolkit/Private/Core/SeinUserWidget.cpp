@@ -11,7 +11,7 @@
 #include "ViewModel/SeinEntityViewModel.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Simulation/SeinActorBridgeSubsystem.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Engine/World.h"
 
 void USeinUserWidget::NativeConstruct()
@@ -26,7 +26,7 @@ void USeinUserWidget::NativeConstruct()
 
 	UISubsystem = World->GetSubsystem<USeinUISubsystem>();
 	WorldSubsystem = World->GetSubsystem<USeinWorldSubsystem>();
-	SeinPlayerController = Cast<ASeinARTSPlayerController>(GetOwningPlayer());
+	SeinPlayerController = Cast<ASeinPlayerController>(GetOwningPlayer());
 }
 
 USeinSelectionModel* USeinUserWidget::GetSelectionModel() const

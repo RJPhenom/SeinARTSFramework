@@ -11,7 +11,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinFactionID.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "SeinGameMode.generated.h"
 
 class ASeinPlayerStart;

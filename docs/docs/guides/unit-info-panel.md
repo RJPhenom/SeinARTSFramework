@@ -20,7 +20,7 @@ The panel binds to the **focused entity** in the selection (the one highlighted 
 3. Set the parent class to `SeinUserWidget`
 
 !!! tip "Why SeinUserWidget?"
-    `SeinUserWidget` auto-caches references to `USeinUISubsystem`, `USeinWorldSubsystem`, and `ASeinARTSPlayerController` on construction. You get `GetSelectionModel()`, `GetLocalPlayerViewModel()`, etc. without any setup.
+    `SeinUserWidget` auto-caches references to `USeinUISubsystem`, `USeinWorldSubsystem`, and `ASeinPlayerController` on construction. You get `GetSelectionModel()`, `GetLocalPlayerViewModel()`, etc. without any setup.
 
 ## Step 2: Layout the UI
 

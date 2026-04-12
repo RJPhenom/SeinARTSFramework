@@ -5,7 +5,7 @@
  */
 
 #include "HUD/SeinHUD.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Debug/SeinCommandLogSubsystem.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
@@ -37,7 +37,7 @@ void ASeinHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
-	ASeinARTSPlayerController* PC = GetSeinPlayerController();
+	ASeinPlayerController* PC = GetSeinPlayerController();
 	if (!PC)
 	{
 		return;
@@ -68,7 +68,7 @@ void ASeinHUD::DrawHUD()
 
 void ASeinHUD::DrawMarqueeBox()
 {
-	const ASeinARTSPlayerController* PC = GetSeinPlayerController();
+	const ASeinPlayerController* PC = GetSeinPlayerController();
 	if (!PC)
 	{
 		return;
@@ -99,7 +99,7 @@ void ASeinHUD::DrawMarqueeBox()
 
 void ASeinHUD::ResolveMarqueeSelection()
 {
-	ASeinARTSPlayerController* PC = GetSeinPlayerController();
+	ASeinPlayerController* PC = GetSeinPlayerController();
 	if (!PC)
 	{
 		return;
@@ -116,7 +116,7 @@ void ASeinHUD::ResolveMarqueeSelection()
 
 void ASeinHUD::DrawCommandDragLine()
 {
-	const ASeinARTSPlayerController* PC = GetSeinPlayerController();
+	const ASeinPlayerController* PC = GetSeinPlayerController();
 	if (!PC)
 	{
 		return;
@@ -271,7 +271,7 @@ void ASeinHUD::DrawCommandLogPanel()
 	}
 }
 
-ASeinARTSPlayerController* ASeinHUD::GetSeinPlayerController() const
+ASeinPlayerController* ASeinHUD::GetSeinPlayerController() const
 {
-	return Cast<ASeinARTSPlayerController>(GetOwningPlayerController());
+	return Cast<ASeinPlayerController>(GetOwningPlayerController());
 }

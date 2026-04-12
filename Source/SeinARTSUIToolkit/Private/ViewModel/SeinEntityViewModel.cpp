@@ -14,7 +14,7 @@
 #include "Components/SeinTagComponent.h"
 #include "Core/SeinPlayerState.h"
 #include "StructUtils/InstancedStruct.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Engine/World.h"
 
 void USeinEntityViewModel::Initialize(FSeinEntityHandle InHandle, USeinWorldSubsystem* InWorldSubsystem)
@@ -220,7 +220,7 @@ ESeinRelation USeinEntityViewModel::GetRelationToLocalPlayer() const
 		return ESeinRelation::Neutral;
 	}
 
-	ASeinARTSPlayerController* PC = Cast<ASeinARTSPlayerController>(World->GetFirstPlayerController());
+	ASeinPlayerController* PC = Cast<ASeinPlayerController>(World->GetFirstPlayerController());
 	if (!PC)
 	{
 		return ESeinRelation::Neutral;

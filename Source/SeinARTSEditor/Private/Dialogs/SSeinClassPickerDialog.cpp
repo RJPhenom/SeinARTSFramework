@@ -1,14 +1,13 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  *
- * @file:		SSeinActorPickerDialog.cpp
+ * @file:		SSeinClassPickerDialog.cpp
  * @date:		3/27/2026
  * @author:		RJ Macklem
- * @brief:		Implementation of the actor class picker dialog.
+ * @brief:		Implementation of the generic class picker dialog.
  */
 
-#include "Dialogs/SSeinActorPickerDialog.h"
-#include "Actor/SeinActor.h"
+#include "Dialogs/SSeinClassPickerDialog.h"
 
 #include "ClassViewerModule.h"
 #include "ClassViewerFilter.h"
@@ -24,40 +23,49 @@
 
 // ==================== Class Filter ====================
 
-class FSeinActorClassFilter : public IClassViewerFilter
+class FSeinClassFilter : public IClassViewerFilter
 {
 public:
+	FSeinClassFilter(UClass* InBaseClass)
+		: FilterBaseClass(InBaseClass)
+	{
+	}
+
 	virtual bool IsClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const UClass* InClass, TSharedRef<FClassViewerFilterFuncs> InFilterFuncs) override
 	{
 		return InClass &&
 			!InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_Hidden) &&
-			InClass->IsChildOf(ASeinActor::StaticClass());
+			InClass->IsChildOf(FilterBaseClass);
 	}
 
 	virtual bool IsUnloadedClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const TSharedRef<const IUnloadedBlueprintData> InUnloadedClassData, TSharedRef<FClassViewerFilterFuncs> InFilterFuncs) override
 	{
-		return InUnloadedClassData->IsChildOf(ASeinActor::StaticClass());
+		return InUnloadedClassData->IsChildOf(FilterBaseClass);
 	}
+
+private:
+	UClass* FilterBaseClass;
 };
 
 // ==================== Widget ====================
 
-void SSeinActorPickerDialog::Construct(const FArguments& InArgs)
+void SSeinClassPickerDialog::Construct(const FArguments& InArgs, UClass* InBaseClass, const FText& InQuickButtonLabel, const FText& InQuickButtonTooltip)
 {
-	SelectedClass = ASeinActor::StaticClass();
+	BaseClass = InBaseClass;
+	SelectedClass = InBaseClass;
 
 	// Class viewer options
 	FClassViewerInitializationOptions Options;
 	Options.Mode = EClassViewerMode::ClassPicker;
 	Options.DisplayMode = EClassViewerDisplayMode::TreeView;
-	Options.ClassFilters.Add(MakeShared<FSeinActorClassFilter>());
+	Options.ClassFilters.Add(MakeShared<FSeinClassFilter>(InBaseClass));
 	Options.bShowUnloadedBlueprints = true;
 	Options.bShowNoneOption = false;
 
 	FClassViewerModule& ClassViewerModule = FModuleManager::LoadModuleChecked<FClassViewerModule>("ClassViewer");
 	TSharedRef<SWidget> ClassViewer = ClassViewerModule.CreateClassViewer(
 		Options,
-		FOnClassPicked::CreateSP(this, &SSeinActorPickerDialog::OnClassPicked)
+		FOnClassPicked::CreateSP(this, &SSeinClassPickerDialog::OnClassPicked)
 	);
 
 	ChildSlot
@@ -94,9 +102,9 @@ void SSeinActorPickerDialog::Construct(const FArguments& InArgs)
 					[
 						SNew(SButton)
 						.HAlign(HAlign_Center)
-						.Text(LOCTEXT("GenericUnit", "Generic Unit"))
-						.ToolTipText(LOCTEXT("GenericUnitTip", "Create a Blueprint based on ASeinActor"))
-						.OnClicked(this, &SSeinActorPickerDialog::OnQuickButtonClicked, static_cast<UClass*>(ASeinActor::StaticClass()))
+						.Text(InQuickButtonLabel)
+						.ToolTipText(InQuickButtonTooltip)
+						.OnClicked(this, &SSeinClassPickerDialog::OnQuickButtonClicked, static_cast<UClass*>(InBaseClass))
 					]
 				]
 			]
@@ -143,7 +151,7 @@ void SSeinActorPickerDialog::Construct(const FArguments& InArgs)
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("OK", "OK"))
-					.OnClicked(this, &SSeinActorPickerDialog::OnOKClicked)
+					.OnClicked(this, &SSeinClassPickerDialog::OnOKClicked)
 				]
 
 				+ SHorizontalBox::Slot()
@@ -151,16 +159,16 @@ void SSeinActorPickerDialog::Construct(const FArguments& InArgs)
 				[
 					SNew(SButton)
 					.Text(LOCTEXT("Cancel", "Cancel"))
-					.OnClicked(this, &SSeinActorPickerDialog::OnCancelClicked)
+					.OnClicked(this, &SSeinClassPickerDialog::OnCancelClicked)
 				]
 			]
 		]
 	];
 }
 
-UClass* SSeinActorPickerDialog::OpenDialog(const FText& InTitle)
+UClass* SSeinClassPickerDialog::OpenDialog(const FText& InTitle, UClass* InBaseClass, const FText& InQuickButtonLabel, const FText& InQuickButtonTooltip)
 {
-	TSharedRef<SSeinActorPickerDialog> Dialog = SNew(SSeinActorPickerDialog);
+	TSharedRef<SSeinClassPickerDialog> Dialog = SNew(SSeinClassPickerDialog, InBaseClass, InQuickButtonLabel, InQuickButtonTooltip);
 
 	TSharedRef<SWindow> Window = SNew(SWindow)
 		.Title(InTitle)
@@ -181,7 +189,7 @@ UClass* SSeinActorPickerDialog::OpenDialog(const FText& InTitle)
 	return nullptr;
 }
 
-FReply SSeinActorPickerDialog::OnQuickButtonClicked(UClass* InClass)
+FReply SSeinClassPickerDialog::OnQuickButtonClicked(UClass* InClass)
 {
 	SelectedClass = InClass;
 	bOKClicked = true;
@@ -194,7 +202,7 @@ FReply SSeinActorPickerDialog::OnQuickButtonClicked(UClass* InClass)
 	return FReply::Handled();
 }
 
-FReply SSeinActorPickerDialog::OnOKClicked()
+FReply SSeinClassPickerDialog::OnOKClicked()
 {
 	bOKClicked = true;
 
@@ -206,7 +214,7 @@ FReply SSeinActorPickerDialog::OnOKClicked()
 	return FReply::Handled();
 }
 
-FReply SSeinActorPickerDialog::OnCancelClicked()
+FReply SSeinClassPickerDialog::OnCancelClicked()
 {
 	bOKClicked = false;
 
@@ -218,7 +226,7 @@ FReply SSeinActorPickerDialog::OnCancelClicked()
 	return FReply::Handled();
 }
 
-void SSeinActorPickerDialog::OnClassPicked(UClass* InChosenClass)
+void SSeinClassPickerDialog::OnClassPicked(UClass* InChosenClass)
 {
 	SelectedClass = InChosenClass;
 }

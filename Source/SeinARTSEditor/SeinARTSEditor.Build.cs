@@ -18,6 +18,7 @@ public class SeinARTSEditor : ModuleRules
             "ClassViewer",
             "Kismet",
             "Projects",
+            "RenderCore",
             "SeinARTSCore",
             "SeinARTSCoreEntity"
         });

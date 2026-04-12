@@ -9,7 +9,7 @@
 
 #include "Factories/SeinActorFactory.h"
 #include "SeinARTSEditorModule.h"
-#include "Dialogs/SSeinActorPickerDialog.h"
+#include "Dialogs/SSeinClassPickerDialog.h"
 #include "Actor/SeinActor.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
@@ -24,8 +24,11 @@ USeinActorFactory::USeinActorFactory()
 
 bool USeinActorFactory::ConfigureProperties()
 {
-	UClass* ChosenClass = SSeinActorPickerDialog::OpenDialog(
-		LOCTEXT("PickParentClass", "Pick Parent Class for SeinARTS Unit")
+	UClass* ChosenClass = SSeinClassPickerDialog::OpenDialog(
+		LOCTEXT("PickParentClass", "Pick Parent Class for Unit"),
+		ASeinActor::StaticClass(),
+		LOCTEXT("GenericUnit", "Generic Unit"),
+		LOCTEXT("GenericUnitTip", "Create a Blueprint based on ASeinActor")
 	);
 
 	if (!ChosenClass)
@@ -39,12 +42,12 @@ bool USeinActorFactory::ConfigureProperties()
 
 FText USeinActorFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinActorFactoryDisplayName", "SeinARTS Unit");
+	return LOCTEXT("SeinActorFactoryDisplayName", "Unit");
 }
 
 uint32 USeinActorFactory::GetMenuCategories() const
 {
-	return FSeinARTSEditorModule::GetAssetCategoryBit();
+	return EAssetTypeCategories::Basic | FSeinARTSEditorModule::GetAssetCategoryBit();
 }
 
 #undef LOCTEXT_NAMESPACE

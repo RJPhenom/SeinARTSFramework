@@ -9,7 +9,7 @@
 #include "ViewModel/SeinPlayerViewModel.h"
 #include "ViewModel/SeinSelectionModel.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Player/SeinARTSPlayerController.h"
+#include "Player/SeinPlayerController.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinUI, Log, All);
@@ -116,7 +116,7 @@ USeinPlayerViewModel* USeinUISubsystem::GetLocalPlayerViewModel()
 		return nullptr;
 	}
 
-	ASeinARTSPlayerController* PC = Cast<ASeinARTSPlayerController>(World->GetFirstPlayerController());
+	ASeinPlayerController* PC = Cast<ASeinPlayerController>(World->GetFirstPlayerController());
 	if (!PC)
 	{
 		return nullptr;
