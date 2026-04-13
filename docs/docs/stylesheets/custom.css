@@ -20,6 +20,7 @@
   --sein-border: #2e3440;
   --sein-text: #d8dee9;
   --sein-text-dim: #8892a0;
+  --sein-header-meta-size: 0.75rem;
 
   /* Material overrides */
   --md-primary-fg-color: var(--sein-gold);
@@ -84,7 +85,7 @@ body {
 
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
-  height: 32px; /* ← tweak header logo size here */
+  height: 32px;
   width: auto;
 }
 
@@ -119,9 +120,13 @@ body {
   flex: 1 1 auto;
 }
 
+.md-source__repository {
+  font-size: var(--sein-header-meta-size);
+}
+
 .md-header-inline__link {
   color: rgba(255, 255, 255, 0.75);
-  font-size: 0.6rem;
+  font-size: var(--sein-header-meta-size);
   font-weight: 400;
   letter-spacing: 0.01em;
   padding: 0.45em 0.85em;
@@ -143,8 +148,26 @@ body {
   background: rgba(0, 149, 255, 0.1);
 }
 
+.md-search__input,
+.md-search__input::placeholder {
+  font-size: var(--sein-header-meta-size);
+}
+
 /* Hide inline nav on mobile — hamburger takes over */
 @media (max-width: 76.1875em) {
+  .md-header__button.md-logo {
+    display: flex !important;
+    align-items: center;
+    margin-right: 0;
+    padding-right: 0.25rem;
+  }
+
+  .md-header__button.md-logo img,
+  .md-header__button.md-logo svg {
+    height: 20px;
+    width: auto;
+  }
+
   .md-header__inline-nav {
     display: none;
   }
@@ -155,6 +178,10 @@ body {
 }
 
 @media (min-width: 76.1876em) {
+  .md-header__button.md-logo {
+    transform: translateY(-2px);
+  }
+
   .md-sidebar--primary .md-nav--primary > .md-nav__title[for="__drawer"] {
     display: none;
   }

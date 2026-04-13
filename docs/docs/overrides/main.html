@@ -36,7 +36,10 @@ SeinARTS Framework is in active development &mdash;
       class="md-header__button md-logo"
       aria-label="{{ config.site_name }}"
     >
-      {% include "partials/logo.html" %}
+      <img
+        src="{{ 'assets/images/SeinARTSWordmark.svg' | url }}"
+        alt="{{ config.site_name | e }}"
+      />
     </a>
 
     <!-- Inline nav links (replaces site title) -->
