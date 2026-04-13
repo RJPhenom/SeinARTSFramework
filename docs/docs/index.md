@@ -1,8 +1,3 @@
-<div class="sein-overview-wordmark">
-	<img src="assets/images/SeinARTSWordmark.svg" alt="SeinARTS Framework" class="sein-hero-wordmark sein-overview-wordmark__image sein-hero-wordmark--dark">
-	<img src="assets/images/SeinARTSWordmarkDark.svg" alt="" aria-hidden="true" class="sein-hero-wordmark sein-overview-wordmark__image sein-hero-wordmark--light">
-</div>
-
 # Overview
 
 SeinARTS Framework is a deterministic lockstep RTS framework for Unreal Engine 5. It provides the core simulation, entity, navigation, UI, and editor tooling needed to build RTS games with a Blueprint-first workflow.

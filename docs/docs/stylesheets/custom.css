@@ -579,3 +579,41 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Global sharp-corner pass for docs UI surfaces */
+.md-search__form,
+.md-search__overlay,
+.md-search__output,
+.md-search__scrollwrap,
+.md-search-result,
+.md-typeset code,
+.md-typeset pre > code,
+.md-typeset table:not([class]),
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid > .card,
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset .md-button,
+.md-typeset .tabbed-set,
+.md-typeset .tabbed-labels > label,
+.md-typeset .bp-node,
+.md-typeset .tag,
+.feature-card,
+.md-select__inner,
+.md-select__list,
+.md-dialog,
+.md-pagination > *,
+.md-top {
+  border-radius: 0 !important;
+}
+
+[dir="ltr"] .md-typeset .md-input,
+[dir="rtl"] .md-typeset .md-input,
+[dir="ltr"] .md-search__output,
+[dir="rtl"] .md-search__output {
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}

@@ -22,6 +22,10 @@ public:
 	static void Shutdown();
 	static const FSlateStyleSet& Get();
 
+	/** Get the absolute path to an icon file in the BrandKit directory. */
+	static FString GetIconPath(const FString& IconFilename);
+
 private:
 	static TSharedPtr<FSlateStyleSet> StyleSet;
+	static FString IconsDir;
 };

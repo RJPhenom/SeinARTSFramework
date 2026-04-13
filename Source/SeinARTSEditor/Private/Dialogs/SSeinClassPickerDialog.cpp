@@ -8,14 +8,17 @@
  */
 
 #include "Dialogs/SSeinClassPickerDialog.h"
+#include "SeinARTSEditorStyle.h"
 
 #include "ClassViewerModule.h"
 #include "ClassViewerFilter.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
+#include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Images/SImage.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Styling/AppStyle.h"
 
@@ -68,6 +71,8 @@ void SSeinClassPickerDialog::Construct(const FArguments& InArgs, UClass* InBaseC
 		FOnClassPicked::CreateSP(this, &SSeinClassPickerDialog::OnClassPicked)
 	);
 
+	const FSlateBrush* WordmarkBrush = FSeinARTSEditorStyle::Get().GetBrush("SeinARTS.Wordmark");
+
 	ChildSlot
 	[
 		SNew(SBorder)
@@ -75,6 +80,16 @@ void SSeinClassPickerDialog::Construct(const FArguments& InArgs, UClass* InBaseC
 		.Padding(8.0f)
 		[
 			SNew(SVerticalBox)
+
+			// Wordmark header
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0, 4, 0, 12)
+			.HAlign(HAlign_Center)
+			[
+				SNew(SImage)
+				.Image(WordmarkBrush)
+			]
 
 			// Quick buttons
 			+ SVerticalBox::Slot()
@@ -172,7 +187,7 @@ UClass* SSeinClassPickerDialog::OpenDialog(const FText& InTitle, UClass* InBaseC
 
 	TSharedRef<SWindow> Window = SNew(SWindow)
 		.Title(InTitle)
-		.ClientSize(FVector2D(400, 500))
+		.ClientSize(FVector2D(400, 550))
 		.SupportsMinimize(false)
 		.SupportsMaximize(false);
 
