@@ -8,11 +8,9 @@
       rel="noopener noreferrer"
     >
       <img
-        src="{{ 'assets/images/PhenomWordmark.svg' | url }}"
+        src="{{ (config.extra.phenom_wordmark ~ '?v=' ~ config.extra.asset_rev) | url }}"
         alt="Phenom Studios"
         class="phenom-wordmark"
-        height="24"
-        width="109"
         draggable="false"
       />
     </a>
