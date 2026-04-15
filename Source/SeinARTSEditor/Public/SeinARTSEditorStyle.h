@@ -25,7 +25,16 @@ public:
 	/** Get the absolute path to an icon file in the BrandKit directory. */
 	static FString GetIconPath(const FString& IconFilename);
 
+	/** Get a cached UTexture2D loaded from a BrandKit PNG. Returns nullptr if not found. */
+	static UTexture2D* GetIconTexture(const FName& TextureName);
+
 private:
 	static TSharedPtr<FSlateStyleSet> StyleSet;
 	static FString IconsDir;
+
+	/** Cached UTexture2D objects loaded from PNG files for use in thumbnail renderers. */
+	static TMap<FName, TObjectPtr<UTexture2D>> IconTextures;
+
+	/** Load a PNG from the BrandKit directory and cache it as a transient UTexture2D. */
+	static UTexture2D* LoadAndCacheIcon(const FName& TextureName, const FString& Filename);
 };

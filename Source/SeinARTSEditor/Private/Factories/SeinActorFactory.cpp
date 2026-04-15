@@ -11,6 +11,8 @@
 #include "SeinARTSEditorModule.h"
 #include "Dialogs/SSeinClassPickerDialog.h"
 #include "Actor/SeinActor.h"
+#include "Actor/SeinActorBlueprint.h"
+#include "Kismet2/KismetEditorUtilities.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -18,8 +20,19 @@ USeinActorFactory::USeinActorFactory()
 {
 	bCreateNew = true;
 	bEditAfterNew = true;
-	SupportedClass = UBlueprint::StaticClass();
+	SupportedClass = USeinActorBlueprint::StaticClass();
 	ParentClass = ASeinActor::StaticClass();
+	BlueprintType = BPTYPE_Normal;
+}
+
+UObject* USeinActorFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext)
+{
+	return FKismetEditorUtilities::CreateBlueprint(
+		ParentClass, InParent, Name, BlueprintType,
+		USeinActorBlueprint::StaticClass(),
+		UBlueprintGeneratedClass::StaticClass(),
+		CallingContext
+	);
 }
 
 bool USeinActorFactory::ConfigureProperties()

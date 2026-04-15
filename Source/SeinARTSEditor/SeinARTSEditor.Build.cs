@@ -17,8 +17,13 @@ public class SeinARTSEditor : ModuleRules
             "AssetTools",
             "ClassViewer",
             "Kismet",
+            "KismetCompiler",
+            "GraphEditor",
+            "BlueprintGraph",
+            "EditorStyle",
             "Projects",
             "RenderCore",
+            "ImageCore",
             "SeinARTSCore",
             "SeinARTSCoreEntity"
         });

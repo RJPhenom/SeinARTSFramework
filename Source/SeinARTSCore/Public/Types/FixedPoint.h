@@ -21,7 +21,9 @@
 
 #include "FixedPoint.generated.h"
 
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (
+	HasNativeMake  = "/Script/SeinARTSCoreEntity.MathBPFL.MakeFixedPointFromParts",
+	HasNativeBreak = "/Script/SeinARTSCoreEntity.MathBPFL.BreakFixedPointToParts"))
 struct SEINARTSCORE_API FFixedPoint
 {
 	GENERATED_BODY()

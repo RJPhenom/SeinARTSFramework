@@ -5,6 +5,7 @@
  */
 
 #include "Lib/SeinSteeringBPFL.h"
+#include "Lib/SeinSteeringMath.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Math/MathLib.h"
 #include "Types/Rotator.h"
@@ -64,36 +65,7 @@ void USeinSteeringBPFL::SeinTeleportEntity(const UObject* WorldContextObject, FS
 
 FFixedVector USeinSteeringBPFL::SeinApplyTurnRateLimit(FFixedVector CurrentDirection, FFixedVector DesiredDirection, FFixedPoint TurnRate, FFixedPoint DeltaTime)
 {
-	FFixedPoint CurrentLen = CurrentDirection.Size();
-	FFixedPoint DesiredLen = DesiredDirection.Size();
-	if (CurrentLen <= FFixedPoint::Zero || DesiredLen <= FFixedPoint::Zero)
-	{
-		return CurrentDirection;
-	}
-
-	FFixedVector NormCurrent = CurrentDirection / CurrentLen;
-	FFixedVector NormDesired = DesiredDirection / DesiredLen;
-
-	FFixedPoint Dot = FFixedVector::DotProduct(NormCurrent, NormDesired);
-	Dot = SeinMath::Clamp(Dot, -FFixedPoint::One, FFixedPoint::One);
-
-	FFixedPoint AngleBetween = SeinMath::Acos(Dot);
-	FFixedPoint MaxTurn = TurnRate * DeltaTime;
-
-	if (AngleBetween <= MaxTurn)
-	{
-		return NormDesired;
-	}
-
-	// Slerp-like interpolation: blend toward desired by MaxTurn/AngleBetween ratio
-	FFixedPoint Alpha = MaxTurn / AngleBetween;
-	FFixedVector Result = NormCurrent * (FFixedPoint::One - Alpha) + NormDesired * Alpha;
-	FFixedPoint ResultLen = Result.Size();
-	if (ResultLen > FFixedPoint::Zero)
-	{
-		return Result / ResultLen;
-	}
-	return NormCurrent;
+	return SeinSteeringMath::ApplyTurnRateLimit(CurrentDirection, DesiredDirection, TurnRate, DeltaTime);
 }
 
 FFixedVector USeinSteeringBPFL::SeinGetSeparationForce(FFixedVector MyPosition, const TArray<FFixedVector>& NearbyPositions, FFixedPoint Radius)

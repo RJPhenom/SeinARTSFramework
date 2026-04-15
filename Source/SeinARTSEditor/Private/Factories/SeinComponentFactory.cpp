@@ -23,7 +23,13 @@ USeinComponentFactory::USeinComponentFactory()
 
 UObject* USeinComponentFactory::FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
 {
-	return FStructureEditorUtils::CreateUserDefinedStruct(InParent, InName, Flags);
+	UUserDefinedStruct* NewStruct = FStructureEditorUtils::CreateUserDefinedStruct(InParent, InName, Flags);
+	if (NewStruct)
+	{
+		// Tag the struct so the thumbnail renderer can identify SeinARTS components
+		NewStruct->SetMetaData(TEXT("SeinARTSComponent"), TEXT("true"));
+	}
+	return NewStruct;
 }
 
 FText USeinComponentFactory::GetDisplayName() const

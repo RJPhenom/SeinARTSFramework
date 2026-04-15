@@ -33,6 +33,12 @@ public:
 	/** Whether this action was cancelled externally */
 	bool bCancelled = false;
 
+	/** Whether this action failed (bCompleted will also be set) */
+	bool bFailed = false;
+
+	/** Opaque failure reason code — subclasses define their own enum and cast. */
+	uint8 FailureReason = 0;
+
 	/**
 	 * Called each sim tick while the action is active.
 	 * @return true when the action is complete and should be removed.
@@ -42,9 +48,15 @@ public:
 	/** Called when the action is cancelled externally (e.g., ability cancelled) */
 	virtual void OnCancel() {}
 
+	/** Called when the action fails. Override to notify observers. */
+	virtual void OnFail(uint8 /*ReasonCode*/) {}
+
 	/** Mark this action as completed */
 	void Complete();
 
 	/** Mark this action as cancelled */
 	void Cancel();
+
+	/** Mark this action as failed. Sets bFailed + bCompleted and calls OnFail(). */
+	void Fail(uint8 ReasonCode);
 };

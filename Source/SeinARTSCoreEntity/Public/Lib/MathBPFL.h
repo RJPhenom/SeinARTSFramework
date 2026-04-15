@@ -179,6 +179,38 @@ public:
     /** Makes a FixedPoint rational number from a given integer. */
 	UFUNCTION(BlueprintPure, Category = "Math|FixedPoint", meta = (DisplayName = "Make FixedPoint from Int", CompactNodeTitle = "->"))
 	static FFixedPoint MakeFixedPointFromInt(int32 IntValue) { return FFixedPoint::FromInt(IntValue); }
+
+	/**
+	 * Deterministic 32.32 literal make node. Replaces the default struct make for FFixedPoint.
+	 *
+	 * IntegerPart goes into the upper 32 bits (whole number side of the decimal).
+	 * FractionalPart is the raw lower 32 bits of the 32.32 layout — reinterpreted as unsigned,
+	 * so FractionalPart = 0x80000000 (-2147483648 signed) means exactly 0.5.
+	 *
+	 * This is the deterministic authoring path: no float involvement at any stage, and the
+	 * result is bit-identical across every platform. For convenience authoring of arbitrary
+	 * decimals, use "Make FixedPoint from Float" (non-deterministic, editor/visual only).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Math|FixedPoint", meta = (
+		NativeMakeFunc,
+		DisplayName = "Make FixedPoint",
+		Keywords = "make construct fixed point literal deterministic"))
+	static FFixedPoint MakeFixedPointFromParts(int32 IntegerPortion, int32 FractionPortion)
+	{
+		const int64 Hi  = static_cast<int64>(IntegerPortion) << 32;
+		const int64 Lo  = static_cast<int64>(static_cast<uint32>(FractionPortion));
+		return FFixedPoint(Hi | Lo);
+	}
+
+	/** Break a FFixedPoint back into its 32.32 integer and fractional halves. */
+	UFUNCTION(BlueprintPure, Category = "Math|FixedPoint", meta = (
+		NativeBreakFunc,
+		DisplayName = "Break FixedPoint"))
+	static void BreakFixedPointToParts(FFixedPoint Value, int32& IntegerPortion, int32& FractionPortion)
+	{
+		IntegerPortion      = static_cast<int32>(Value.Value >> 32);
+		FractionPortion = static_cast<int32>(static_cast<uint32>(Value.Value & 0xFFFFFFFF));
+	}
 	
 	/** Makes a FixedPoint rational number from a given float. Note: conversion may lose precision. */
 	UFUNCTION(BlueprintPure, Category = "Math|FixedPoint", meta = (DisplayName = "Make FixedPoint from Float", CompactNodeTitle = "->"))

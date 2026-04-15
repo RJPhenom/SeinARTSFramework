@@ -27,8 +27,11 @@ public:
 	USeinAbilityFactory();
 
 	// UFactory interface
+	virtual UObject* FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext) override;
 	virtual bool ConfigureProperties() override;
 	virtual FText GetDisplayName() const override;
 	virtual uint32 GetMenuCategories() const override;
 	virtual bool ShouldShowInNewMenu() const override { return true; }
+	virtual FName GetNewAssetThumbnailOverride() const override { return TEXT("ClassThumbnail.SeinAbility"); }
+	virtual FName GetNewAssetIconOverride() const override { return TEXT("ClassIcon.SeinAbility"); }
 };

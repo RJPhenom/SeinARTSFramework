@@ -31,9 +31,10 @@ class USeinBlueprintThumbnailRenderer : public UBlueprintThumbnailRenderer
 public:
 	virtual void Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height,
 		FRenderTarget* RenderTarget, FCanvas* Canvas, bool bAdditionalViewFamily) override;
+	virtual bool CanVisualizeAsset(UObject* Object) override;
 
 private:
-	enum class ESeinAssetType : uint8 { None, Unit, Ability };
+	enum class ESeinAssetType : uint8 { None, Unit, Ability, Component };
 	static ESeinAssetType ClassifyBlueprint(UObject* Object);
 	static FLinearColor GetBarColor(ESeinAssetType Type);
 

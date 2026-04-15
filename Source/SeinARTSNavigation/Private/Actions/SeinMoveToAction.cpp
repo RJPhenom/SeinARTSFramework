@@ -2,6 +2,10 @@
 #include "SeinPathfinder.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinComponents.h"
+#include "Movement/SeinMovementProfile.h"
+#include "Movement/SeinInfantryMovementProfile.h"
+#include "Components/SeinMovementProfileComponent.h"
+#include "Abilities/SeinMoveToProxy.h"
 
 void USeinMoveToAction::Initialize(const FFixedVector& InDestination, USeinPathfinder* InPathfinder, FFixedPoint InAcceptanceRadius)
 {
@@ -9,29 +13,53 @@ void USeinMoveToAction::Initialize(const FFixedVector& InDestination, USeinPathf
 	Pathfinder = InPathfinder;
 	AcceptanceRadiusSq = InAcceptanceRadius * InAcceptanceRadius;
 	CurrentWaypointIndex = 0;
+	Path.bIsValid = false;
+	KinState = FSeinMovementKinematicState();
 
 	if (!Pathfinder)
 	{
-		// No pathfinder — complete immediately as failure
-		Path.bIsValid = false;
 		return;
 	}
-
-	// Get entity current position for the path start
-	// Note: OwnerEntity is set by the ability system before Initialize is called
-	// We defer the actual path request to the first TickAction so the World ref is available
-	Path.bIsValid = false;
 }
 
 bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World)
 {
-	// Request path on first tick (World reference available here)
-	if (!Path.bIsValid && Pathfinder)
+	FSeinEntity* Entity = World.GetEntity(OwnerEntity);
+	if (!Entity)
 	{
-		FSeinEntity* Entity = World.GetEntity(OwnerEntity);
-		if (!Entity)
+		Fail(static_cast<uint8>(ESeinMoveFailureReason::EntityDestroyed));
+		return true;
+	}
+
+	FSeinMovementComponent* MoveComp = World.GetComponent<FSeinMovementComponent>(OwnerEntity);
+	if (!MoveComp)
+	{
+		Fail(static_cast<uint8>(ESeinMoveFailureReason::NoMovementComponent));
+		return true;
+	}
+
+	// Resolve profile on first tick
+	if (!ResolvedProfile)
+	{
+		UClass* ProfileClass = nullptr;
+		if (const FSeinMovementProfileComponent* ProfileComp = World.GetComponent<FSeinMovementProfileComponent>(OwnerEntity))
 		{
-			return true; // Entity gone — complete
+			ProfileClass = ProfileComp->Profile.Get();
+		}
+		if (!ProfileClass)
+		{
+			ProfileClass = USeinInfantryMovementProfile::StaticClass();
+		}
+		ResolvedProfile = NewObject<USeinMovementProfile>(this, ProfileClass);
+	}
+
+	// Request path on first tick
+	if (!Path.bIsValid)
+	{
+		if (!Pathfinder)
+		{
+			Fail(static_cast<uint8>(ESeinMoveFailureReason::NoPathfinder));
+			return true;
 		}
 
 		FSeinPathRequest Request;
@@ -39,64 +67,29 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		Request.End = Destination;
 		Request.Requester = OwnerEntity;
 
-		Path = Pathfinder->FindPath(Request);
+		ResolvedProfile->BuildPath(Pathfinder, Request, Path);
 
 		if (!Path.bIsValid || Path.GetWaypointCount() == 0)
 		{
-			return true; // No valid path — complete as failure
+			Fail(static_cast<uint8>(ESeinMoveFailureReason::PathNotFound));
+			return true;
 		}
-
-		// Skip waypoint 0 if it's the start position
 		CurrentWaypointIndex = 0;
 	}
 
-	// Get entity and movement component
-	FSeinEntity* Entity = World.GetEntity(OwnerEntity);
-	if (!Entity)
-	{
-		return true; // Entity destroyed mid-move
-	}
+	int32 WaypointReached = -1;
+	const bool bArrived = ResolvedProfile->AdvanceAlongPath(
+		*Entity,
+		*MoveComp,
+		Path,
+		CurrentWaypointIndex,
+		Destination,
+		AcceptanceRadiusSq,
+		DeltaTime,
+		KinState,
+		WaypointReached);
 
-	FSeinMovementComponent* MoveComp = World.GetComponent<FSeinMovementComponent>(OwnerEntity);
-	if (!MoveComp)
-	{
-		return true; // No movement component — can't move
-	}
-
-	const FFixedPoint Speed = MoveComp->MoveSpeed;
-	FFixedPoint RemainingBudget = Speed * DeltaTime;
-	FFixedVector CurrentPos = Entity->Transform.GetLocation();
-
-	// Advance along waypoints, consuming movement budget
-	while (CurrentWaypointIndex < Path.GetWaypointCount() && RemainingBudget > FFixedPoint::Zero)
-	{
-		const FFixedVector& Waypoint = Path.Waypoints[CurrentWaypointIndex];
-		const FFixedVector ToWaypoint = Waypoint - CurrentPos;
-		const FFixedPoint DistSq = ToWaypoint.SizeSquared();
-
-		// If within step distance of this waypoint, snap and advance
-		const FFixedPoint BudgetSq = RemainingBudget * RemainingBudget;
-		if (DistSq <= BudgetSq)
-		{
-			// Consume the distance to this waypoint
-			const FFixedPoint Dist = ToWaypoint.Size();
-			RemainingBudget = RemainingBudget - Dist;
-			CurrentPos = Waypoint;
-			CurrentWaypointIndex++;
-		}
-		else
-		{
-			// Move toward the waypoint by remaining budget
-			const FFixedVector Direction = ToWaypoint.GetNormalized();
-			CurrentPos = CurrentPos + Direction * RemainingBudget;
-			RemainingBudget = FFixedPoint::Zero;
-		}
-	}
-
-	// Write position back to entity
-	Entity->Transform.SetLocation(CurrentPos);
-
-	// Update the movement component target for visual/steering systems
+	// Sync MovementComponent target for visual/steering consumers
 	if (CurrentWaypointIndex < Path.GetWaypointCount())
 	{
 		MoveComp->TargetLocation = Path.Waypoints[CurrentWaypointIndex];
@@ -107,27 +100,48 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		MoveComp->bHasTarget = false;
 	}
 
-	// Check arrival at final destination
-	const FFixedPoint DistToDestSq = FFixedVector::DistSquared(CurrentPos, Destination);
-	if (DistToDestSq <= AcceptanceRadiusSq)
+	if (WaypointReached >= 0)
 	{
-		MoveComp->bHasTarget = false;
-		return true; // Arrived
+		NotifyWaypointReached(WaypointReached, Path.GetWaypointCount());
 	}
 
-	// Also complete if we've consumed all waypoints
-	if (CurrentWaypointIndex >= Path.GetWaypointCount())
+	if (bArrived)
 	{
 		MoveComp->bHasTarget = false;
-		return true; // Path exhausted
+		NotifyCompleted();
+		return true;
 	}
-
-	return false; // Still moving
+	return false;
 }
 
 void USeinMoveToAction::OnCancel()
 {
-	// We don't have a World reference in OnCancel, so just mark no target.
-	// The movement component will be cleared on the next system tick
-	// since the action is no longer active.
+	if (Observer.IsValid())
+	{
+		Observer->NotifyCancelled();
+	}
+}
+
+void USeinMoveToAction::OnFail(uint8 ReasonCode)
+{
+	if (Observer.IsValid())
+	{
+		Observer->NotifyFailed(static_cast<ESeinMoveFailureReason>(ReasonCode));
+	}
+}
+
+void USeinMoveToAction::NotifyCompleted()
+{
+	if (Observer.IsValid())
+	{
+		Observer->NotifyCompleted();
+	}
+}
+
+void USeinMoveToAction::NotifyWaypointReached(int32 Index, int32 Total)
+{
+	if (Observer.IsValid())
+	{
+		Observer->NotifyWaypointReached(Index, Total);
+	}
 }

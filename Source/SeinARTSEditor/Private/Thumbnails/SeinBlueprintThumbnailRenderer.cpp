@@ -13,8 +13,18 @@
 #include "Abilities/SeinAbility.h"
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
+#include "TextureResource.h"
 #include "CanvasItem.h"
 #include "Engine/Canvas.h"
+
+bool USeinBlueprintThumbnailRenderer::CanVisualizeAsset(UObject* Object)
+{
+	if (ClassifyBlueprint(Object) != ESeinAssetType::None)
+	{
+		return true;
+	}
+	return Super::CanVisualizeAsset(Object);
+}
 
 void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height,
 	FRenderTarget* RenderTarget, FCanvas* Canvas, bool bAdditionalViewFamily)
@@ -28,15 +38,13 @@ void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, ui
 		return;
 	}
 
-	const float BarHeight = FMath::Max(6.0f, Height * 0.08f);
-
 	// ---- Dark background ----
 	{
 		FCanvasTileItem BgItem(
 			FVector2D(X, Y),
 			GWhiteTexture,
 			FVector2D(Width, Height),
-			FLinearColor(0.08f, 0.08f, 0.08f, 1.0f)
+			FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("1A1A1A")))
 		);
 		BgItem.BlendMode = SE_BLEND_Opaque;
 		Canvas->DrawItem(BgItem);
@@ -47,7 +55,7 @@ void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, ui
 	if (IconResource)
 	{
 		const float IconPadding = Width * 0.1f;
-		const float AvailableHeight = Height - BarHeight - IconPadding;
+		const float AvailableHeight = Height - IconPadding;
 		const float IconSize = FMath::Min((float)Width - IconPadding * 2.0f, AvailableHeight);
 		const float IconX = X + (Width - IconSize) * 0.5f;
 		const float IconY = Y + (AvailableHeight - IconSize) * 0.5f + IconPadding * 0.25f;
@@ -62,41 +70,21 @@ void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, ui
 		Canvas->DrawItem(IconItem);
 	}
 
-	// ---- Color bar at bottom ----
-	{
-		const FLinearColor BarColor = GetBarColor(AssetType);
-		const float BarY = Y + Height - BarHeight;
-
-		FCanvasTileItem BarItem(
-			FVector2D(X, BarY),
-			GWhiteTexture,
-			FVector2D(Width, BarHeight),
-			BarColor
-		);
-		BarItem.BlendMode = SE_BLEND_Opaque;
-		Canvas->DrawItem(BarItem);
-	}
+	// Color bar is handled by the Content Browser's SAssetMenuIcon via IAssetTypeActions::GetTypeColor()
 }
 
 const FTexture* USeinBlueprintThumbnailRenderer::GetIconResource(ESeinAssetType Type)
 {
-	const FName BrushName = (Type == ESeinAssetType::Unit)
-		? FName(TEXT("ClassThumbnail.SeinActor"))
-		: FName(TEXT("ClassThumbnail.SeinAbility"));
-
-	const FSlateBrush* Brush = FSeinARTSEditorStyle::Get().GetBrush(BrushName);
-	if (!Brush || Brush == FCoreStyle::Get().GetDefaultBrush())
+	FName TextureName;
+	switch (Type)
 	{
-		return nullptr;
+	case ESeinAssetType::Unit:      TextureName = FName(TEXT("SeinUnitIcon92"));      break;
+	case ESeinAssetType::Ability:   TextureName = FName(TEXT("SeinAbilityIcon92"));   break;
+	case ESeinAssetType::Component: TextureName = FName(TEXT("SeinComponentIcon92")); break;
+	default: return nullptr;
 	}
 
-	UObject* ResourceObject = Brush->GetResourceObject();
-	if (!ResourceObject)
-	{
-		return nullptr;
-	}
-
-	UTexture2D* Texture = Cast<UTexture2D>(ResourceObject);
+	UTexture2D* Texture = FSeinARTSEditorStyle::GetIconTexture(TextureName);
 	if (!Texture)
 	{
 		return nullptr;
@@ -130,8 +118,9 @@ FLinearColor USeinBlueprintThumbnailRenderer::GetBarColor(ESeinAssetType Type)
 {
 	switch (Type)
 	{
-	case ESeinAssetType::Unit:    return FLinearColor(0.0f, 0.584f, 1.0f, 1.0f);  // #0095FF
-	case ESeinAssetType::Ability: return FLinearColor(1.0f, 0.0f, 0.0f, 1.0f);    // #FF0000
-	default:                      return FLinearColor::Transparent;
+	case ESeinAssetType::Unit:      return FLinearColor(0.0f, 0.584f, 1.0f, 1.0f);    // #0095FF
+	case ESeinAssetType::Ability:   return FLinearColor(1.0f, 0.0f, 0.0f, 1.0f);      // #FF0000
+	case ESeinAssetType::Component: return FLinearColor(1.0f, 0.584f, 0.0f, 1.0f);    // #FF9500
+	default:                        return FLinearColor::Transparent;
 	}
 }

@@ -27,7 +27,7 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
-  logo: assets/images/SeinARTSWordmark.svg?v=20260412
+  logo: assets/images/SeinARTSWordmarkVectorized.svg?v=20260415
   favicon: favicon.svg?v=20260412
   icon:
     repo: fontawesome/brands/github
@@ -89,7 +89,7 @@ markdown_extensions:
   - pymdownx.tilde
 
 extra:
-  asset_rev: "20260412"
+  asset_rev: "20260415"
   phenom_wordmark: assets/images/PhenomWordmark.svg
   social:
     - icon: fontawesome/brands/github

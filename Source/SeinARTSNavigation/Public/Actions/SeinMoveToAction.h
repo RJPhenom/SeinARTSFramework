@@ -3,17 +3,30 @@
 #include "CoreMinimal.h"
 #include "Abilities/SeinLatentAction.h"
 #include "SeinPathTypes.h"
+#include "Movement/SeinMovementKinematicState.h"
 #include "SeinMoveToAction.generated.h"
 
 class USeinPathfinder;
+class USeinMovementProfile;
+class USeinMoveToProxy;
+
+/** Reasons a move can fail. Passed via USeinLatentAction::Fail() reason code. */
+UENUM(BlueprintType)
+enum class ESeinMoveFailureReason : uint8
+{
+	None                 UMETA(DisplayName = "None"),
+	PathNotFound         UMETA(DisplayName = "Path Not Found"),
+	EntityDestroyed      UMETA(DisplayName = "Entity Destroyed"),
+	NoMovementComponent  UMETA(DisplayName = "No Movement Component"),
+	NoPathfinder         UMETA(DisplayName = "No Pathfinder"),
+	Cancelled            UMETA(DisplayName = "Cancelled")
+};
 
 /**
  * Latent action that moves an entity along a pathfound route.
- * Requests a path on Initialize, then each tick advances the entity
- * along the waypoint chain at its FSeinMovementComponent::MoveSpeed.
- *
- * Completes when the entity reaches the final waypoint.
- * Completes immediately (as failure) if pathfinding fails.
+ * Delegates path construction + path advancement to a USeinMovementProfile
+ * (Infantry / Tracked / Wheeled). Reports completion/failure/waypoint/cancel
+ * events to an optional observer (USeinMoveToProxy).
  */
 UCLASS()
 class SEINARTSNAVIGATION_API USeinMoveToAction : public USeinLatentAction
@@ -21,35 +34,33 @@ class SEINARTSNAVIGATION_API USeinMoveToAction : public USeinLatentAction
 	GENERATED_BODY()
 
 public:
-	/**
-	 * Set up the move action.
-	 * @param InDestination   World-space target position.
-	 * @param InPathfinder    Pathfinder to use for route computation.
-	 * @param InAcceptanceRadius  How close to the destination counts as "arrived".
-	 */
-	void Initialize(const FFixedVector& InDestination, USeinPathfinder* InPathfinder, FFixedPoint InAcceptanceRadius = FFixedPoint::FromInt(1));
+	void Initialize(const FFixedVector& InDestination, USeinPathfinder* InPathfinder, FFixedPoint InAcceptanceRadius = FFixedPoint::One);
 
 	virtual bool TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World) override;
 	virtual void OnCancel() override;
+	virtual void OnFail(uint8 ReasonCode) override;
 
-	/** The computed path (empty if pathfinding failed). */
+	/** Observer proxy (optional) — receives Completed/Failed/Waypoint/Cancelled callbacks. */
+	TWeakObjectPtr<USeinMoveToProxy> Observer;
+
 	UPROPERTY()
 	FSeinPath Path;
 
-	/** True if pathfinding succeeded and the entity is following waypoints. */
 	bool IsPathValid() const { return Path.bIsValid; }
 
 private:
-	/** World-space destination. */
 	FFixedVector Destination;
-
-	/** Squared acceptance radius for arrival checks. */
 	FFixedPoint AcceptanceRadiusSq;
-
-	/** Current waypoint index the entity is moving toward. */
 	int32 CurrentWaypointIndex = 0;
 
-	/** Cached pathfinder reference. */
 	UPROPERTY()
 	TObjectPtr<USeinPathfinder> Pathfinder;
+
+	UPROPERTY()
+	TObjectPtr<USeinMovementProfile> ResolvedProfile;
+
+	FSeinMovementKinematicState KinState;
+
+	void NotifyCompleted();
+	void NotifyWaypointReached(int32 Index, int32 Total);
 };

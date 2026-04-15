@@ -10,9 +10,11 @@
 #include "SeinARTSEditorStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Interfaces/IPluginManager.h"
+#include "ImageUtils.h"
 
 TSharedPtr<FSlateStyleSet> FSeinARTSEditorStyle::StyleSet = nullptr;
 FString FSeinARTSEditorStyle::IconsDir;
+TMap<FName, TObjectPtr<UTexture2D>> FSeinARTSEditorStyle::IconTextures;
 
 void FSeinARTSEditorStyle::Initialize()
 {
@@ -73,10 +75,37 @@ void FSeinARTSEditorStyle::Initialize()
 
 	StyleSet->Set(
 		"SeinARTS.Wordmark",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTSWordmark"), TEXT(".png")), FVector2D(164.0f, 48.0f))
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTSWordmarkVectorized"), TEXT(".png")), FVector2D(164.0f, 48.0f))
 	);
 
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet);
+
+	// Load PNG files as UTexture2D for thumbnail renderers (FCanvas can't use Slate file brushes)
+	LoadAndCacheIcon(FName(TEXT("SeinUnitIcon92")),       TEXT("SeinUnitIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinAbilityIcon92")),    TEXT("SeinAbilityIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinComponentIcon92")),  TEXT("SeinComponentIcon92.png"));
+}
+
+UTexture2D* FSeinARTSEditorStyle::LoadAndCacheIcon(const FName& TextureName, const FString& Filename)
+{
+	const FString FullPath = IconsDir / Filename;
+	UTexture2D* Texture = FImageUtils::ImportFileAsTexture2D(FullPath);
+	if (Texture)
+	{
+		Texture->AddToRoot(); // prevent GC
+		Texture->UpdateResource(); // ensure render resource is created
+		IconTextures.Add(TextureName, Texture);
+	}
+	return Texture;
+}
+
+UTexture2D* FSeinARTSEditorStyle::GetIconTexture(const FName& TextureName)
+{
+	if (const TObjectPtr<UTexture2D>* Found = IconTextures.Find(TextureName))
+	{
+		return *Found;
+	}
+	return nullptr;
 }
 
 FString FSeinARTSEditorStyle::GetIconPath(const FString& IconFilename)
@@ -86,6 +115,11 @@ FString FSeinARTSEditorStyle::GetIconPath(const FString& IconFilename)
 
 void FSeinARTSEditorStyle::Shutdown()
 {
+	// Don't touch the UTexture2D pointers during shutdown — the UObject array
+	// may already be torn down, and any TObjectPtr dereference will assert.
+	// The textures are rooted transients; the process is exiting so leaking is fine.
+	IconTextures.Empty();
+
 	if (StyleSet.IsValid())
 	{
 		FSlateStyleRegistry::UnRegisterSlateStyle(*StyleSet);

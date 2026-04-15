@@ -13,6 +13,7 @@
 #include "AssetTypeCategories.h"
 
 class IAssetTypeActions;
+struct FGraphPanelPinFactory;
 
 class FSeinARTSEditorModule : public IModuleInterface
 {
@@ -27,5 +28,6 @@ private:
 	void UnregisterAssetTypeActions();
 
 	TArray<TSharedPtr<IAssetTypeActions>> RegisteredActions;
+	TSharedPtr<FGraphPanelPinFactory> SeinPinFactory;
 	static EAssetTypeCategories::Type SeinARTSCategoryBit;
 };

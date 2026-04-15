@@ -9,11 +9,18 @@
 
 #include "SeinARTSEditorModule.h"
 #include "SeinARTSEditorStyle.h"
+#include "SeinAssetTypeActions.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Thumbnails/SeinBlueprintThumbnailRenderer.h"
+#include "Thumbnails/SeinComponentThumbnailRenderer.h"
 #include "Engine/Blueprint.h"
+#include "StructUtils/UserDefinedStruct.h"
+#include "Actor/SeinActorBlueprint.h"
+#include "Abilities/SeinAbilityBlueprint.h"
+#include "EdGraphUtilities.h"
+#include "Graph/SeinPinFactory.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -34,15 +41,38 @@ void FSeinARTSEditorModule::StartupModule()
 		);
 	}
 
-	// Register custom thumbnail renderer for SeinARTS Blueprints (color bars)
-	UThumbnailManager::Get().RegisterCustomRenderer(
-		UBlueprint::StaticClass(),
+	// Register asset type actions (per-type colors for content browser)
+	RegisterAssetTypeActions();
+
+	// Register custom thumbnail renderers for our Blueprint subclasses.
+	// These are unique classes so no unregister needed — no conflict with engine defaults.
+	UThumbnailManager& ThumbnailMgr = UThumbnailManager::Get();
+	ThumbnailMgr.RegisterCustomRenderer(
+		USeinActorBlueprint::StaticClass(),
 		USeinBlueprintThumbnailRenderer::StaticClass()
 	);
+	ThumbnailMgr.RegisterCustomRenderer(
+		USeinAbilityBlueprint::StaticClass(),
+		USeinBlueprintThumbnailRenderer::StaticClass()
+	);
+	ThumbnailMgr.UnregisterCustomRenderer(UUserDefinedStruct::StaticClass());
+	ThumbnailMgr.RegisterCustomRenderer(
+		UUserDefinedStruct::StaticClass(),
+		USeinComponentThumbnailRenderer::StaticClass()
+	);
+
+	// Register custom pin color factory for fixed-point structs
+	SeinPinFactory = MakeShared<FSeinPinFactory>();
+	FEdGraphUtilities::RegisterVisualPinFactory(SeinPinFactory);
 }
 
 void FSeinARTSEditorModule::ShutdownModule()
 {
+	if (SeinPinFactory.IsValid())
+	{
+		FEdGraphUtilities::UnregisterVisualPinFactory(SeinPinFactory);
+		SeinPinFactory.Reset();
+	}
 	UnregisterAssetTypeActions();
 	FSeinARTSEditorStyle::Shutdown();
 }
@@ -54,7 +84,16 @@ EAssetTypeCategories::Type FSeinARTSEditorModule::GetAssetCategoryBit()
 
 void FSeinARTSEditorModule::RegisterAssetTypeActions()
 {
-	// Reserved for future asset type actions
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+	auto RegisterAction = [&](const TSharedRef<IAssetTypeActions>& Action)
+	{
+		AssetTools.RegisterAssetTypeActions(Action);
+		RegisteredActions.Add(Action);
+	};
+
+	RegisterAction(MakeShared<FAssetTypeActions_SeinActorBlueprint>());
+	RegisterAction(MakeShared<FAssetTypeActions_SeinAbilityBlueprint>());
 }
 
 void FSeinARTSEditorModule::UnregisterAssetTypeActions()

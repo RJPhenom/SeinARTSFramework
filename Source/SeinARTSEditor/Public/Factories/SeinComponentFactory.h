@@ -34,4 +34,6 @@ public:
 	virtual FText GetDisplayName() const override;
 	virtual uint32 GetMenuCategories() const override;
 	virtual bool ShouldShowInNewMenu() const override { return true; }
+	virtual FName GetNewAssetThumbnailOverride() const override { return TEXT("ClassThumbnail.SeinComponent"); }
+	virtual FName GetNewAssetIconOverride() const override { return TEXT("ClassIcon.SeinComponent"); }
 };
