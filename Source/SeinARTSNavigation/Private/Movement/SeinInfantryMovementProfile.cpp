@@ -2,11 +2,11 @@
 #include "SeinPathTypes.h"
 #include "Types/Entity.h"
 #include "Types/Vector.h"
-#include "Components/SeinComponents.h"
+#include "Components/SeinMovementData.h"
 
 bool USeinInfantryMovementProfile::AdvanceAlongPath(
 	FSeinEntity& Entity,
-	const FSeinMovementComponent& MoveComp,
+	const FSeinMovementData& MoveComp,
 	const FSeinPath& Path,
 	int32& WaypointIndex,
 	const FFixedVector& FinalDestination,

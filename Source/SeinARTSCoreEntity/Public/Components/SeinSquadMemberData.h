@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinSquadMemberComponent.h
+ * @file    SeinSquadMemberData.h
  * @brief   Component on individual squad member entities linking back to their squad.
  */
 
@@ -11,14 +11,14 @@
 #include "Types/Vector.h"
 #include "Core/SeinEntityHandle.h"
 #include "Components/SeinComponent.h"
-#include "SeinSquadMemberComponent.generated.h"
+#include "SeinSquadMemberData.generated.h"
 
 /**
  * Placed on each individual entity that belongs to a squad.
  * Links back to the owning squad entity and stores formation data.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinSquadMemberComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinSquadMemberData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -35,7 +35,7 @@ struct SEINARTSCOREENTITY_API FSeinSquadMemberComponent : public FSeinComponent
 	FFixedVector FormationOffset;
 };
 
-FORCEINLINE uint32 GetTypeHash(const FSeinSquadMemberComponent& Component)
+FORCEINLINE uint32 GetTypeHash(const FSeinSquadMemberData& Component)
 {
 	uint32 Hash = GetTypeHash(Component.SquadEntity);
 	Hash = HashCombine(Hash, GetTypeHash(Component.bIsLeader));

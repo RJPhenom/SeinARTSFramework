@@ -22,7 +22,7 @@ struct SEINARTSCOREENTITY_API FSeinActiveEffect
 {
 	GENERATED_BODY()
 
-	/** Unique ID for this effect instance (assigned by FSeinActiveEffectsComponent). */
+	/** Unique ID for this effect instance (assigned by FSeinActiveEffectsData). */
 	UPROPERTY()
 	uint32 EffectInstanceID = 0;
 

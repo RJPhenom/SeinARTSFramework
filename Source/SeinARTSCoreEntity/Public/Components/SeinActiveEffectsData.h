@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinActiveEffectsComponent.h
+ * @file    SeinActiveEffectsData.h
  * @brief   Component that holds all active effects on an entity.
  */
 
@@ -12,7 +12,7 @@
 #include "Attributes/SeinModifier.h"
 #include "GameplayTagContainer.h"
 #include "Components/SeinComponent.h"
-#include "SeinActiveEffectsComponent.generated.h"
+#include "SeinActiveEffectsData.generated.h"
 
 /**
  * ECS-style component that stores the set of active effects on a single entity.
@@ -20,7 +20,7 @@
  * from all currently active effects.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinActiveEffectsComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinActiveEffectsData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -59,7 +59,7 @@ struct SEINARTSCOREENTITY_API FSeinActiveEffectsComponent : public FSeinComponen
 	void Clear();
 };
 
-FORCEINLINE uint32 GetTypeHash(const FSeinActiveEffectsComponent& Comp)
+FORCEINLINE uint32 GetTypeHash(const FSeinActiveEffectsData& Comp)
 {
 	uint32 Hash = 0;
 	for (const FSeinActiveEffect& Effect : Comp.ActiveEffects)

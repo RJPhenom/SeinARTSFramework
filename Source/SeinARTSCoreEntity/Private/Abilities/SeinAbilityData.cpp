@@ -9,9 +9,9 @@
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
-#include "Components/SeinAbilityComponent.h"
+#include "Components/SeinAbilityData.h"
 
-USeinAbility* FSeinAbilityComponent::FindAbilityByTag(const FGameplayTag& Tag) const
+USeinAbility* FSeinAbilityData::FindAbilityByTag(const FGameplayTag& Tag) const
 {
 	for (const TObjectPtr<USeinAbility>& Ability : AbilityInstances)
 	{
@@ -23,7 +23,7 @@ USeinAbility* FSeinAbilityComponent::FindAbilityByTag(const FGameplayTag& Tag) c
 	return nullptr;
 }
 
-bool FSeinAbilityComponent::HasAbilityWithTag(const FGameplayTag& Tag) const
+bool FSeinAbilityData::HasAbilityWithTag(const FGameplayTag& Tag) const
 {
 	return FindAbilityByTag(Tag) != nullptr;
 }

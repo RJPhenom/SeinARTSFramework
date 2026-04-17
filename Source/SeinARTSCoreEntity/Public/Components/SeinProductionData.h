@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinProductionComponent.h
+ * @file    SeinProductionData.h
  * @brief   Single-queue production component for buildings.
  */
 
@@ -14,7 +14,7 @@
 #include "Actor/SeinActor.h"
 #include "Attributes/SeinModifier.h"
 #include "Components/SeinComponent.h"
-#include "SeinProductionComponent.generated.h"
+#include "SeinProductionData.generated.h"
 
 /**
  * A single entry in a production queue.
@@ -67,7 +67,7 @@ FORCEINLINE uint32 GetTypeHash(const FSeinProductionQueueEntry& Entry)
  * Maintains a single ordered queue with configurable max size.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinProductionComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinProductionData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -101,7 +101,7 @@ struct SEINARTSCOREENTITY_API FSeinProductionComponent : public FSeinComponent
 	bool CanQueueMore() const;
 };
 
-FORCEINLINE uint32 GetTypeHash(const FSeinProductionComponent& Component)
+FORCEINLINE uint32 GetTypeHash(const FSeinProductionData& Component)
 {
 	uint32 Hash = GetTypeHash(Component.MaxQueueSize);
 	Hash = HashCombine(Hash, GetTypeHash(Component.CurrentBuildProgress));

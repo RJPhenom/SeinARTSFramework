@@ -5,14 +5,14 @@
 #include "GameplayTagContainer.h"
 #include "Abilities/SeinAbility.h"
 #include "Components/SeinComponent.h"
-#include "SeinAbilityComponent.generated.h"
+#include "SeinAbilityData.generated.h"
 
 /**
  * Component tracking an entity's abilities.
  * Stores granted ability classes (from archetype) and runtime instances.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinAbilityComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinAbilityData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -40,7 +40,7 @@ struct SEINARTSCOREENTITY_API FSeinAbilityComponent : public FSeinComponent
 };
 
 /** Hash function for deterministic state hashing */
-FORCEINLINE uint32 GetTypeHash(const FSeinAbilityComponent& Comp)
+FORCEINLINE uint32 GetTypeHash(const FSeinAbilityData& Comp)
 {
 	uint32 Hash = 0;
 	for (const auto& Ability : Comp.AbilityInstances)

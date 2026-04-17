@@ -9,7 +9,9 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
 #include "Actor/SeinActorBridge.h"
+#include "Components/ActorComponents/SeinActorComponent.h"
 #include "Events/SeinVisualEvent.h"
+#include "Types/FixedPoint.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinBridge, Log, All);
@@ -70,21 +72,39 @@ void USeinActorBridgeSubsystem::Tick(float DeltaTime)
 
 void USeinActorBridgeSubsystem::HandleSimTick(int32 Tick)
 {
-	// Called after each sim tick — tell every managed actor to shift its transform snapshot
+	// Fixed delta per sim tick. The world subsystem stores this as a float; convert
+	// once per broadcast so the hot path stays branch-free.
+	const FFixedPoint SimDelta = SimSubsystem.IsValid()
+		? FFixedPoint::FromFloat(SimSubsystem->GetFixedDeltaTimeSeconds())
+		: FFixedPoint::Zero;
+
 	for (auto It = EntityActorMap.CreateIterator(); It; ++It)
 	{
-		if (It->Value.IsValid())
+		if (!It->Value.IsValid())
 		{
-			ASeinActor* Actor = It->Value.Get();
-			if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
-			{
-				Comp->OnSimTick();
-			}
-		}
-		else
-		{
-			// Actor was destroyed externally — remove stale entry
+			// Actor was destroyed externally — remove stale entry.
 			It.RemoveCurrent();
+			continue;
+		}
+
+		ASeinActor* Actor = It->Value.Get();
+
+		// Shift the transform snapshot on the legacy bridge component.
+		if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
+		{
+			Comp->OnSimTick();
+		}
+
+		// Fan out to every USeinActorComponent attached to the actor. Each AC
+		// short-circuits internally when the BP doesn't override ReceiveSimTick.
+		TArray<USeinActorComponent*> SimACs;
+		Actor->GetComponents<USeinActorComponent>(SimACs);
+		for (USeinActorComponent* AC : SimACs)
+		{
+			if (AC)
+			{
+				AC->DispatchSimTick(SimDelta);
+			}
 		}
 	}
 }
@@ -118,13 +138,24 @@ void USeinActorBridgeSubsystem::DispatchVisualEvent(const FSeinVisualEvent& Even
 
 	default:
 	{
-		// Route to the target actor's SeinActorBridge
+		// Route to the target actor's legacy bridge AND to every Sein AC attached.
 		TWeakObjectPtr<ASeinActor>* ActorPtr = EntityActorMap.Find(Event.PrimaryEntity);
 		if (ActorPtr && ActorPtr->IsValid())
 		{
-			if (USeinActorBridge* Comp = ActorPtr->Get()->FindComponentByClass<USeinActorBridge>())
+			ASeinActor* Actor = ActorPtr->Get();
+			if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
 			{
 				Comp->HandleVisualEvent(Event);
+			}
+
+			TArray<USeinActorComponent*> SimACs;
+			Actor->GetComponents<USeinActorComponent>(SimACs);
+			for (USeinActorComponent* AC : SimACs)
+			{
+				if (AC)
+				{
+					AC->DispatchVisualEvent(Event);
+				}
 			}
 		}
 		break;
@@ -173,6 +204,18 @@ void USeinActorBridgeSubsystem::SpawnActorForEntity(FSeinEntityHandle Handle, co
 	NewActor->InitializeWithEntity(Handle);
 	EntityActorMap.Add(Handle, NewActor);
 
+	// Fire OnEntitySpawned on every Sein AC so BP subclasses can run their
+	// setup scripts once the sim entity is live and components are injected.
+	TArray<USeinActorComponent*> SimACs;
+	NewActor->GetComponents<USeinActorComponent>(SimACs);
+	for (USeinActorComponent* AC : SimACs)
+	{
+		if (AC)
+		{
+			AC->DispatchSpawn(Handle);
+		}
+	}
+
 	UE_LOG(LogSeinBridge, Verbose, TEXT("Spawned actor %s for entity %s"),
 		*NewActor->GetName(), *Handle.ToString());
 }
@@ -192,6 +235,17 @@ void USeinActorBridgeSubsystem::HandleEntityDestroyed(FSeinEntityHandle Handle, 
 	if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
 	{
 		Comp->HandleVisualEvent(DestroyEvent);
+	}
+
+	// Fan out to every Sein AC before the actor tears down.
+	TArray<USeinActorComponent*> SimACs;
+	Actor->GetComponents<USeinActorComponent>(SimACs);
+	for (USeinActorComponent* AC : SimACs)
+	{
+		if (AC)
+		{
+			AC->DispatchDestroy();
+		}
 	}
 
 	// Give the actor time for death animations before cleanup

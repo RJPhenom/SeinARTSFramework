@@ -23,7 +23,7 @@ FText UAssetDefinition_SeinWidgetBlueprint::GetAssetDisplayName() const
 
 FLinearColor UAssetDefinition_SeinWidgetBlueprint::GetAssetColor() const
 {
-	return FLinearColor(FColor::FromHex(TEXT("FFFF00")));
+	return FLinearColor(FColor::FromHex(TEXT("8844AA")));
 }
 
 TSoftClassPtr<UObject> UAssetDefinition_SeinWidgetBlueprint::GetAssetClass() const

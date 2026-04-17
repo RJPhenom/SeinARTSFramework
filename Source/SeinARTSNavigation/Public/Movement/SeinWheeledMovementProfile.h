@@ -37,7 +37,7 @@ public:
 
 	virtual bool AdvanceAlongPath(
 		FSeinEntity& Entity,
-		const FSeinMovementComponent& MoveComp,
+		const FSeinMovementData& MoveComp,
 		const FSeinPath& Path,
 		int32& WaypointIndex,
 		const FFixedVector& FinalDestination,

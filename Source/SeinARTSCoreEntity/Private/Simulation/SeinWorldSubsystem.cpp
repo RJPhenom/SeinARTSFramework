@@ -12,10 +12,11 @@
 #include "Core/SeinSimContext.h"
 #include "Abilities/SeinAbility.h"
 #include "Abilities/SeinLatentActionManager.h"
-#include "Components/SeinAbilityComponent.h"
-#include "Components/SeinActiveEffectsComponent.h"
-#include "Components/SeinProductionComponent.h"
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinAbilityData.h"
+#include "Components/SeinActiveEffectsData.h"
+#include "Components/SeinProductionData.h"
+#include "Components/SeinTagData.h"
+#include "Components/ActorComponents/SeinActorComponent.h"
 #include "Attributes/SeinModifier.h"
 #include "Attributes/SeinAttributeResolver.h"
 #include "Containers/Ticker.h"
@@ -253,7 +254,7 @@ void USeinWorldSubsystem::ProcessCommands()
 		{
 		case ESeinCommandType::ActivateAbility:
 		{
-			FSeinAbilityComponent* AbilityComp = GetComponent<FSeinAbilityComponent>(Cmd.EntityHandle);
+			FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Cmd.EntityHandle);
 			if (!AbilityComp)
 			{
 				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no SeinAbilityComponent"),
@@ -296,7 +297,7 @@ void USeinWorldSubsystem::ProcessCommands()
 
 		case ESeinCommandType::CancelAbility:
 		{
-			FSeinAbilityComponent* AbilityComp = GetComponent<FSeinAbilityComponent>(Cmd.EntityHandle);
+			FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Cmd.EntityHandle);
 			if (AbilityComp && AbilityComp->ActiveAbility && AbilityComp->ActiveAbility->bIsActive)
 			{
 				AbilityComp->ActiveAbility->CancelAbility();
@@ -307,7 +308,7 @@ void USeinWorldSubsystem::ProcessCommands()
 
 		case ESeinCommandType::QueueProduction:
 		{
-			FSeinProductionComponent* ProdComp = GetComponent<FSeinProductionComponent>(Cmd.EntityHandle);
+			FSeinProductionData* ProdComp = GetComponent<FSeinProductionData>(Cmd.EntityHandle);
 			if (!ProdComp || !ProdComp->CanQueueMore()) break;
 
 			// Find the producible class matching the command's AbilityTag vs CDO ArchetypeTag
@@ -361,7 +362,7 @@ void USeinWorldSubsystem::ProcessCommands()
 
 		case ESeinCommandType::CancelProduction:
 		{
-			FSeinProductionComponent* ProdComp = GetComponent<FSeinProductionComponent>(Cmd.EntityHandle);
+			FSeinProductionData* ProdComp = GetComponent<FSeinProductionData>(Cmd.EntityHandle);
 			if (!ProdComp) break;
 
 			int32 CancelIdx = Cmd.QueueIndex;
@@ -386,7 +387,7 @@ void USeinWorldSubsystem::ProcessCommands()
 
 		case ESeinCommandType::SetRallyPoint:
 		{
-			FSeinProductionComponent* ProdComp = GetComponent<FSeinProductionComponent>(Cmd.EntityHandle);
+			FSeinProductionData* ProdComp = GetComponent<FSeinProductionData>(Cmd.EntityHandle);
 			if (ProdComp)
 			{
 				ProdComp->RallyPoint = Cmd.TargetLocation;
@@ -444,20 +445,28 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	// Store actor class for bridge spawning
 	EntityActorClassMap.Add(Handle, ActorClass);
 
-	// Add components declared by archetype definition (supports both inline and DataTable modes)
-	const TArray<FInstancedStruct> ResolvedComponents = ArchetypeDef->GetResolvedComponents();
-	for (const FInstancedStruct& ComponentData : ResolvedComponents)
+	// Walk the CDO's USeinActorComponent subobjects and inject each one's sim
+	// payload into deterministic storage. This replaces the legacy inline
+	// ArchetypeDefinition.Components array — designers now author sim data via
+	// typed wrapper ACs (Sein Movement, Sein Combat, ...) or BP subclasses of
+	// USeinDynamicComponent.
+	//
+	// AActor::GetComponents() on a CDO returns only native CreateDefaultSubobject
+	// components — BP-editor-added components live on the SCS, not the CDO. Use
+	// the engine's CDO-inspection helper which walks both lists in a stable order.
+	TArray<const USeinActorComponent*> SimACs;
+	AActor::GetActorClassDefaultComponents<USeinActorComponent>(ActorClass, SimACs);
+	for (const USeinActorComponent* AC : SimACs)
 	{
-		if (!ComponentData.IsValid())
-		{
-			continue;
-		}
+		if (!AC) continue;
+		const FInstancedStruct Payload = AC->Resolve();
+		if (!Payload.IsValid()) continue;
 
-		UScriptStruct* ComponentType = const_cast<UScriptStruct*>(ComponentData.GetScriptStruct());
+		UScriptStruct* ComponentType = const_cast<UScriptStruct*>(Payload.GetScriptStruct());
 		ISeinComponentStorageV2* Storage = GetOrCreateStorageForType(ComponentType);
 		if (Storage)
 		{
-			Storage->AddComponent(Handle, ComponentData.GetMemory());
+			Storage->AddComponent(Handle, Payload.GetMemory());
 		}
 	}
 
@@ -467,7 +476,7 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	// Auto-tag entity with its archetype tag (for archetype-scope modifier matching)
 	if (ArchetypeDef->ArchetypeTag.IsValid())
 	{
-		FSeinTagComponent* TagComp = GetComponent<FSeinTagComponent>(Handle);
+		FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
 		if (TagComp)
 		{
 			TagComp->BaseTags.AddTag(ArchetypeDef->ArchetypeTag);
@@ -637,7 +646,7 @@ FFixedPoint USeinWorldSubsystem::ResolveAttribute(FSeinEntityHandle Handle, UScr
 	TArray<FSeinModifier> AllModifiers;
 
 	// Instance-level modifiers from active effects
-	const FSeinActiveEffectsComponent* EffectsComp = GetComponent<FSeinActiveEffectsComponent>(Handle);
+	const FSeinActiveEffectsData* EffectsComp = GetComponent<FSeinActiveEffectsData>(Handle);
 	if (EffectsComp)
 	{
 		for (const FSeinActiveEffect& Effect : EffectsComp->ActiveEffects)
@@ -658,7 +667,7 @@ FFixedPoint USeinWorldSubsystem::ResolveAttribute(FSeinEntityHandle Handle, UScr
 	FSeinPlayerID OwnerID = GetEntityOwner(Handle);
 	if (const FSeinPlayerState* PlayerState = GetPlayerState(OwnerID))
 	{
-		const FSeinTagComponent* TagComp = GetComponent<FSeinTagComponent>(Handle);
+		const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
 		for (const FSeinModifier& Mod : PlayerState->ArchetypeModifiers)
 		{
 			if (Mod.Scope != ESeinModifierScope::Archetype) continue;
@@ -789,10 +798,10 @@ int32 USeinWorldSubsystem::ComputeStateHash() const
 
 void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 {
-	FSeinAbilityComponent* AbilityComp = GetComponent<FSeinAbilityComponent>(Handle);
+	FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Handle);
 	if (!AbilityComp)
 	{
-		UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s has no FSeinAbilityComponent"),
+		UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s has no FSeinAbilityData"),
 			*Handle.ToString());
 		return;
 	}

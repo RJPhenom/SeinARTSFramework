@@ -10,8 +10,8 @@
 #include "CoreMinimal.h"
 #include "Core/SeinTickPhase.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinActiveEffectsComponent.h"
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinActiveEffectsData.h"
+#include "Components/SeinTagData.h"
 #include "Effects/SeinActiveEffect.h"
 #include "Effects/SeinEffectDefinition.h"
 #include "Events/SeinVisualEvent.h"
@@ -20,10 +20,10 @@
  * System: Effect Tick
  * Phase: PreTick | Priority: 0
  *
- * Iterates all entities with FSeinActiveEffectsComponent and:
+ * Iterates all entities with FSeinActiveEffectsData and:
  *  - Decrements RemainingDuration on Timed effects; removes expired ones.
  *  - Tracks periodic timers; logs when a periodic tick fires.
- *  - On removal, strips granted tags from the entity's FSeinTagComponent.
+ *  - On removal, strips granted tags from the entity's FSeinTagData.
  */
 class FSeinEffectTickSystem final : public ISeinSystem
 {
@@ -32,7 +32,7 @@ public:
 	{
 		World.GetEntityPool().ForEachEntity([&](FSeinEntityHandle Handle, FSeinEntity& /*Entity*/)
 		{
-			FSeinActiveEffectsComponent* EffectsComp = World.GetComponent<FSeinActiveEffectsComponent>(Handle);
+			FSeinActiveEffectsData* EffectsComp = World.GetComponent<FSeinActiveEffectsData>(Handle);
 			if (!EffectsComp)
 			{
 				return;
@@ -78,7 +78,7 @@ public:
 			// --- Remove expired effects and clean up granted tags ---
 			if (ExpiredEffectIDs.Num() > 0)
 			{
-				FSeinTagComponent* TagComp = World.GetComponent<FSeinTagComponent>(Handle);
+				FSeinTagData* TagComp = World.GetComponent<FSeinTagData>(Handle);
 
 				for (uint32 EffectID : ExpiredEffectIDs)
 				{

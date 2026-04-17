@@ -9,19 +9,19 @@
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
-#include "Components/SeinSquadComponent.h"
+#include "Components/SeinSquadData.h"
 
-int32 FSeinSquadComponent::GetAliveCount() const
+int32 FSeinSquadData::GetAliveCount() const
 {
 	return Members.Num();
 }
 
-bool FSeinSquadComponent::HasLeader() const
+bool FSeinSquadData::HasLeader() const
 {
 	return Leader.IsValid();
 }
 
-void FSeinSquadComponent::RemoveMember(FSeinEntityHandle Member)
+void FSeinSquadData::RemoveMember(FSeinEntityHandle Member)
 {
 	Members.RemoveAll([&Member](const FSeinEntityHandle& Handle)
 	{
@@ -34,7 +34,7 @@ void FSeinSquadComponent::RemoveMember(FSeinEntityHandle Member)
 	}
 }
 
-void FSeinSquadComponent::AddMember(FSeinEntityHandle Member)
+void FSeinSquadData::AddMember(FSeinEntityHandle Member)
 {
 	if (Members.Num() < MaxSquadSize)
 	{
@@ -42,7 +42,7 @@ void FSeinSquadComponent::AddMember(FSeinEntityHandle Member)
 	}
 }
 
-void FSeinSquadComponent::PromoteNewLeader()
+void FSeinSquadData::PromoteNewLeader()
 {
 	if (Members.Num() > 0)
 	{

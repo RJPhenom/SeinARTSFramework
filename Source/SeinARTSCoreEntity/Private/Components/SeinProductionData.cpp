@@ -9,14 +9,14 @@
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
-#include "Components/SeinProductionComponent.h"
+#include "Components/SeinProductionData.h"
 
-bool FSeinProductionComponent::IsProducing() const
+bool FSeinProductionData::IsProducing() const
 {
 	return Queue.Num() > 0;
 }
 
-FFixedPoint FSeinProductionComponent::GetProgressPercent() const
+FFixedPoint FSeinProductionData::GetProgressPercent() const
 {
 	if (!IsProducing())
 	{
@@ -32,7 +32,7 @@ FFixedPoint FSeinProductionComponent::GetProgressPercent() const
 	return CurrentBuildProgress / Current.TotalBuildTime;
 }
 
-bool FSeinProductionComponent::CanQueueMore() const
+bool FSeinProductionData::CanQueueMore() const
 {
 	return Queue.Num() < MaxQueueSize;
 }

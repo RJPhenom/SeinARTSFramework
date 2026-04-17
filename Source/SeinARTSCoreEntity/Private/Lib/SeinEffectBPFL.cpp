@@ -6,7 +6,7 @@
 
 #include "Lib/SeinEffectBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinActiveEffectsComponent.h"
+#include "Components/SeinActiveEffectsData.h"
 #include "Effects/SeinActiveEffect.h"
 #include "Events/SeinVisualEvent.h"
 
@@ -22,7 +22,7 @@ int32 USeinEffectBPFL::SeinApplyEffect(const UObject* WorldContextObject, FSeinE
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return 0;
 
-	FSeinActiveEffectsComponent* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsComponent>(TargetHandle);
+	FSeinActiveEffectsData* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsData>(TargetHandle);
 	if (!EffectsComp) return 0;
 
 	FSeinActiveEffect NewEffect;
@@ -45,7 +45,7 @@ void USeinEffectBPFL::SeinRemoveEffect(const UObject* WorldContextObject, FSeinE
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinActiveEffectsComponent* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsComponent>(TargetHandle);
+	FSeinActiveEffectsData* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsData>(TargetHandle);
 	if (!EffectsComp) return;
 
 	EffectsComp->RemoveEffect(static_cast<uint32>(EffectInstanceID));
@@ -56,7 +56,7 @@ void USeinEffectBPFL::SeinRemoveEffectsWithTag(const UObject* WorldContextObject
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinActiveEffectsComponent* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsComponent>(TargetHandle);
+	FSeinActiveEffectsData* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsData>(TargetHandle);
 	if (!EffectsComp) return;
 
 	EffectsComp->RemoveEffectsWithTag(Tag);
@@ -67,7 +67,7 @@ bool USeinEffectBPFL::SeinHasEffectWithTag(const UObject* WorldContextObject, FS
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinActiveEffectsComponent* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsComponent>(TargetHandle);
+	const FSeinActiveEffectsData* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsData>(TargetHandle);
 	if (!EffectsComp) return false;
 
 	return EffectsComp->HasEffectWithTag(Tag);
@@ -78,7 +78,7 @@ int32 USeinEffectBPFL::SeinGetEffectStacks(const UObject* WorldContextObject, FS
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return 0;
 
-	const FSeinActiveEffectsComponent* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsComponent>(TargetHandle);
+	const FSeinActiveEffectsData* EffectsComp = Subsystem->GetComponent<FSeinActiveEffectsData>(TargetHandle);
 	if (!EffectsComp) return 0;
 
 	return EffectsComp->GetStackCount(EffectName);

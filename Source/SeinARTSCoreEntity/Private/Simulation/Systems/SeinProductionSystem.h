@@ -10,7 +10,7 @@
 #include "Core/SeinTickPhase.h"
 #include "Core/SeinPlayerState.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinProductionComponent.h"
+#include "Components/SeinProductionData.h"
 #include "Events/SeinVisualEvent.h"
 #include "Attributes/SeinModifier.h"
 
@@ -18,7 +18,7 @@
  * System: Production
  * Phase: AbilityExecution | Priority: 50
  *
- * Iterates all entities with FSeinProductionComponent. For each entity
+ * Iterates all entities with FSeinProductionData. For each entity
  * with a non-empty production queue:
  *  - Advances CurrentBuildProgress by DeltaTime.
  *  - When progress meets or exceeds TotalBuildTime, spawns the produced
@@ -33,7 +33,7 @@ public:
 	{
 		World.GetEntityPool().ForEachEntity([&](FSeinEntityHandle Handle, FSeinEntity& Entity)
 		{
-			FSeinProductionComponent* ProdComp = World.GetComponent<FSeinProductionComponent>(Handle);
+			FSeinProductionData* ProdComp = World.GetComponent<FSeinProductionData>(Handle);
 			if (!ProdComp || ProdComp->Queue.Num() == 0)
 			{
 				return;

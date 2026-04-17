@@ -39,5 +39,15 @@ public:
 	virtual uint32 GetCategories() override;
 };
 
-// Note: Component (UUserDefinedStruct) uses engine default color. Per-asset color
-// would require UAssetDefinition migration (not blocking).
+/**
+ * Asset type actions for Component (USeinActorComponent) Blueprints.
+ * Color: #FF9500 (Orange) — matches the legacy "SeinARTSComponent" identity bar.
+ */
+class FAssetTypeActions_SeinComponentBlueprint : public FAssetTypeActions_Blueprint
+{
+public:
+	virtual FText GetName() const override;
+	virtual FColor GetTypeColor() const override { return FColor::FromHex(TEXT("FF9500")); }
+	virtual UClass* GetSupportedClass() const override;
+	virtual uint32 GetCategories() override;
+};

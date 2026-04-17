@@ -10,8 +10,8 @@
 #include "Actor/SeinActor.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Abilities/SeinAbility.h"
-#include "Components/SeinAbilityComponent.h"
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinAbilityData.h"
+#include "Components/SeinTagData.h"
 #include "Core/SeinPlayerState.h"
 #include "StructUtils/InstancedStruct.h"
 #include "Player/SeinPlayerController.h"
@@ -172,7 +172,7 @@ FGameplayTagContainer USeinEntityViewModel::GetTags() const
 		return FGameplayTagContainer();
 	}
 
-	const FSeinTagComponent* TagComp = WorldSubsystem->GetComponent<FSeinTagComponent>(Entity);
+	const FSeinTagData* TagComp = WorldSubsystem->GetComponent<FSeinTagData>(Entity);
 	if (!TagComp)
 	{
 		return FGameplayTagContainer();
@@ -240,7 +240,7 @@ TArray<FSeinAbilityInfo> USeinEntityViewModel::GetAbilities() const
 		return Result;
 	}
 
-	const FSeinAbilityComponent* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityComponent>(Entity);
+	const FSeinAbilityData* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityData>(Entity);
 	if (!AbilityComp)
 	{
 		return Result;
@@ -264,7 +264,7 @@ FSeinAbilityInfo USeinEntityViewModel::GetAbilityByTag(FGameplayTag Tag) const
 		return FSeinAbilityInfo();
 	}
 
-	const FSeinAbilityComponent* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityComponent>(Entity);
+	const FSeinAbilityData* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityData>(Entity);
 	if (!AbilityComp)
 	{
 		return FSeinAbilityInfo();
@@ -286,7 +286,7 @@ bool USeinEntityViewModel::HasAbilityWithTag(FGameplayTag Tag) const
 		return false;
 	}
 
-	const FSeinAbilityComponent* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityComponent>(Entity);
+	const FSeinAbilityData* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityData>(Entity);
 	return AbilityComp && AbilityComp->HasAbilityWithTag(Tag);
 }
 

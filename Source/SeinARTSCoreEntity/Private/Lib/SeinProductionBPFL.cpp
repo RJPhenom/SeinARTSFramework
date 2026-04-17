@@ -6,7 +6,7 @@
 
 #include "Lib/SeinProductionBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinProductionComponent.h"
+#include "Components/SeinProductionData.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Actor/SeinActor.h"
 #include "Core/SeinPlayerState.h"
@@ -29,7 +29,7 @@ TArray<FSeinProductionAvailability> USeinProductionBPFL::SeinGetProductionAvaila
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return Result;
 
-	const FSeinProductionComponent* ProdComp = Subsystem->GetComponent<FSeinProductionComponent>(BuildingEntity);
+	const FSeinProductionData* ProdComp = Subsystem->GetComponent<FSeinProductionData>(BuildingEntity);
 	if (!ProdComp) return Result;
 
 	const FSeinPlayerState* PlayerState = Subsystem->GetPlayerState(PlayerID);

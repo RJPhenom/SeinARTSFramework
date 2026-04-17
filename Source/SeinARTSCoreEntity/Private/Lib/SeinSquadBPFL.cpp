@@ -6,8 +6,8 @@
 
 #include "Lib/SeinSquadBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinSquadComponent.h"
-#include "Components/SeinSquadMemberComponent.h"
+#include "Components/SeinSquadData.h"
+#include "Components/SeinSquadMemberData.h"
 
 USeinWorldSubsystem* USeinSquadBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
@@ -21,7 +21,7 @@ TArray<FSeinEntityHandle> USeinSquadBPFL::SeinGetSquadMembers(const UObject* Wor
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return TArray<FSeinEntityHandle>();
 
-	const FSeinSquadComponent* SquadComp = Subsystem->GetComponent<FSeinSquadComponent>(SquadHandle);
+	const FSeinSquadData* SquadComp = Subsystem->GetComponent<FSeinSquadData>(SquadHandle);
 	if (!SquadComp) return TArray<FSeinEntityHandle>();
 
 	return SquadComp->Members;
@@ -32,7 +32,7 @@ FSeinEntityHandle USeinSquadBPFL::SeinGetSquadLeader(const UObject* WorldContext
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return FSeinEntityHandle::Invalid();
 
-	const FSeinSquadComponent* SquadComp = Subsystem->GetComponent<FSeinSquadComponent>(SquadHandle);
+	const FSeinSquadData* SquadComp = Subsystem->GetComponent<FSeinSquadData>(SquadHandle);
 	if (!SquadComp) return FSeinEntityHandle::Invalid();
 
 	return SquadComp->Leader;
@@ -43,7 +43,7 @@ FSeinEntityHandle USeinSquadBPFL::SeinGetEntitySquad(const UObject* WorldContext
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return FSeinEntityHandle::Invalid();
 
-	const FSeinSquadMemberComponent* MemberComp = Subsystem->GetComponent<FSeinSquadMemberComponent>(MemberHandle);
+	const FSeinSquadMemberData* MemberComp = Subsystem->GetComponent<FSeinSquadMemberData>(MemberHandle);
 	if (!MemberComp) return FSeinEntityHandle::Invalid();
 
 	return MemberComp->SquadEntity;
@@ -54,7 +54,7 @@ bool USeinSquadBPFL::SeinIsSquadMember(const UObject* WorldContextObject, FSeinE
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	return Subsystem->HasComponent<FSeinSquadMemberComponent>(EntityHandle);
+	return Subsystem->HasComponent<FSeinSquadMemberData>(EntityHandle);
 }
 
 int32 USeinSquadBPFL::SeinGetSquadSize(const UObject* WorldContextObject, FSeinEntityHandle SquadHandle)
@@ -62,7 +62,7 @@ int32 USeinSquadBPFL::SeinGetSquadSize(const UObject* WorldContextObject, FSeinE
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return 0;
 
-	const FSeinSquadComponent* SquadComp = Subsystem->GetComponent<FSeinSquadComponent>(SquadHandle);
+	const FSeinSquadData* SquadComp = Subsystem->GetComponent<FSeinSquadData>(SquadHandle);
 	if (!SquadComp) return 0;
 
 	return SquadComp->GetAliveCount();

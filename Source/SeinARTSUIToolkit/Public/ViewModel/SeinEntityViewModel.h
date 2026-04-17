@@ -119,7 +119,7 @@ public:
 
 	/**
 	 * Get a resolved attribute value (base + all modifiers applied).
-	 * @param ComponentType - The USTRUCT type of the sim component (e.g., FSeinCombatComponent::StaticStruct())
+	 * @param ComponentType - The USTRUCT type of the sim component (e.g., FSeinCombatData::StaticStruct())
 	 * @param FieldName - The FName of the FFixedPoint field on that struct
 	 * @return The resolved value as float, or 0 if not found
 	 */

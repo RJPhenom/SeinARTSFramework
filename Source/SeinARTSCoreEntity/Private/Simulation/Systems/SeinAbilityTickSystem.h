@@ -9,14 +9,14 @@
 #include "CoreMinimal.h"
 #include "Core/SeinTickPhase.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinAbilityComponent.h"
+#include "Components/SeinAbilityData.h"
 #include "Abilities/SeinAbility.h"
 
 /**
  * System: Ability Tick
  * Phase: AbilityExecution | Priority: 0
  *
- * Iterates all entities with FSeinAbilityComponent. For each entity,
+ * Iterates all entities with FSeinAbilityData. For each entity,
  * ticks the active primary ability and all active passive abilities
  * by calling TickAbility(DeltaTime).
  */
@@ -27,7 +27,7 @@ public:
 	{
 		World.GetEntityPool().ForEachEntity([&](FSeinEntityHandle Handle, FSeinEntity& /*Entity*/)
 		{
-			FSeinAbilityComponent* AbilityComp = World.GetComponent<FSeinAbilityComponent>(Handle);
+			FSeinAbilityData* AbilityComp = World.GetComponent<FSeinAbilityData>(Handle);
 			if (!AbilityComp)
 			{
 				return;

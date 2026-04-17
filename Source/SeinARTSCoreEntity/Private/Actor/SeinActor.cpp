@@ -15,7 +15,7 @@ ASeinActor::ASeinActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	SeinActorBridge = CreateDefaultSubobject<USeinActorBridge>(TEXT("SeinActorBridge"));
+	ActorBridge = CreateDefaultSubobject<USeinActorBridge>(TEXT("ActorBridge"));
 	ArchetypeDefinition = CreateDefaultSubobject<USeinArchetypeDefinition>(TEXT("ArchetypeDefinition"));
 }
 
@@ -26,13 +26,13 @@ void ASeinActor::BeginPlay()
 
 void ASeinActor::InitializeWithEntity(FSeinEntityHandle Handle)
 {
-	if (!SeinActorBridge)
+	if (!ActorBridge)
 	{
-		UE_LOG(LogTemp, Error, TEXT("ASeinActor::InitializeWithEntity - SeinActorBridge is null!"));
+		UE_LOG(LogTemp, Error, TEXT("ASeinActor::InitializeWithEntity - ActorBridge is null!"));
 		return;
 	}
 
-	SeinActorBridge->SetEntityHandle(Handle);
+	ActorBridge->SetEntityHandle(Handle);
 
 	// Fire Blueprint event
 	ReceiveEntityInitialized();
@@ -42,20 +42,20 @@ void ASeinActor::InitializeWithEntity(FSeinEntityHandle Handle)
 
 FSeinEntityHandle ASeinActor::GetEntityHandle() const
 {
-	if (!SeinActorBridge)
+	if (!ActorBridge)
 	{
 		return FSeinEntityHandle::Invalid();
 	}
 
-	return SeinActorBridge->GetEntityHandle();
+	return ActorBridge->GetEntityHandle();
 }
 
 bool ASeinActor::HasValidEntity() const
 {
-	if (!SeinActorBridge)
+	if (!ActorBridge)
 	{
 		return false;
 	}
 
-	return SeinActorBridge->HasValidEntity();
+	return ActorBridge->HasValidEntity();
 }

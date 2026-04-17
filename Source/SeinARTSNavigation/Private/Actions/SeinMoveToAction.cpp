@@ -1,7 +1,7 @@
 #include "Actions/SeinMoveToAction.h"
 #include "SeinPathfinder.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinComponents.h"
+#include "Components/SeinMovementData.h"
 #include "Movement/SeinMovementProfile.h"
 #include "Movement/SeinInfantryMovementProfile.h"
 #include "Components/SeinMovementProfileComponent.h"
@@ -31,7 +31,7 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		return true;
 	}
 
-	FSeinMovementComponent* MoveComp = World.GetComponent<FSeinMovementComponent>(OwnerEntity);
+	FSeinMovementData* MoveComp = World.GetComponent<FSeinMovementData>(OwnerEntity);
 	if (!MoveComp)
 	{
 		Fail(static_cast<uint8>(ESeinMoveFailureReason::NoMovementComponent));

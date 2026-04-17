@@ -7,7 +7,7 @@
 #include "Lib/SeinCombatBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Core/SeinEntityPool.h"
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinTagData.h"
 #include "Events/SeinVisualEvent.h"
 #include "Math/MathLib.h"
 
@@ -66,7 +66,7 @@ TArray<FSeinEntityHandle> USeinCombatBPFL::SeinGetEntitiesInRange(const UObject*
 			}
 			else
 			{
-				const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(Handle);
+				const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(Handle);
 				if (TagComp && TagComp->HasAnyTag(FilterTags))
 				{
 					Result.Add(Handle);
@@ -101,7 +101,7 @@ FSeinEntityHandle USeinCombatBPFL::SeinGetNearestEntity(const UObject* WorldCont
 			}
 			else
 			{
-				const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(Handle);
+				const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(Handle);
 				if (TagComp && TagComp->HasAnyTag(FilterTags))
 				{
 					NearestHandle = Handle;
@@ -135,7 +135,7 @@ TArray<FSeinEntityHandle> USeinCombatBPFL::SeinGetEntitiesInBox(const UObject* W
 			}
 			else
 			{
-				const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(Handle);
+				const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(Handle);
 				if (TagComp && TagComp->HasAnyTag(FilterTags))
 				{
 					Result.Add(Handle);

@@ -5,7 +5,7 @@
  *
  * Lives in the Navigation module (not CoreEntity) to avoid a circular
  * dependency between CoreEntity and Navigation. Add this component to a
- * unit's archetype alongside FSeinMovementComponent.
+ * unit's archetype alongside FSeinMovementData.
  */
 
 #pragma once

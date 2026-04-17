@@ -6,7 +6,7 @@
 
 #include "Lib/SeinTagBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinTagData.h"
 
 USeinWorldSubsystem* USeinTagBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
@@ -20,7 +20,7 @@ bool USeinTagBPFL::SeinHasTag(const UObject* WorldContextObject, FSeinEntityHand
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(EntityHandle);
+	const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
 	return TagComp ? TagComp->HasTag(Tag) : false;
 }
 
@@ -29,7 +29,7 @@ bool USeinTagBPFL::SeinHasAnyTag(const UObject* WorldContextObject, FSeinEntityH
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(EntityHandle);
+	const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
 	return TagComp ? TagComp->HasAnyTag(Tags) : false;
 }
 
@@ -38,7 +38,7 @@ bool USeinTagBPFL::SeinHasAllTags(const UObject* WorldContextObject, FSeinEntity
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(EntityHandle);
+	const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
 	return TagComp ? TagComp->HasAllTags(Tags) : false;
 }
 
@@ -47,7 +47,7 @@ void USeinTagBPFL::SeinAddTag(const UObject* WorldContextObject, FSeinEntityHand
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(EntityHandle);
+	FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
 	if (TagComp)
 	{
 		TagComp->BaseTags.AddTag(Tag);
@@ -60,7 +60,7 @@ void USeinTagBPFL::SeinRemoveTag(const UObject* WorldContextObject, FSeinEntityH
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinTagComponent* TagComp = Subsystem->GetComponent<FSeinTagComponent>(EntityHandle);
+	FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
 	if (TagComp)
 	{
 		TagComp->BaseTags.RemoveTag(Tag);

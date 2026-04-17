@@ -6,7 +6,7 @@
 
 #include "Lib/SeinAbilityBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinAbilityComponent.h"
+#include "Components/SeinAbilityData.h"
 #include "Abilities/SeinAbility.h"
 
 USeinWorldSubsystem* USeinAbilityBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
@@ -21,7 +21,7 @@ void USeinAbilityBPFL::SeinActivateAbility(const UObject* WorldContextObject, FS
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinAbilityComponent* AbilityComp = Subsystem->GetComponent<FSeinAbilityComponent>(EntityHandle);
+	FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return;
 
 	USeinAbility* Ability = AbilityComp->FindAbilityByTag(AbilityTag);
@@ -35,7 +35,7 @@ void USeinAbilityBPFL::SeinCancelAbility(const UObject* WorldContextObject, FSei
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
 
-	FSeinAbilityComponent* AbilityComp = Subsystem->GetComponent<FSeinAbilityComponent>(EntityHandle);
+	FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return;
 
 	if (AbilityComp->ActiveAbility)
@@ -49,7 +49,7 @@ bool USeinAbilityBPFL::SeinIsAbilityOnCooldown(const UObject* WorldContextObject
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinAbilityComponent* AbilityComp = Subsystem->GetComponent<FSeinAbilityComponent>(EntityHandle);
+	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return false;
 
 	// FindAbilityByTag is non-const, so we need to search manually
@@ -68,7 +68,7 @@ FFixedPoint USeinAbilityBPFL::SeinGetCooldownRemaining(const UObject* WorldConte
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return FFixedPoint::Zero;
 
-	const FSeinAbilityComponent* AbilityComp = Subsystem->GetComponent<FSeinAbilityComponent>(EntityHandle);
+	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return FFixedPoint::Zero;
 
 	for (USeinAbility* Ability : AbilityComp->AbilityInstances)
@@ -86,7 +86,7 @@ bool USeinAbilityBPFL::SeinHasAbility(const UObject* WorldContextObject, FSeinEn
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return false;
 
-	const FSeinAbilityComponent* AbilityComp = Subsystem->GetComponent<FSeinAbilityComponent>(EntityHandle);
+	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return false;
 
 	return AbilityComp->HasAbilityWithTag(AbilityTag);

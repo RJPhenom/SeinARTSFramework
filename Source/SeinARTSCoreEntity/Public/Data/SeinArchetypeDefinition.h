@@ -13,7 +13,6 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "StructUtils/InstancedStruct.h"
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
@@ -54,7 +53,8 @@ struct SEINARTSCOREENTITY_API FSeinCommandMapping
 
 /**
  * Reference to a row in a DataTable that holds component default data.
- * Used when bUseDataTableDefaults is enabled on the archetype definition.
+ * Used by USeinActorComponent::TableOverride to A/B-tune component values
+ * across many archetypes via a spreadsheet without leaving the per-component UX.
  */
 USTRUCT(BlueprintType)
 struct SEINARTSCOREENTITY_API FSeinComponentTableRef
@@ -139,51 +139,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (EditCondition = "bIsResearch"))
 	TArray<FSeinModifier> GrantedModifiers;
 
-	// ========== Sim Components ==========
-
-	/**
-	 * When false (default): component defaults are edited inline on the Blueprint via
-	 * the Components array below. Good for prototyping and small projects.
-	 *
-	 * When true: component defaults are pulled from DataTable rows via
-	 * DataTableComponents. Good for balance passes across many archetypes —
-	 * designers can view and edit stats in a columnar spreadsheet per component type.
-	 *
-	 * SpawnEntity uses GetResolvedComponents() which unifies both paths.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
-	bool bUseDataTableDefaults = false;
-
-	/**
-	 * Inline simulation components (used when bUseDataTableDefaults = false).
-	 * Each entry is a typed component struct with its default values.
-	 * The type picker filters to FSeinComponent subclasses so designers only
-	 * see Sein sim components (instead of every USTRUCT in the engine).
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype",
-		meta = (EditCondition = "!bUseDataTableDefaults",
-				BaseStruct = "/Script/SeinARTSCoreEntity.SeinComponent",
-				ExcludeBaseStruct))
-	TArray<FInstancedStruct> Components;
-
-	/**
-	 * DataTable-backed component defaults (used when bUseDataTableDefaults = true).
-	 * Each entry references a DataTable + row name. The DataTable's row struct
-	 * determines the component type (e.g., a DT with FSeinCombatComponent rows).
-	 * Component structs must inherit FTableRowBase.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype",
-		meta = (EditCondition = "bUseDataTableDefaults"))
-	TArray<FSeinComponentTableRef> DataTableComponents;
-
-	/**
-	 * Resolve all component defaults into a unified array of FInstancedStruct,
-	 * regardless of whether inline or DataTable mode is active.
-	 * Called by SpawnEntity at spawn time.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
-	TArray<FInstancedStruct> GetResolvedComponents() const;
-
 	// ========== Command Resolution ==========
 
 	/**
@@ -212,18 +167,4 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
 	FGameplayTag ResolveCommandContext(const FGameplayTagContainer& Context) const;
-
-	// ========== Queries ==========
-
-	/** Get list of component types defined on this archetype */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
-	TArray<UScriptStruct*> GetComponentTypes() const;
-
-	/** Check if this archetype defines any components */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Archetype")
-	bool HasComponents() const;
-
-	/** Check if this archetype has a specific component type */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
-	bool HasComponent(UScriptStruct* ComponentType) const;
 };

@@ -9,13 +9,13 @@
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
-#include "Components/SeinTagComponent.h"
+#include "Components/SeinTagData.h"
 
 // ---------------------------------------------------------------------------
 // RebuildCombinedTags
 // ---------------------------------------------------------------------------
 
-void FSeinTagComponent::RebuildCombinedTags()
+void FSeinTagData::RebuildCombinedTags()
 {
 	CombinedTags.Reset();
 	CombinedTags.AppendTags(BaseTags);
@@ -26,7 +26,7 @@ void FSeinTagComponent::RebuildCombinedTags()
 // HasTag
 // ---------------------------------------------------------------------------
 
-bool FSeinTagComponent::HasTag(const FGameplayTag& Tag) const
+bool FSeinTagData::HasTag(const FGameplayTag& Tag) const
 {
 	return CombinedTags.HasTag(Tag);
 }
@@ -35,7 +35,7 @@ bool FSeinTagComponent::HasTag(const FGameplayTag& Tag) const
 // HasAnyTag
 // ---------------------------------------------------------------------------
 
-bool FSeinTagComponent::HasAnyTag(const FGameplayTagContainer& Tags) const
+bool FSeinTagData::HasAnyTag(const FGameplayTagContainer& Tags) const
 {
 	return CombinedTags.HasAny(Tags);
 }
@@ -44,7 +44,7 @@ bool FSeinTagComponent::HasAnyTag(const FGameplayTagContainer& Tags) const
 // HasAllTags
 // ---------------------------------------------------------------------------
 
-bool FSeinTagComponent::HasAllTags(const FGameplayTagContainer& Tags) const
+bool FSeinTagData::HasAllTags(const FGameplayTagContainer& Tags) const
 {
 	return CombinedTags.HasAll(Tags);
 }
@@ -53,7 +53,7 @@ bool FSeinTagComponent::HasAllTags(const FGameplayTagContainer& Tags) const
 // AddGrantedTag
 // ---------------------------------------------------------------------------
 
-void FSeinTagComponent::AddGrantedTag(const FGameplayTag& Tag)
+void FSeinTagData::AddGrantedTag(const FGameplayTag& Tag)
 {
 	if (Tag.IsValid())
 	{
@@ -66,7 +66,7 @@ void FSeinTagComponent::AddGrantedTag(const FGameplayTag& Tag)
 // RemoveGrantedTag
 // ---------------------------------------------------------------------------
 
-void FSeinTagComponent::RemoveGrantedTag(const FGameplayTag& Tag)
+void FSeinTagData::RemoveGrantedTag(const FGameplayTag& Tag)
 {
 	if (Tag.IsValid())
 	{

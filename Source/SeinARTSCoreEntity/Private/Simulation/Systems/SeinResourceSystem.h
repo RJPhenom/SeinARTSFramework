@@ -9,14 +9,14 @@
 #include "CoreMinimal.h"
 #include "Core/SeinTickPhase.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Components/SeinResourceIncomeComponent.h"
+#include "Components/SeinResourceIncomeData.h"
 #include "Core/SeinPlayerState.h"
 
 /**
  * System: Resource Income
  * Phase: PreTick | Priority: 20
  *
- * Iterates all entities with FSeinResourceIncomeComponent. For each entity,
+ * Iterates all entities with FSeinResourceIncomeData. For each entity,
  * computes IncomePerSecond * DeltaTime and adds the result to the owning
  * player's resource pool. Entities with no valid owner (neutral) are skipped.
  */
@@ -27,7 +27,7 @@ public:
 	{
 		World.GetEntityPool().ForEachEntity([&](FSeinEntityHandle Handle, FSeinEntity& /*Entity*/)
 		{
-			const FSeinResourceIncomeComponent* IncomeComp = World.GetComponent<FSeinResourceIncomeComponent>(Handle);
+			const FSeinResourceIncomeData* IncomeComp = World.GetComponent<FSeinResourceIncomeData>(Handle);
 			if (!IncomeComp || IncomeComp->IncomePerSecond.Num() == 0)
 			{
 				return;

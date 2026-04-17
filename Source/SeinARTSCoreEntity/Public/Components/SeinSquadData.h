@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinSquadComponent.h
+ * @file    SeinSquadData.h
  * @brief   Squad component for the abstract squad entity that manages members.
  */
 
@@ -12,14 +12,14 @@
 #include "Core/SeinEntityHandle.h"
 #include "Actor/SeinActor.h"
 #include "Components/SeinComponent.h"
-#include "SeinSquadComponent.generated.h"
+#include "SeinSquadData.generated.h"
 
 /**
  * Squad component placed on the abstract squad entity.
  * Tracks squad members, leadership, and reinforcement parameters.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinSquadComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinSquadData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -63,7 +63,7 @@ struct SEINARTSCOREENTITY_API FSeinSquadComponent : public FSeinComponent
 	void PromoteNewLeader();
 };
 
-FORCEINLINE uint32 GetTypeHash(const FSeinSquadComponent& Component)
+FORCEINLINE uint32 GetTypeHash(const FSeinSquadData& Component)
 {
 	uint32 Hash = GetTypeHash(Component.Leader);
 	Hash = HashCombine(Hash, GetTypeHash(Component.MaxSquadSize));

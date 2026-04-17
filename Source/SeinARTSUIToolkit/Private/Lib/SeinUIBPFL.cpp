@@ -10,8 +10,8 @@
 #include "Actor/SeinActor.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Abilities/SeinAbility.h"
-#include "Components/SeinAbilityComponent.h"
-#include "Components/SeinProductionComponent.h"
+#include "Components/SeinAbilityData.h"
+#include "Components/SeinProductionData.h"
 #include "Core/SeinPlayerState.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
@@ -273,7 +273,7 @@ FSeinActionSlotData USeinUIBPFL::SeinBuildAbilitySlotData(const UObject* WorldCo
 		return Data;
 	}
 
-	const FSeinAbilityComponent* AbilityComp = SimSub->GetComponent<FSeinAbilityComponent>(Entity);
+	const FSeinAbilityData* AbilityComp = SimSub->GetComponent<FSeinAbilityData>(Entity);
 	if (!AbilityComp)
 	{
 		return Data;
@@ -323,7 +323,7 @@ TArray<FSeinActionSlotData> USeinUIBPFL::SeinBuildAllAbilitySlotData(const UObje
 		return Result;
 	}
 
-	const FSeinAbilityComponent* AbilityComp = SimSub->GetComponent<FSeinAbilityComponent>(Entity);
+	const FSeinAbilityData* AbilityComp = SimSub->GetComponent<FSeinAbilityData>(Entity);
 	if (!AbilityComp)
 	{
 		return Result;
@@ -352,7 +352,7 @@ TArray<FSeinActionSlotData> USeinUIBPFL::SeinBuildProductionSlotData(const UObje
 		return Result;
 	}
 
-	const FSeinProductionComponent* ProdComp = SimSub->GetComponent<FSeinProductionComponent>(Entity);
+	const FSeinProductionData* ProdComp = SimSub->GetComponent<FSeinProductionData>(Entity);
 	if (!ProdComp)
 	{
 		return Result;

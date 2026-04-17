@@ -63,6 +63,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
 	int32 GetCurrentTick() const { return CurrentTick; }
 
+	/** Fixed delta between sim ticks (seconds). Derived from SimulationTickRate. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
+	float GetFixedDeltaTimeSeconds() const { return FixedDeltaTimeSeconds; }
+
 	/** Interpolation alpha between sim ticks (0-1) for smooth rendering. */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
 	float GetInterpolationAlpha() const;
@@ -79,8 +83,10 @@ public:
 
 	/**
 	 * Spawn a new entity from a Blueprint class.
-	 * Reads archetype data from the Blueprint CDO's USeinArchetypeDefinition component,
-	 * copies sim components into deterministic storage, and initializes abilities.
+	 * Walks the Blueprint CDO's USeinActorComponent subobjects, calls Resolve()
+	 * on each, and copies the returned sim payloads into deterministic storage.
+	 * Also initializes abilities and reads identity/cost metadata off the
+	 * USeinArchetypeDefinition component.
 	 * @param ActorClass - Blueprint class (must be ASeinActor or subclass)
 	 * @param SpawnTransform - Initial transform in simulation space
 	 * @param OwnerPlayerID - Owning player

@@ -1,6 +1,6 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinTagComponent.h
+ * @file    SeinTagData.h
  * @brief   Component for gameplay tag management on entities.
  */
 
@@ -10,7 +10,7 @@
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Components/SeinComponent.h"
-#include "SeinTagComponent.generated.h"
+#include "SeinTagData.generated.h"
 
 /**
  * Tracks gameplay tags on an entity. Maintains separate containers for base
@@ -18,7 +18,7 @@
  * with a cached combined container for efficient queries.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinTagComponent : public FSeinComponent
+struct SEINARTSCOREENTITY_API FSeinTagData : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -53,7 +53,7 @@ struct SEINARTSCOREENTITY_API FSeinTagComponent : public FSeinComponent
 	void RemoveGrantedTag(const FGameplayTag& Tag);
 };
 
-FORCEINLINE uint32 GetTypeHash(const FSeinTagComponent& Comp)
+FORCEINLINE uint32 GetTypeHash(const FSeinTagData& Comp)
 {
 	uint32 Hash = 0;
 	for (const FGameplayTag& Tag : Comp.CombinedTags)

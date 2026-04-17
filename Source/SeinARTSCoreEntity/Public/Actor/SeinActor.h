@@ -67,7 +67,7 @@ public:
 protected:
 	/** Bridge component linking this actor to its simulation entity. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS")
-	TObjectPtr<USeinActorBridge> SeinActorBridge;
+	TObjectPtr<USeinActorBridge> ActorBridge;
 
 public:
 	// -- Lifecycle events --

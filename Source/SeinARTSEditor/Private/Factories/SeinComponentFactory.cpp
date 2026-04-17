@@ -1,17 +1,16 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- *
- * @file:		SeinComponentFactory.cpp
- * @date:		4/12/2026
- * @author:		RJ Macklem
- * @brief:		Implementation of SeinARTS component struct factory.
+ * @file    SeinComponentFactory.cpp
  */
 
 #include "Factories/SeinComponentFactory.h"
 #include "SeinARTSEditorModule.h"
 #include "Settings/PluginSettings.h"
-#include "UserDefinedStructure/UserDefinedStructEditorData.h"
-#include "Kismet2/StructureEditorUtils.h"
+#include "Dialogs/SSeinClassPickerDialog.h"
+#include "Components/ActorComponents/SeinActorComponent.h"
+#include "Components/ActorComponents/SeinDynamicComponent.h"
+#include "Components/ActorComponents/SeinComponentBlueprint.h"
+#include "Kismet2/KismetEditorUtilities.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -19,21 +18,39 @@ USeinComponentFactory::USeinComponentFactory()
 {
 	bCreateNew = true;
 	bEditAfterNew = true;
-	SupportedClass = UUserDefinedStruct::StaticClass();
+	SupportedClass = USeinComponentBlueprint::StaticClass();
+	// Default to USeinDynamicComponent so a plain "Component" asset opens ready to
+	// accept "Sein Sim Data" variables. Users can override via ConfigureProperties.
+	ParentClass = USeinDynamicComponent::StaticClass();
+	BlueprintType = BPTYPE_Normal;
 }
 
-UObject* USeinComponentFactory::FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
+UObject* USeinComponentFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext)
 {
-	UUserDefinedStruct* NewStruct = FStructureEditorUtils::CreateUserDefinedStruct(InParent, InName, Flags);
-	if (NewStruct)
+	return FKismetEditorUtilities::CreateBlueprint(
+		ParentClass, InParent, Name, BlueprintType,
+		USeinComponentBlueprint::StaticClass(),
+		UBlueprintGeneratedClass::StaticClass(),
+		CallingContext
+	);
+}
+
+bool USeinComponentFactory::ConfigureProperties()
+{
+	UClass* ChosenClass = SSeinClassPickerDialog::OpenDialog(
+		LOCTEXT("PickComponentParentClass", "Pick Parent Class for Component"),
+		USeinActorComponent::StaticClass(),
+		LOCTEXT("GenericComponent", "Sein Dynamic"),
+		LOCTEXT("GenericComponentTip", "Create a Blueprint subclass of USeinDynamicComponent (new sim data type via BP variables)")
+	);
+
+	if (!ChosenClass)
 	{
-		// Tag the struct so FSeinInstancedStructFilter can identify it as a
-		// SeinARTS component in the Components picker. (We cannot reparent UDS
-		// to FSeinComponent — UE's UDS compiler explicitly wipes SuperStruct
-		// to nullptr during each compile, so the tag is how we discriminate.)
-		NewStruct->SetMetaData(TEXT("SeinARTSComponent"), TEXT("true"));
+		return false;
 	}
-	return NewStruct;
+
+	ParentClass = ChosenClass;
+	return true;
 }
 
 FText USeinComponentFactory::GetDisplayName() const

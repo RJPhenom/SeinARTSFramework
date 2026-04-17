@@ -31,6 +31,7 @@ public class SeinARTSEditor : ModuleRules
             "UMG",
             "UMGEditor",
             "AssetDefinition",
+            "GameplayTags",
             "SeinARTSCore",
             "SeinARTSCoreEntity",
             "SeinARTSUIToolkit"

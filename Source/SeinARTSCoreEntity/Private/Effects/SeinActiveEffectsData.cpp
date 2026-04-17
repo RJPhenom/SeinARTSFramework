@@ -4,13 +4,13 @@
  * @brief   Implementation of the active effects component.
  */
 
-#include "Components/SeinActiveEffectsComponent.h"
+#include "Components/SeinActiveEffectsData.h"
 
 // ---------------------------------------------------------------------------
 // AddEffect
 // ---------------------------------------------------------------------------
 
-uint32 FSeinActiveEffectsComponent::AddEffect(const FSeinActiveEffect& Effect)
+uint32 FSeinActiveEffectsData::AddEffect(const FSeinActiveEffect& Effect)
 {
 	FSeinActiveEffect& Added = ActiveEffects.Add_GetRef(Effect);
 	Added.EffectInstanceID = NextEffectInstanceID++;
@@ -21,7 +21,7 @@ uint32 FSeinActiveEffectsComponent::AddEffect(const FSeinActiveEffect& Effect)
 // RemoveEffect
 // ---------------------------------------------------------------------------
 
-void FSeinActiveEffectsComponent::RemoveEffect(uint32 EffectInstanceID)
+void FSeinActiveEffectsData::RemoveEffect(uint32 EffectInstanceID)
 {
 	for (int32 i = ActiveEffects.Num() - 1; i >= 0; --i)
 	{
@@ -37,7 +37,7 @@ void FSeinActiveEffectsComponent::RemoveEffect(uint32 EffectInstanceID)
 // RemoveEffectsWithTag
 // ---------------------------------------------------------------------------
 
-void FSeinActiveEffectsComponent::RemoveEffectsWithTag(const FGameplayTag& Tag)
+void FSeinActiveEffectsData::RemoveEffectsWithTag(const FGameplayTag& Tag)
 {
 	if (!Tag.IsValid())
 	{
@@ -57,7 +57,7 @@ void FSeinActiveEffectsComponent::RemoveEffectsWithTag(const FGameplayTag& Tag)
 // HasEffectWithTag
 // ---------------------------------------------------------------------------
 
-bool FSeinActiveEffectsComponent::HasEffectWithTag(const FGameplayTag& Tag) const
+bool FSeinActiveEffectsData::HasEffectWithTag(const FGameplayTag& Tag) const
 {
 	if (!Tag.IsValid())
 	{
@@ -78,7 +78,7 @@ bool FSeinActiveEffectsComponent::HasEffectWithTag(const FGameplayTag& Tag) cons
 // GetStackCount
 // ---------------------------------------------------------------------------
 
-int32 FSeinActiveEffectsComponent::GetStackCount(FName EffectName) const
+int32 FSeinActiveEffectsData::GetStackCount(FName EffectName) const
 {
 	int32 TotalStacks = 0;
 	for (const FSeinActiveEffect& Effect : ActiveEffects)
@@ -95,7 +95,7 @@ int32 FSeinActiveEffectsComponent::GetStackCount(FName EffectName) const
 // CollectModifiers
 // ---------------------------------------------------------------------------
 
-void FSeinActiveEffectsComponent::CollectModifiers(TArray<FSeinModifier>& OutModifiers) const
+void FSeinActiveEffectsData::CollectModifiers(TArray<FSeinModifier>& OutModifiers) const
 {
 	for (const FSeinActiveEffect& Effect : ActiveEffects)
 	{
@@ -115,7 +115,7 @@ void FSeinActiveEffectsComponent::CollectModifiers(TArray<FSeinModifier>& OutMod
 // Clear
 // ---------------------------------------------------------------------------
 
-void FSeinActiveEffectsComponent::Clear()
+void FSeinActiveEffectsData::Clear()
 {
 	ActiveEffects.Empty();
 	NextEffectInstanceID = 1;

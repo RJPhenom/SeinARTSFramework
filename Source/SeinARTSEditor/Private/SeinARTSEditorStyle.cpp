@@ -61,30 +61,61 @@ void FSeinARTSEditorStyle::Initialize()
 
 	// ==================== Component ====================
 
-	StyleSet->Set(
-		"ClassIcon.SeinComponent",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinComponentIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
-	);
+	// Three lookup paths converge on this icon pair, so we register under all three keys:
+	//   1. "SeinComponent"          — USeinComponentFactory::GetNewAssetIconOverride
+	//                                 (right-click Content Browser menu + temp authoring thumbnail)
+	//   2. "SeinComponentBlueprint" — USeinComponentBlueprint asset-class lookup
+	//   3. "SeinActorComponent"     — base parent class; UE walks the parent chain for
+	//                                 the small corner badge, so this catches any
+	//                                 USeinDynamicComponent / typed-wrapper subclass.
+	auto RegisterComponentIcon = [&](const FName& Key)
+	{
+		StyleSet->Set(
+			Key,
+			new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinComponentIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+		);
+	};
+	auto RegisterComponentThumb = [&](const FName& Key)
+	{
+		StyleSet->Set(
+			Key,
+			new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinComponentIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+		);
+	};
 
-	StyleSet->Set(
-		"ClassThumbnail.SeinComponent",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinComponentIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
-	);
+	RegisterComponentIcon(TEXT("ClassIcon.SeinComponent"));
+	RegisterComponentIcon(TEXT("ClassIcon.SeinComponentBlueprint"));
+	RegisterComponentIcon(TEXT("ClassIcon.SeinActorComponent"));
 
-	// ==================== Widget (SeinWidgetBlueprint) ====================
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinComponent"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinComponentBlueprint"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinActorComponent"));
 
-	// Register under the UCLASS name so Unreal's content browser and tab-bar
-	// icon lookups ("ClassIcon.<UClassName>", "ClassThumbnail.<UClassName>")
-	// find them automatically for USeinWidgetBlueprint assets.
-	StyleSet->Set(
-		"ClassIcon.SeinWidgetBlueprint",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
-	);
+	// ==================== Widget ====================
 
-	StyleSet->Set(
-		"ClassThumbnail.SeinWidgetBlueprint",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
-	);
+	// Same multi-key pattern as Component — the content browser corner badge
+	// resolves via the BPGC's parent class chain (USeinUserWidget), not the
+	// asset class, so we register under both the asset class AND the parent class.
+	auto RegisterWidgetIcon = [&](const FName& Key)
+	{
+		StyleSet->Set(
+			Key,
+			new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+		);
+	};
+	auto RegisterWidgetThumb = [&](const FName& Key)
+	{
+		StyleSet->Set(
+			Key,
+			new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+		);
+	};
+
+	RegisterWidgetIcon(TEXT("ClassIcon.SeinWidgetBlueprint"));
+	RegisterWidgetIcon(TEXT("ClassIcon.SeinUserWidget"));
+
+	RegisterWidgetThumb(TEXT("ClassThumbnail.SeinWidgetBlueprint"));
+	RegisterWidgetThumb(TEXT("ClassThumbnail.SeinUserWidget"));
 
 	// ==================== Branding ====================
 

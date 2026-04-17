@@ -14,19 +14,20 @@
 #include "IAssetTools.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Thumbnails/SeinBlueprintThumbnailRenderer.h"
-#include "Thumbnails/SeinComponentThumbnailRenderer.h"
 #include "Engine/Blueprint.h"
-#include "StructUtils/UserDefinedStruct.h"
 #include "Actor/SeinActorBlueprint.h"
 #include "Abilities/SeinAbilityBlueprint.h"
+#include "Components/ActorComponents/SeinComponentBlueprint.h"
 #include "Widgets/SeinWidgetBlueprint.h"
 #include "WidgetBlueprint.h"
 #include "KismetCompiler.h"
+#include "BlueprintCompilationManager.h"
 #include "EdGraphUtilities.h"
 #include "Graph/SeinPinFactory.h"
 #include "PropertyEditorModule.h"
 #include "Details/SeinFixedPointDetails.h"
 #include "Details/SeinInstancedStructDetails.h"
+#include "Compile/SeinComponentCompilerExtension.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -70,17 +71,25 @@ void FSeinARTSEditorModule::StartupModule()
 		USeinBlueprintThumbnailRenderer::StaticClass()
 	);
 	ThumbnailMgr.RegisterCustomRenderer(
-		USeinWidgetBlueprint::StaticClass(),
+		USeinComponentBlueprint::StaticClass(),
 		USeinBlueprintThumbnailRenderer::StaticClass()
 	);
-	ThumbnailMgr.UnregisterCustomRenderer(UUserDefinedStruct::StaticClass());
-	ThumbnailMgr.RegisterCustomRenderer(
-		UUserDefinedStruct::StaticClass(),
-		USeinComponentThumbnailRenderer::StaticClass()
-	);
+	// Intentionally do NOT register our custom renderer for USeinWidgetBlueprint.
+	// Widget BPs need the engine's UWidgetBlueprintThumbnailRenderer to draw the
+	// designer preview; our 92px icon would otherwise overwrite it. The 16px
+	// corner badge and the purple color bar are still applied via
+	// ClassIcon.SeinWidgetBlueprint / ClassIcon.SeinUserWidget (style set) and
+	// UAssetDefinition_SeinWidgetBlueprint::GetAssetColor (asset definition) —
+	// both decorate the tile independently of the thumbnail renderer.
 
 	SeinPinFactory = MakeShared<FSeinPinFactory>();
 	FEdGraphUtilities::RegisterVisualPinFactory(SeinPinFactory);
+
+	// Register the BP compile hook that synthesises a sidecar UUserDefinedStruct
+	// for Blueprint subclasses of USeinDynamicComponent. TStrongObjectPtr
+	// keeps the object alive across the editor session and tears down safely.
+	ComponentCompilerExtension.Reset(NewObject<USeinComponentCompilerExtension>(GetTransientPackage(), NAME_None, RF_Transient));
+	FBlueprintCompilationManager::RegisterCompilerExtension(UBlueprint::StaticClass(), ComponentCompilerExtension.Get());
 
 	{
 		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -111,6 +120,12 @@ void FSeinARTSEditorModule::ShutdownModule()
 		FEdGraphUtilities::UnregisterVisualPinFactory(SeinPinFactory);
 		SeinPinFactory.Reset();
 	}
+
+	// The compilation manager still holds a strong ref to the extension via its
+	// internal TObjectPtr map; we just drop our side. TStrongObjectPtr's
+	// destructor handles the "UObject array is mid-teardown" case gracefully.
+	ComponentCompilerExtension.Reset();
+
 	UnregisterAssetTypeActions();
 	FSeinARTSEditorStyle::Shutdown();
 }
@@ -132,6 +147,7 @@ void FSeinARTSEditorModule::RegisterAssetTypeActions()
 
 	RegisterAction(MakeShared<FAssetTypeActions_SeinActorBlueprint>());
 	RegisterAction(MakeShared<FAssetTypeActions_SeinAbilityBlueprint>());
+	RegisterAction(MakeShared<FAssetTypeActions_SeinComponentBlueprint>());
 }
 
 void FSeinARTSEditorModule::UnregisterAssetTypeActions()

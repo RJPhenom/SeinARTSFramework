@@ -12,6 +12,7 @@
 #include "Actor/SeinActor.h"
 #include "Abilities/SeinAbility.h"
 #include "Widgets/SeinWidgetBlueprint.h"
+#include "Components/ActorComponents/SeinComponentBlueprint.h"
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
 #include "TextureResource.h"
@@ -112,13 +113,18 @@ USeinBlueprintThumbnailRenderer::ESeinAssetType USeinBlueprintThumbnailRenderer:
 		return ESeinAssetType::None;
 	}
 
-	// Widget is checked by asset class (USeinWidgetBlueprint), not parent class,
-	// because our factory produces a dedicated UCLASS. Unit/Ability use parent
-	// class checks since they're plain UBlueprint assets differentiated only
-	// by their parent.
+	// Widget and Component are checked by asset class (USeinWidgetBlueprint /
+	// USeinComponentBlueprint), not parent class, because those factories produce
+	// dedicated UCLASSes. Unit/Ability use parent class checks since they're
+	// plain UBlueprint assets differentiated only by their parent.
 	if (Blueprint->IsA<USeinWidgetBlueprint>())
 	{
 		return ESeinAssetType::Widget;
+	}
+
+	if (Blueprint->IsA<USeinComponentBlueprint>())
+	{
+		return ESeinAssetType::Component;
 	}
 
 	if (Blueprint->ParentClass->IsChildOf(ASeinActor::StaticClass()))
@@ -141,7 +147,7 @@ FLinearColor USeinBlueprintThumbnailRenderer::GetBarColor(ESeinAssetType Type)
 	case ESeinAssetType::Unit:      return FLinearColor(0.0f, 0.584f, 1.0f, 1.0f);    // #0095FF
 	case ESeinAssetType::Ability:   return FLinearColor(1.0f, 0.0f, 0.0f, 1.0f);      // #FF0000
 	case ESeinAssetType::Component: return FLinearColor(1.0f, 0.584f, 0.0f, 1.0f);    // #FF9500
-	case ESeinAssetType::Widget:    return FLinearColor(1.0f, 1.0f, 0.0f, 1.0f);      // #FFFF00
+	case ESeinAssetType::Widget:    return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("8844AA"))); // #8844AA
 	default:                        return FLinearColor::Transparent;
 	}
 }
