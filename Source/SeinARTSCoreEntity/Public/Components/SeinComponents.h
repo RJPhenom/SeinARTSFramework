@@ -13,6 +13,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "Components/SeinComponent.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
 #include "Types/EntityID.h"
@@ -23,7 +24,7 @@
  * Contains movement parameters and target location.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinMovementComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinMovementComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 
@@ -72,7 +73,7 @@ FORCEINLINE uint32 GetTypeHash(const FSeinMovementComponent& Component)
  * Contains attack parameters and targeting info.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinCombatComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinCombatComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

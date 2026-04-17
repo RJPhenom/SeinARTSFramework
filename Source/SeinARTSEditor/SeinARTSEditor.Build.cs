@@ -13,6 +13,7 @@ public class SeinARTSEditor : ModuleRules
             "Engine",
             "Slate",
             "SlateCore",
+            "InputCore",
             "UnrealEd",
             "AssetTools",
             "ClassViewer",
@@ -22,10 +23,17 @@ public class SeinARTSEditor : ModuleRules
             "BlueprintGraph",
             "EditorStyle",
             "Projects",
+            "PropertyEditor",
+            "StructUtilsEditor",
+            "StructViewer",
             "RenderCore",
             "ImageCore",
+            "UMG",
+            "UMGEditor",
+            "AssetDefinition",
             "SeinARTSCore",
-            "SeinARTSCoreEntity"
+            "SeinARTSCoreEntity",
+            "SeinARTSUIToolkit"
         });
     }
 }

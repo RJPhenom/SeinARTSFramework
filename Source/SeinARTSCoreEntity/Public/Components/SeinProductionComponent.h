@@ -13,6 +13,7 @@
 #include "GameplayTagContainer.h"
 #include "Actor/SeinActor.h"
 #include "Attributes/SeinModifier.h"
+#include "Components/SeinComponent.h"
 #include "SeinProductionComponent.generated.h"
 
 /**
@@ -66,7 +67,7 @@ FORCEINLINE uint32 GetTypeHash(const FSeinProductionQueueEntry& Entry)
  * Maintains a single ordered queue with configurable max size.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinProductionComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinProductionComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

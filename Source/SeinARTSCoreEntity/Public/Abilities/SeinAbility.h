@@ -43,9 +43,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
 	ESeinAbilityTargetType TargetType = ESeinAbilityTargetType::None;
 
-	/** Tags this ability has (for identification/queries) */
+	/** Generic tag container for identification, queries, and pattern matching. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
-	FGameplayTagContainer AbilityTags;
+	FGameplayTagContainer QueryTags;
 
 	/** Tags on entity that block this ability from activating */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")

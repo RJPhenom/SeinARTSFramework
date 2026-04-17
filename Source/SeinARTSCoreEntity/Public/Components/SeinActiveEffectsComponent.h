@@ -11,6 +11,7 @@
 #include "Effects/SeinActiveEffect.h"
 #include "Attributes/SeinModifier.h"
 #include "GameplayTagContainer.h"
+#include "Components/SeinComponent.h"
 #include "SeinActiveEffectsComponent.generated.h"
 
 /**
@@ -19,7 +20,7 @@
  * from all currently active effects.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinActiveEffectsComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinActiveEffectsComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

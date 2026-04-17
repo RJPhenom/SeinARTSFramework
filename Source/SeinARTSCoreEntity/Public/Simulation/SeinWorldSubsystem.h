@@ -286,34 +286,35 @@ TSeinComponentStorageV2<T>* USeinWorldSubsystem::RegisterComponentType()
 template<typename T>
 TSeinComponentStorageV2<T>* USeinWorldSubsystem::GetComponentStorage()
 {
-	UScriptStruct* TypeInfo = T::StaticStruct();
-	ISeinComponentStorageV2** Storage = ComponentStorages.Find(TypeInfo);
-	return Storage ? static_cast<TSeinComponentStorageV2<T>*>(*Storage) : nullptr;
+	// Deprecated: the storage backing any given component type at runtime is
+	// FSeinGenericComponentStorageV2 (created by GetOrCreateStorageForType),
+	// not the templated TSeinComponentStorageV2<T>. static_cast-ing the two
+	// is UB — they're sibling classes with different memory layouts.
+	// Callers should use GetComponent<T>/HasComponent<T>/AddComponent<T>
+	// instead, which route through the virtual ISeinComponentStorageV2 API.
+	return nullptr;
 }
 
 template<typename T>
 const TSeinComponentStorageV2<T>* USeinWorldSubsystem::GetComponentStorage() const
 {
-	UScriptStruct* TypeInfo = T::StaticStruct();
-	ISeinComponentStorageV2* const* Storage = ComponentStorages.Find(TypeInfo);
-	return Storage ? static_cast<const TSeinComponentStorageV2<T>*>(*Storage) : nullptr;
+	return nullptr;
 }
 
 template<typename T>
 void USeinWorldSubsystem::AddComponent(FSeinEntityHandle Handle, const T& Component)
 {
-	TSeinComponentStorageV2<T>* Storage = GetComponentStorage<T>();
-	if (!Storage)
+	ISeinComponentStorageV2* Storage = GetOrCreateStorageForType(T::StaticStruct());
+	if (Storage)
 	{
-		Storage = RegisterComponentType<T>();
+		Storage->AddComponent(Handle, &Component);
 	}
-	Storage->AddTyped(Handle, Component);
 }
 
 template<typename T>
 void USeinWorldSubsystem::RemoveComponent(FSeinEntityHandle Handle)
 {
-	if (TSeinComponentStorageV2<T>* Storage = GetComponentStorage<T>())
+	if (ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct()))
 	{
 		Storage->RemoveComponent(Handle);
 	}
@@ -322,29 +323,20 @@ void USeinWorldSubsystem::RemoveComponent(FSeinEntityHandle Handle)
 template<typename T>
 T* USeinWorldSubsystem::GetComponent(FSeinEntityHandle Handle)
 {
-	if (TSeinComponentStorageV2<T>* Storage = GetComponentStorage<T>())
-	{
-		return Storage->GetComponent(Handle);
-	}
-	return nullptr;
+	ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	return Storage ? static_cast<T*>(Storage->GetComponentRaw(Handle)) : nullptr;
 }
 
 template<typename T>
 const T* USeinWorldSubsystem::GetComponent(FSeinEntityHandle Handle) const
 {
-	if (const TSeinComponentStorageV2<T>* Storage = GetComponentStorage<T>())
-	{
-		return Storage->GetComponent(Handle);
-	}
-	return nullptr;
+	const ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	return Storage ? static_cast<const T*>(Storage->GetComponentRaw(Handle)) : nullptr;
 }
 
 template<typename T>
 bool USeinWorldSubsystem::HasComponent(FSeinEntityHandle Handle) const
 {
-	if (const TSeinComponentStorageV2<T>* Storage = GetComponentStorage<T>())
-	{
-		return Storage->HasComponent(Handle);
-	}
-	return false;
+	const ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	return Storage && Storage->HasComponent(Handle);
 }

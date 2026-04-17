@@ -57,13 +57,18 @@ void SSeinClassPickerDialog::Construct(const FArguments& InArgs, UClass* InBaseC
 	BaseClass = InBaseClass;
 	SelectedClass = InBaseClass;
 
-	// Class viewer options
+	// Class viewer options. ListView (not TreeView) keeps the list flat: only
+	// classes the filter allows are shown. TreeView would also display parent
+	// classes for navigational context even when filtered out, which defeats
+	// the "only descendants of the base class" intent.
 	FClassViewerInitializationOptions Options;
 	Options.Mode = EClassViewerMode::ClassPicker;
-	Options.DisplayMode = EClassViewerDisplayMode::TreeView;
+	Options.DisplayMode = EClassViewerDisplayMode::ListView;
 	Options.ClassFilters.Add(MakeShared<FSeinClassFilter>(InBaseClass));
 	Options.bShowUnloadedBlueprints = true;
 	Options.bShowNoneOption = false;
+	Options.bShowObjectRootClass = false;
+	Options.bShowDefaultClasses = false;
 
 	FClassViewerModule& ClassViewerModule = FModuleManager::LoadModuleChecked<FClassViewerModule>("ClassViewer");
 	TSharedRef<SWidget> ClassViewer = ClassViewerModule.CreateClassViewer(
@@ -81,14 +86,21 @@ void SSeinClassPickerDialog::Construct(const FArguments& InArgs, UClass* InBaseC
 		[
 			SNew(SVerticalBox)
 
-			// Wordmark header
+			// Wordmark header. Fixed size matching the brush's native 488x126
+			// aspect ratio (scaled down to half). Using SBox overrides with the
+			// correct ratio prevents the image from being squashed horizontally.
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			.Padding(0, 4, 0, 12)
 			.HAlign(HAlign_Center)
 			[
-				SNew(SImage)
-				.Image(WordmarkBrush)
+				SNew(SBox)
+				.WidthOverride(244.0f)
+				.HeightOverride(63.0f)
+				[
+					SNew(SImage)
+					.Image(WordmarkBrush)
+				]
 			]
 
 			// Quick buttons

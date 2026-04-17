@@ -75,11 +75,18 @@ public:
 
 	// ========== Internal (called by USeinUISubsystem) ==========
 
-	/** Initialize and bind to the player controller's selection delegate. */
+	/** Initialize. Binds to the player controller's selection delegate if one is already available. */
 	void Initialize(USeinUISubsystem* InOwningSubsystem);
 
 	/** Unbind from delegates. */
 	void Deinitialize();
+
+	/**
+	 * Bind to the local player controller's OnSelectionChanged if we haven't yet.
+	 * Cheap no-op once bound. Called every sim tick by the UI subsystem so we
+	 * catch the PC once it spawns (WorldSubsystem init runs before PC creation).
+	 */
+	void EnsurePlayerControllerBound();
 
 private:
 	/** Rebuild the ViewModel list from the current selection. */

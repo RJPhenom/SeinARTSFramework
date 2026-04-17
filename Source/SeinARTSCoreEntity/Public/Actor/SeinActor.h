@@ -18,7 +18,7 @@
 #include "GameplayTagContainer.h"
 #include "SeinActor.generated.h"
 
-class USeinActorComponent;
+class USeinActorBridge;
 class USeinArchetypeDefinition;
 
 /**
@@ -65,9 +65,9 @@ public:
 	TObjectPtr<USeinArchetypeDefinition> ArchetypeDefinition;
 
 protected:
-	/** Component linking this actor to simulation entity */
+	/** Bridge component linking this actor to its simulation entity. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS")
-	TObjectPtr<USeinActorComponent> SeinComponent;
+	TObjectPtr<USeinActorBridge> SeinActorBridge;
 
 public:
 	// -- Lifecycle events --
@@ -81,7 +81,7 @@ public:
 	void ReceiveEntityDestroyed();
 
 	// -- Visual events from simulation --
-	// These are fired by USeinActorComponent::HandleVisualEvent and are
+	// These are fired by USeinActorBridge::HandleVisualEvent and are
 	// BlueprintImplementableEvent so designers can react in BP subclasses.
 
 	/** Called when this entity takes damage */

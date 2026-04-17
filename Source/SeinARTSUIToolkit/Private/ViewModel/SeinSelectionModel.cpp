@@ -15,16 +15,39 @@ void USeinSelectionModel::Initialize(USeinUISubsystem* InOwningSubsystem)
 {
 	OwningSubsystem = InOwningSubsystem;
 
-	// Find the local player controller
-	UWorld* World = InOwningSubsystem ? InOwningSubsystem->GetWorld() : nullptr;
-	if (World)
+	// First attempt. Almost always a no-op: WorldSubsystem::Initialize runs
+	// before the player controller is spawned, so GetFirstPlayerController()
+	// returns null here. The UI subsystem's sim-tick handler retries every
+	// tick until the PC is available.
+	EnsurePlayerControllerBound();
+}
+
+void USeinSelectionModel::EnsurePlayerControllerBound()
+{
+	if (CachedPlayerController.IsValid())
 	{
-		CachedPlayerController = Cast<ASeinPlayerController>(World->GetFirstPlayerController());
-		if (CachedPlayerController.IsValid())
-		{
-			CachedPlayerController->OnSelectionChanged.AddDynamic(this, &USeinSelectionModel::HandleSelectionChanged);
-		}
+		return;
 	}
+
+	UWorld* World = OwningSubsystem.IsValid() ? OwningSubsystem->GetWorld() : nullptr;
+	if (!World)
+	{
+		return;
+	}
+
+	ASeinPlayerController* PC = Cast<ASeinPlayerController>(World->GetFirstPlayerController());
+	if (!PC)
+	{
+		return;
+	}
+
+	CachedPlayerController = PC;
+	PC->OnSelectionChanged.AddDynamic(this, &USeinSelectionModel::HandleSelectionChanged);
+
+	// Prime the VM list + fire an initial broadcast so any widgets already
+	// bound to OnSelectionChanged (e.g. from Event Construct) get their first
+	// notification with the current selection state.
+	HandleSelectionChanged();
 }
 
 void USeinSelectionModel::Deinitialize()

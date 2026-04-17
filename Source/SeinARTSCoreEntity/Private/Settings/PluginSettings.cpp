@@ -1,7 +1,7 @@
 /**
- * SeinARTS Framework 
+ * SeinARTS Framework
  * Copyright (c) 2026 Phenom Studios, Inc.
- * 
+ *
  * @file:		PluginSettings.cpp
  * @date:		1/17/2026
  * @author:		RJ Macklem
@@ -14,6 +14,12 @@
 USeinARTSCoreSettings::USeinARTSCoreSettings()
 	: SimulationTickRate(30)
 	, MaxTicksPerFrame(5)
+#if WITH_EDITORONLY_DATA
+	, bShowUnitInBasicCategory(true)
+	, bShowAbilityInBasicCategory(true)
+	, bShowComponentInBasicCategory(false)
+	, bShowWidgetInBasicCategory(false)
+#endif
 {
 }
 
@@ -25,12 +31,12 @@ FName USeinARTSCoreSettings::GetCategoryName() const
 #if WITH_EDITOR
 FText USeinARTSCoreSettings::GetSectionText() const
 {
-	return NSLOCTEXT("SeinARTSCore", "SeinARTSCoreSettingsSection", "SeinARTS Core");
+	return NSLOCTEXT("SeinARTSCore", "SeinARTSCoreSettingsSection", "SeinARTS");
 }
 
 FText USeinARTSCoreSettings::GetSectionDescription() const
 {
-	return NSLOCTEXT("SeinARTSCore", "SeinARTSCoreSettingsDescription", 
-		"Configure deterministic simulation, fixed-point math, and lockstep networking settings.");
+	return NSLOCTEXT("SeinARTSCore", "SeinARTSCoreSettingsDescription",
+		"Configure SeinARTS simulation, editor, and content creation settings.");
 }
 #endif

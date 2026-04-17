@@ -39,5 +39,5 @@ public:
 	virtual uint32 GetCategories() override;
 };
 
-// Note: Component (UUserDefinedStruct) uses the default struct color.
-// Custom color would require a UUserDefinedStruct subclass.
+// Note: Component (UUserDefinedStruct) uses engine default color. Per-asset color
+// would require UAssetDefinition migration (not blocking).

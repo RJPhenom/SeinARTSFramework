@@ -15,7 +15,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinCommandLog, Log, All);
 // ==================== Console Commands ====================
 
 static FAutoConsoleCommand CmdToggleCommandLog(
-	TEXT("SeinARTS.commandlog"),
+	TEXT("SeinARTS.Debug.CommandLog"),
 	TEXT("Toggle the SeinARTS command transaction log overlay"),
 	FConsoleCommandDelegate::CreateLambda([]()
 	{
@@ -36,7 +36,7 @@ static FAutoConsoleCommand CmdToggleCommandLog(
 );
 
 static FAutoConsoleCommand CmdClearCommandLog(
-	TEXT("SeinARTS.commandlog.clear"),
+	TEXT("SeinARTS.Debug.CommandLog.Clear"),
 	TEXT("Clear the SeinARTS command transaction log"),
 	FConsoleCommandDelegate::CreateLambda([]()
 	{

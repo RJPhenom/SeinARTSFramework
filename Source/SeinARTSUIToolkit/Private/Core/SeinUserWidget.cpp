@@ -16,17 +16,17 @@
 
 void USeinUserWidget::NativeConstruct()
 {
-	Super::NativeConstruct();
-
-	UWorld* World = GetWorld();
-	if (!World)
+	// Cache subsystems BEFORE Super::NativeConstruct() fires the BP "Event Construct".
+	// Otherwise BP code that calls GetSelectionModel() / etc. from Event Construct
+	// sees null subsystems and returns nullptr.
+	if (UWorld* World = GetWorld())
 	{
-		return;
+		UISubsystem = World->GetSubsystem<USeinUISubsystem>();
+		WorldSubsystem = World->GetSubsystem<USeinWorldSubsystem>();
+		SeinPlayerController = Cast<ASeinPlayerController>(GetOwningPlayer());
 	}
 
-	UISubsystem = World->GetSubsystem<USeinUISubsystem>();
-	WorldSubsystem = World->GetSubsystem<USeinWorldSubsystem>();
-	SeinPlayerController = Cast<ASeinPlayerController>(GetOwningPlayer());
+	Super::NativeConstruct();
 }
 
 USeinSelectionModel* USeinUserWidget::GetSelectionModel() const

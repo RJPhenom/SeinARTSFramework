@@ -48,8 +48,4 @@ uint32 FAssetTypeActions_SeinAbilityBlueprint::GetCategories()
 	return EAssetTypeCategories::Basic | FSeinARTSEditorModule::GetAssetCategoryBit();
 }
 
-// Note: Component (UUserDefinedStruct) cannot have custom IAssetTypeActions
-// without a custom struct subclass — registering for UUserDefinedStruct would
-// change the color for ALL user defined structs engine-wide.
-
 #undef LOCTEXT_NAMESPACE

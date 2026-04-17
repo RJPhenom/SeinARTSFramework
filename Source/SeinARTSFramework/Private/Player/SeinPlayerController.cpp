@@ -9,10 +9,11 @@
 #include "Player/SeinSelectionComponent.h"
 #include "Input/SeinInputConfig.h"
 #include "Actor/SeinActor.h"
-#include "Actor/SeinActorComponent.h"
+#include "Actor/SeinActorBridge.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Input/SeinCommand.h"
+#include "Tags/SeinARTSGameplayTags.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/World.h"
@@ -860,12 +861,12 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 	FGameplayTagContainer Context;
 
 	// Base context
-	Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.RightClick")));
+	Context.AddTag(SeinARTSTags::CommandContext_RightClick);
 
 	if (!HitActor || !HitActor->HasValidEntity())
 	{
 		// Ground click
-		Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.Target.Ground")));
+		Context.AddTag(SeinARTSTags::CommandContext_Target_Ground);
 		return Context;
 	}
 
@@ -873,7 +874,7 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem)
 	{
-		Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.Target.Ground")));
+		Context.AddTag(SeinARTSTags::CommandContext_Target_Ground);
 		return Context;
 	}
 
@@ -881,16 +882,16 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 
 	if (TargetOwner == SeinPlayerID)
 	{
-		Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.Target.Friendly")));
+		Context.AddTag(SeinARTSTags::CommandContext_Target_Friendly);
 	}
 	else if (TargetOwner.IsNeutral())
 	{
 		// Neutral entities (resources, capture points)
-		Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.Target.Neutral")));
+		Context.AddTag(SeinARTSTags::CommandContext_Target_Neutral);
 	}
 	else
 	{
-		Context.AddTag(FGameplayTag::RequestGameplayTag(FName("CommandContext.Target.Enemy")));
+		Context.AddTag(SeinARTSTags::CommandContext_Target_Enemy);
 	}
 
 	// Add entity-specific context tags by checking the target's gameplay tags

@@ -1,20 +1,20 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  *
- * @file:		SeinActorComponent.cpp
+ * @file:		SeinActorBridge.cpp
  * @date:		2/28/2026
  * @author:		RJ Macklem
- * @brief:		Implementation of actor component bridge with interpolation
- *				and visual event forwarding.
+ * @brief:		Implementation of actor-to-sim bridge component with
+ *				interpolation and visual event forwarding.
  */
 
-#include "Actor/SeinActorComponent.h"
+#include "Actor/SeinActorBridge.h"
 #include "Actor/SeinActor.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Events/SeinVisualEvent.h"
 #include "Types/Entity.h"
 
-USeinActorComponent::USeinActorComponent()
+USeinActorBridge::USeinActorBridge()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
@@ -24,7 +24,7 @@ USeinActorComponent::USeinActorComponent()
 	CachedSubsystem = nullptr;
 }
 
-void USeinActorComponent::BeginPlay()
+void USeinActorBridge::BeginPlay()
 {
 	Super::BeginPlay();
 
@@ -32,7 +32,7 @@ void USeinActorComponent::BeginPlay()
 	GetSubsystem();
 }
 
-void USeinActorComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+void USeinActorBridge::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
@@ -42,13 +42,13 @@ void USeinActorComponent::TickComponent(float DeltaTime, ELevelTick TickType, FA
 	}
 }
 
-void USeinActorComponent::SetEntityHandle(FSeinEntityHandle InHandle)
+void USeinActorBridge::SetEntityHandle(FSeinEntityHandle InHandle)
 {
 	EntityHandle = InHandle;
 
 	if (EntityHandle.IsValid())
 	{
-		UE_LOG(LogTemp, Log, TEXT("SeinActorComponent linked to entity %s"), *EntityHandle.ToString());
+		UE_LOG(LogTemp, Log, TEXT("SeinActorBridge linked to entity %s"), *EntityHandle.ToString());
 
 		// Take initial transform snapshot so interpolation has valid data from frame one
 		USeinWorldSubsystem* Subsystem = GetSubsystem();
@@ -65,14 +65,14 @@ void USeinActorComponent::SetEntityHandle(FSeinEntityHandle InHandle)
 	}
 }
 
-bool USeinActorComponent::HasValidEntity() const
+bool USeinActorBridge::HasValidEntity() const
 {
 	if (!EntityHandle.IsValid())
 	{
 		return false;
 	}
 
-	USeinWorldSubsystem* Subsystem = const_cast<USeinActorComponent*>(this)->GetSubsystem();
+	USeinWorldSubsystem* Subsystem = const_cast<USeinActorBridge*>(this)->GetSubsystem();
 	if (!Subsystem)
 	{
 		return false;
@@ -81,12 +81,12 @@ bool USeinActorComponent::HasValidEntity() const
 	return Subsystem->IsEntityAlive(EntityHandle);
 }
 
-void USeinActorComponent::SetTransformSyncEnabled(bool bEnable)
+void USeinActorBridge::SetTransformSyncEnabled(bool bEnable)
 {
 	bSyncTransform = bEnable;
 }
 
-void USeinActorComponent::OnSimTick()
+void USeinActorBridge::OnSimTick()
 {
 	USeinWorldSubsystem* Subsystem = GetSubsystem();
 	if (!Subsystem || !EntityHandle.IsValid())
@@ -106,7 +106,7 @@ void USeinActorComponent::OnSimTick()
 	bHasSimSnapshot = true;
 }
 
-void USeinActorComponent::HandleVisualEvent(const FSeinVisualEvent& Event)
+void USeinActorBridge::HandleVisualEvent(const FSeinVisualEvent& Event)
 {
 	AActor* Owner = GetOwner();
 	if (!Owner)
@@ -156,7 +156,7 @@ void USeinActorComponent::HandleVisualEvent(const FSeinVisualEvent& Event)
 	}
 }
 
-USeinWorldSubsystem* USeinActorComponent::GetSubsystem()
+USeinWorldSubsystem* USeinActorBridge::GetSubsystem()
 {
 	if (!CachedSubsystem)
 	{
@@ -170,7 +170,7 @@ USeinWorldSubsystem* USeinActorComponent::GetSubsystem()
 	return CachedSubsystem;
 }
 
-void USeinActorComponent::SyncTransformToActor()
+void USeinActorBridge::SyncTransformToActor()
 {
 	USeinWorldSubsystem* Subsystem = GetSubsystem();
 	if (!Subsystem)

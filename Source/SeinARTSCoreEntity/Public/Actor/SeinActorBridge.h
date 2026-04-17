@@ -1,11 +1,14 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  *
- * @file:		SeinActorComponent.h
+ * @file:		SeinActorBridge.h
  * @date:		2/28/2026
  * @author:		RJ Macklem
- * @brief:		Component linking visual actor to simulation entity.
- *				Uses generational entity handles and interpolated transform sync.
+ * @brief:		Actor component bridging a visual actor to its simulation entity.
+ *				Uses generational entity handles, interpolated transform sync,
+ *				and forwards visual events from the sim to Blueprint-implementable
+ *				events on the owning ASeinActor. Named "Bridge" to distinguish
+ *				from FSeinComponent (the sim-side USTRUCT base class).
  */
 
 #pragma once
@@ -14,7 +17,7 @@
 #include "Components/ActorComponent.h"
 #include "Core/SeinEntityHandle.h"
 #include "Types/Transform.h"
-#include "SeinActorComponent.generated.h"
+#include "SeinActorBridge.generated.h"
 
 class USeinWorldSubsystem;
 struct FSeinVisualEvent;
@@ -26,12 +29,12 @@ struct FSeinVisualEvent;
  * from the simulation to the owning actor.
  */
 UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent))
-class SEINARTSCOREENTITY_API USeinActorComponent : public UActorComponent
+class SEINARTSCOREENTITY_API USeinActorBridge : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	USeinActorComponent();
+	USeinActorBridge();
 
 	// UActorComponent interface
 	virtual void BeginPlay() override;

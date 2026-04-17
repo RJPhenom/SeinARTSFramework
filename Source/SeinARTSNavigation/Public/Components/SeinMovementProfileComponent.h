@@ -13,12 +13,13 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "Templates/SubclassOf.h"
+#include "Components/SeinComponent.h"
 #include "SeinMovementProfileComponent.generated.h"
 
 class USeinMovementProfile;
 
 USTRUCT(BlueprintType)
-struct SEINARTSNAVIGATION_API FSeinMovementProfileComponent : public FTableRowBase
+struct SEINARTSNAVIGATION_API FSeinMovementProfileComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

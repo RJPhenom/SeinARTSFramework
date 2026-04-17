@@ -67,7 +67,7 @@ struct SEINARTSUITOOLKIT_API FSeinAbilityInfo
 	TMap<FName, float> ResourceCost;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI|Ability")
-	FGameplayTagContainer AbilityTags;
+	FGameplayTagContainer QueryTags;
 };
 
 /**

@@ -11,6 +11,7 @@
 #include "Types/FixedPoint.h"
 #include "Core/SeinEntityHandle.h"
 #include "Actor/SeinActor.h"
+#include "Components/SeinComponent.h"
 #include "SeinSquadComponent.generated.h"
 
 /**
@@ -18,7 +19,7 @@
  * Tracks squad members, leadership, and reinforcement parameters.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinSquadComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinSquadComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

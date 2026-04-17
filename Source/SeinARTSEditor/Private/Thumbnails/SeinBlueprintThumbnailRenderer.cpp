@@ -11,6 +11,7 @@
 #include "SeinARTSEditorStyle.h"
 #include "Actor/SeinActor.h"
 #include "Abilities/SeinAbility.h"
+#include "Widgets/SeinWidgetBlueprint.h"
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
 #include "TextureResource.h"
@@ -19,17 +20,26 @@
 
 bool USeinBlueprintThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 {
-	if (ClassifyBlueprint(Object) != ESeinAssetType::None)
-	{
-		return true;
-	}
-	return Super::CanVisualizeAsset(Object);
+	const ESeinAssetType Type = ClassifyBlueprint(Object);
+	const bool bSuperResult = (Type == ESeinAssetType::None) ? Super::CanVisualizeAsset(Object) : false;
+	const bool bResult = (Type != ESeinAssetType::None) || bSuperResult;
+
+	UE_LOG(LogTemp, Log, TEXT("[SeinARTSEditor] CanVisualizeAsset for %s (class=%s) classified=%d -> %s"),
+		Object ? *Object->GetName() : TEXT("<null>"),
+		Object && Object->GetClass() ? *Object->GetClass()->GetName() : TEXT("<null>"),
+		(int32)Type,
+		bResult ? TEXT("true") : TEXT("false"));
+
+	return bResult;
 }
 
 void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height,
 	FRenderTarget* RenderTarget, FCanvas* Canvas, bool bAdditionalViewFamily)
 {
 	const ESeinAssetType AssetType = ClassifyBlueprint(Object);
+
+	UE_LOG(LogTemp, Log, TEXT("[SeinARTSEditor] USeinBlueprintThumbnailRenderer::Draw for %s — classified as %d"),
+		Object ? *Object->GetName() : TEXT("<null>"), (int32)AssetType);
 
 	// Non-SeinARTS Blueprints: fall through to default rendering
 	if (AssetType == ESeinAssetType::None)
@@ -81,6 +91,7 @@ const FTexture* USeinBlueprintThumbnailRenderer::GetIconResource(ESeinAssetType 
 	case ESeinAssetType::Unit:      TextureName = FName(TEXT("SeinUnitIcon92"));      break;
 	case ESeinAssetType::Ability:   TextureName = FName(TEXT("SeinAbilityIcon92"));   break;
 	case ESeinAssetType::Component: TextureName = FName(TEXT("SeinComponentIcon92")); break;
+	case ESeinAssetType::Widget:    TextureName = FName(TEXT("SeinWidgetIcon92"));    break;
 	default: return nullptr;
 	}
 
@@ -99,6 +110,15 @@ USeinBlueprintThumbnailRenderer::ESeinAssetType USeinBlueprintThumbnailRenderer:
 	if (!Blueprint || !Blueprint->ParentClass)
 	{
 		return ESeinAssetType::None;
+	}
+
+	// Widget is checked by asset class (USeinWidgetBlueprint), not parent class,
+	// because our factory produces a dedicated UCLASS. Unit/Ability use parent
+	// class checks since they're plain UBlueprint assets differentiated only
+	// by their parent.
+	if (Blueprint->IsA<USeinWidgetBlueprint>())
+	{
+		return ESeinAssetType::Widget;
 	}
 
 	if (Blueprint->ParentClass->IsChildOf(ASeinActor::StaticClass()))
@@ -121,6 +141,7 @@ FLinearColor USeinBlueprintThumbnailRenderer::GetBarColor(ESeinAssetType Type)
 	case ESeinAssetType::Unit:      return FLinearColor(0.0f, 0.584f, 1.0f, 1.0f);    // #0095FF
 	case ESeinAssetType::Ability:   return FLinearColor(1.0f, 0.0f, 0.0f, 1.0f);      // #FF0000
 	case ESeinAssetType::Component: return FLinearColor(1.0f, 0.584f, 0.0f, 1.0f);    // #FF9500
+	case ESeinAssetType::Widget:    return FLinearColor(1.0f, 1.0f, 0.0f, 1.0f);      // #FFFF00
 	default:                        return FLinearColor::Transparent;
 	}
 }

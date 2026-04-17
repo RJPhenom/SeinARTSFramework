@@ -92,51 +92,51 @@ public:
 	// ========== Identity ==========
 
 	/** Display name for this entity type (shown in UI, production queues, etc.) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Identity")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FText DisplayName;
 
 	/** Description of this entity type */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Identity", meta = (MultiLine = true))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (MultiLine = true))
 	FText Description;
 
 	/** Icon texture for UI (production buttons, selection panel) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Identity")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	TObjectPtr<UTexture2D> Icon;
 
 	/** Portrait texture for UI (info panel, veterancy display) */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Identity")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	TObjectPtr<UTexture2D> Portrait;
 
 	/** Gameplay tag uniquely identifying this archetype (e.g., Unit.Infantry, Building.Barracks). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Identity")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FGameplayTag ArchetypeTag;
 
 	// ========== Production ==========
 
 	/** Resource cost to produce this entity. Keys are resource names (e.g., "Manpower", "Fuel"). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Production")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	TMap<FName, FFixedPoint> ProductionCost;
 
 	/** Time in sim-seconds to produce this entity. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Production")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FFixedPoint BuildTime;
 
 	/** Tech tags the owning player must have unlocked to produce/research this. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Production")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FGameplayTagContainer PrerequisiteTags;
 
 	// ========== Research ==========
 
 	/** If true, completing production grants a tech tag instead of spawning a unit. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Research")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	bool bIsResearch = false;
 
 	/** Tech tag granted to the player when research completes. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Research", meta = (EditCondition = "bIsResearch"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (EditCondition = "bIsResearch"))
 	FGameplayTag GrantedTechTag;
 
 	/** Archetype modifiers granted to the player when research completes (e.g., stat bonuses). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Research", meta = (EditCondition = "bIsResearch"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (EditCondition = "bIsResearch"))
 	TArray<FSeinModifier> GrantedModifiers;
 
 	// ========== Sim Components ==========
@@ -151,16 +151,19 @@ public:
 	 *
 	 * SpawnEntity uses GetResolvedComponents() which unifies both paths.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Components")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	bool bUseDataTableDefaults = false;
 
 	/**
 	 * Inline simulation components (used when bUseDataTableDefaults = false).
 	 * Each entry is a typed component struct with its default values.
-	 * The type picker selects the component type; fields expand inline for editing.
+	 * The type picker filters to FSeinComponent subclasses so designers only
+	 * see Sein sim components (instead of every USTRUCT in the engine).
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Components",
-		meta = (EditCondition = "!bUseDataTableDefaults"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype",
+		meta = (EditCondition = "!bUseDataTableDefaults",
+				BaseStruct = "/Script/SeinARTSCoreEntity.SeinComponent",
+				ExcludeBaseStruct))
 	TArray<FInstancedStruct> Components;
 
 	/**
@@ -169,7 +172,7 @@ public:
 	 * determines the component type (e.g., a DT with FSeinCombatComponent rows).
 	 * Component structs must inherit FTableRowBase.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Components",
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype",
 		meta = (EditCondition = "bUseDataTableDefaults"))
 	TArray<FSeinComponentTableRef> DataTableComponents;
 
@@ -191,7 +194,7 @@ public:
 	 *
 	 * See FSeinCommandMapping for detailed usage examples.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Commands")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	TArray<FSeinCommandMapping> DefaultCommands;
 
 	/**
@@ -199,7 +202,7 @@ public:
 	 * Typically set to Ability.Movement so unmapped contexts default to move.
 	 * If empty, no command is issued for unmatched contexts.
 	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Commands")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FGameplayTag FallbackAbilityTag;
 
 	/**
@@ -207,7 +210,7 @@ public:
 	 * @param Context - Tags describing the input context (e.g., RightClick + Target.Enemy)
 	 * @return The best-matching ability tag, or FallbackAbilityTag if no mapping matches.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype|Commands")
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
 	FGameplayTag ResolveCommandContext(const FGameplayTagContainer& Context) const;
 
 	// ========== Queries ==========

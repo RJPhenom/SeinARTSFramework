@@ -9,6 +9,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "Types/FixedPoint.h"
+#include "Components/SeinComponent.h"
 #include "SeinResourceIncomeComponent.generated.h"
 
 /**
@@ -16,7 +17,7 @@
  * Used by captured resource points, economic buildings, etc.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinResourceIncomeComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinResourceIncomeComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

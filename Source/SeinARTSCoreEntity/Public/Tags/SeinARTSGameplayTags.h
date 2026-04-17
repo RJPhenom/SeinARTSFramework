@@ -7,6 +7,9 @@
 // Designer/game-specific tags (factions, unit identities, tech trees, terrain
 // types, effects, etc.) should live in the project's own tag sources, not
 // here. Only tags that the framework itself references belong in this file.
+//
+// All framework tags live under the "SeinARTS." root to keep them namespaced
+// away from project tags.
 
 #pragma once
 
@@ -16,6 +19,9 @@
 
 namespace SeinARTSTags
 {
+	// --- Root ---
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(SeinARTS);
+
 	// --- CommandContext ---
 	// Consumed by ASeinPlayerController::BuildCommandContext to describe the
 	// player's click intent. Matched against USeinArchetypeDefinition::DefaultCommands
@@ -30,6 +36,7 @@ namespace SeinARTSTags
 	// Standard ability slots the framework knows about. Designers author the
 	// actual USeinAbility Blueprints and map these tags in the archetype's
 	// DefaultCommands array.
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability);
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Move);
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Stop);
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_AttackMove);
@@ -37,4 +44,12 @@ namespace SeinARTSTags
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Build);
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Repair);
 	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Ability_Garrison);
+
+	// --- Unit ---
+	// Broad unit classification tags — designers extend these in their own
+	// tag sources to build out faction/archetype trees.
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Unit);
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Unit_Basic);
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Unit_Infantry);
+	SEINARTSCOREENTITY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Unit_Vehicle);
 }

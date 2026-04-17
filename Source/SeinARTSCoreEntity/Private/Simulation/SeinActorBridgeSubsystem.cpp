@@ -8,7 +8,7 @@
 #include "Simulation/SeinActorBridgeSubsystem.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
-#include "Actor/SeinActorComponent.h"
+#include "Actor/SeinActorBridge.h"
 #include "Events/SeinVisualEvent.h"
 #include "Engine/World.h"
 
@@ -76,7 +76,7 @@ void USeinActorBridgeSubsystem::HandleSimTick(int32 Tick)
 		if (It->Value.IsValid())
 		{
 			ASeinActor* Actor = It->Value.Get();
-			if (USeinActorComponent* Comp = Actor->FindComponentByClass<USeinActorComponent>())
+			if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
 			{
 				Comp->OnSimTick();
 			}
@@ -118,11 +118,11 @@ void USeinActorBridgeSubsystem::DispatchVisualEvent(const FSeinVisualEvent& Even
 
 	default:
 	{
-		// Route to the target actor's SeinActorComponent
+		// Route to the target actor's SeinActorBridge
 		TWeakObjectPtr<ASeinActor>* ActorPtr = EntityActorMap.Find(Event.PrimaryEntity);
 		if (ActorPtr && ActorPtr->IsValid())
 		{
-			if (USeinActorComponent* Comp = ActorPtr->Get()->FindComponentByClass<USeinActorComponent>())
+			if (USeinActorBridge* Comp = ActorPtr->Get()->FindComponentByClass<USeinActorBridge>())
 			{
 				Comp->HandleVisualEvent(Event);
 			}
@@ -189,7 +189,7 @@ void USeinActorBridgeSubsystem::HandleEntityDestroyed(FSeinEntityHandle Handle, 
 	ASeinActor* Actor = ActorPtr->Get();
 
 	// Route the destroy event to the actor so it can trigger ReceiveDeath / ReceiveEntityDestroyed
-	if (USeinActorComponent* Comp = Actor->FindComponentByClass<USeinActorComponent>())
+	if (USeinActorBridge* Comp = Actor->FindComponentByClass<USeinActorBridge>())
 	{
 		Comp->HandleVisualEvent(DestroyEvent);
 	}

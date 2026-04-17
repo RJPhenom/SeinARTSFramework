@@ -9,7 +9,7 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Actor/SeinActor.h"
-#include "Actor/SeinActorComponent.h"
+#include "Actor/SeinActorBridge.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Engine/World.h"
 

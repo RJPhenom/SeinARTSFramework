@@ -9,6 +9,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
+#include "Components/SeinComponent.h"
 #include "SeinTagComponent.generated.h"
 
 /**
@@ -17,7 +18,7 @@
  * with a cached combined container for efficient queries.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinTagComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinTagComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

@@ -71,11 +71,28 @@ void FSeinARTSEditorStyle::Initialize()
 		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinComponentIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
 	);
 
-	// ==================== Branding ====================
+	// ==================== Widget (SeinWidgetBlueprint) ====================
+
+	// Register under the UCLASS name so Unreal's content browser and tab-bar
+	// icon lookups ("ClassIcon.<UClassName>", "ClassThumbnail.<UClassName>")
+	// find them automatically for USeinWidgetBlueprint assets.
+	StyleSet->Set(
+		"ClassIcon.SeinWidgetBlueprint",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+	);
 
 	StyleSet->Set(
+		"ClassThumbnail.SeinWidgetBlueprint",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinWidgetIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+	);
+
+	// ==================== Branding ====================
+
+	// Native PNG is 488x126 (aspect ~3.873). Keep that ratio when registering
+	// the brush so anything that samples its ImageSize gets correct proportions.
+	StyleSet->Set(
 		"SeinARTS.Wordmark",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTSWordmarkVectorized"), TEXT(".png")), FVector2D(164.0f, 48.0f))
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinARTSWordmarkVectorized"), TEXT(".png")), FVector2D(244.0f, 63.0f))
 	);
 
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet);
@@ -84,6 +101,7 @@ void FSeinARTSEditorStyle::Initialize()
 	LoadAndCacheIcon(FName(TEXT("SeinUnitIcon92")),       TEXT("SeinUnitIcon92.png"));
 	LoadAndCacheIcon(FName(TEXT("SeinAbilityIcon92")),    TEXT("SeinAbilityIcon92.png"));
 	LoadAndCacheIcon(FName(TEXT("SeinComponentIcon92")),  TEXT("SeinComponentIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinWidgetIcon92")),     TEXT("SeinWidgetIcon92.png"));
 }
 
 UTexture2D* FSeinARTSEditorStyle::LoadAndCacheIcon(const FName& TextureName, const FString& Filename)

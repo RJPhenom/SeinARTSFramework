@@ -9,6 +9,7 @@
 
 #include "Factories/SeinAbilityFactory.h"
 #include "SeinARTSEditorModule.h"
+#include "Settings/PluginSettings.h"
 #include "Dialogs/SSeinClassPickerDialog.h"
 #include "Abilities/SeinAbility.h"
 #include "Abilities/SeinAbilityBlueprint.h"
@@ -78,7 +79,12 @@ FText USeinAbilityFactory::GetDisplayName() const
 
 uint32 USeinAbilityFactory::GetMenuCategories() const
 {
-	return EAssetTypeCategories::Basic | FSeinARTSEditorModule::GetAssetCategoryBit();
+	uint32 Categories = FSeinARTSEditorModule::GetAssetCategoryBit();
+	if (GetDefault<USeinARTSCoreSettings>()->bShowAbilityInBasicCategory)
+	{
+		Categories |= EAssetTypeCategories::Basic;
+	}
+	return Categories;
 }
 
 #undef LOCTEXT_NAMESPACE

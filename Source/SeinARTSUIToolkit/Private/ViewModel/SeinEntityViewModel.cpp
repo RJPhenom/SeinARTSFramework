@@ -306,7 +306,7 @@ FSeinAbilityInfo USeinEntityViewModel::BuildAbilityInfo(const USeinAbility* Abil
 	Info.bIsActive = Ability->bIsActive;
 	Info.bIsPassive = Ability->bIsPassive;
 	Info.bIsOnCooldown = Ability->IsOnCooldown();
-	Info.AbilityTags = Ability->AbilityTags;
+	Info.QueryTags = Ability->QueryTags;
 
 	// Convert resource cost from FFixedPoint to float
 	for (const auto& Pair : Ability->ResourceCost)

@@ -129,6 +129,14 @@ USeinPlayerViewModel* USeinUISubsystem::GetLocalPlayerViewModel()
 
 void USeinUISubsystem::HandleSimTick(int32 Tick)
 {
+	// Lazy-bind the selection model to the local player controller. Cheap
+	// no-op once bound — the PC doesn't exist at subsystem Initialize time,
+	// so we retry here until it comes up.
+	if (SelectionModel)
+	{
+		SelectionModel->EnsurePlayerControllerBound();
+	}
+
 	// Refresh all entity ViewModels
 	for (auto& Pair : EntityViewModels)
 	{

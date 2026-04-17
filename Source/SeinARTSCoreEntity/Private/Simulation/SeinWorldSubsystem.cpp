@@ -254,11 +254,31 @@ void USeinWorldSubsystem::ProcessCommands()
 		case ESeinCommandType::ActivateAbility:
 		{
 			FSeinAbilityComponent* AbilityComp = GetComponent<FSeinAbilityComponent>(Cmd.EntityHandle);
-			if (!AbilityComp) break;
+			if (!AbilityComp)
+			{
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no SeinAbilityComponent"),
+					*Cmd.AbilityTag.ToString(), *Cmd.EntityHandle.ToString());
+				break;
+			}
 
 			USeinAbility* Ability = AbilityComp->FindAbilityByTag(Cmd.AbilityTag);
-			if (!Ability || Ability->IsOnCooldown()) break;
-			if (Ability->bIsActive) break;
+			if (!Ability)
+			{
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has AbilityComponent but no ability with that tag (has %d instances from %d granted classes)"),
+					*Cmd.AbilityTag.ToString(), *Cmd.EntityHandle.ToString(),
+					AbilityComp->AbilityInstances.Num(), AbilityComp->GrantedAbilityClasses.Num());
+				break;
+			}
+			if (Ability->IsOnCooldown())
+			{
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: on cooldown"), *Cmd.AbilityTag.ToString());
+				break;
+			}
+			if (Ability->bIsActive)
+			{
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: already active"), *Cmd.AbilityTag.ToString());
+				break;
+			}
 
 			// Cancel current active ability if needed
 			if (AbilityComp->ActiveAbility && AbilityComp->ActiveAbility->bIsActive)
@@ -770,16 +790,33 @@ int32 USeinWorldSubsystem::ComputeStateHash() const
 void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 {
 	FSeinAbilityComponent* AbilityComp = GetComponent<FSeinAbilityComponent>(Handle);
-	if (!AbilityComp) return;
+	if (!AbilityComp)
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s has no FSeinAbilityComponent"),
+			*Handle.ToString());
+		return;
+	}
+
+	UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s  GrantedAbilityClasses=%d"),
+		*Handle.ToString(), AbilityComp->GrantedAbilityClasses.Num());
 
 	// Instantiate ability objects from class list
 	for (const TSubclassOf<USeinAbility>& AbilityClass : AbilityComp->GrantedAbilityClasses)
 	{
-		if (!AbilityClass) continue;
+		if (!AbilityClass)
+		{
+			UE_LOG(LogSeinSim, Warning, TEXT("  - null ability class entry, skipping"));
+			continue;
+		}
 
 		USeinAbility* AbilityInstance = NewObject<USeinAbility>(this, AbilityClass);
 		AbilityInstance->InitializeAbility(Handle, this);
 		AbilityComp->AbilityInstances.Add(AbilityInstance);
+
+		UE_LOG(LogSeinSim, Warning, TEXT("  + instantiated %s  tag=%s  passive=%d"),
+			*AbilityClass->GetName(),
+			*AbilityInstance->AbilityTag.ToString(),
+			AbilityInstance->bIsPassive ? 1 : 0);
 
 		// Auto-activate passives
 		if (AbilityInstance->bIsPassive)

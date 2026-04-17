@@ -10,6 +10,7 @@
 #include "Engine/DataTable.h"
 #include "Types/Vector.h"
 #include "Core/SeinEntityHandle.h"
+#include "Components/SeinComponent.h"
 #include "SeinSquadMemberComponent.generated.h"
 
 /**
@@ -17,7 +18,7 @@
  * Links back to the owning squad entity and stores formation data.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinSquadMemberComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinSquadMemberComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 

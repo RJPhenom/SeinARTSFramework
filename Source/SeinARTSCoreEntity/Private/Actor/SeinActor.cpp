@@ -8,14 +8,14 @@
  */
 
 #include "Actor/SeinActor.h"
-#include "Actor/SeinActorComponent.h"
+#include "Actor/SeinActorBridge.h"
 #include "Data/SeinArchetypeDefinition.h"
 
 ASeinActor::ASeinActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	SeinComponent = CreateDefaultSubobject<USeinActorComponent>(TEXT("SeinComponent"));
+	SeinActorBridge = CreateDefaultSubobject<USeinActorBridge>(TEXT("SeinActorBridge"));
 	ArchetypeDefinition = CreateDefaultSubobject<USeinArchetypeDefinition>(TEXT("ArchetypeDefinition"));
 }
 
@@ -26,13 +26,13 @@ void ASeinActor::BeginPlay()
 
 void ASeinActor::InitializeWithEntity(FSeinEntityHandle Handle)
 {
-	if (!SeinComponent)
+	if (!SeinActorBridge)
 	{
-		UE_LOG(LogTemp, Error, TEXT("ASeinActor::InitializeWithEntity - SeinComponent is null!"));
+		UE_LOG(LogTemp, Error, TEXT("ASeinActor::InitializeWithEntity - SeinActorBridge is null!"));
 		return;
 	}
 
-	SeinComponent->SetEntityHandle(Handle);
+	SeinActorBridge->SetEntityHandle(Handle);
 
 	// Fire Blueprint event
 	ReceiveEntityInitialized();
@@ -42,20 +42,20 @@ void ASeinActor::InitializeWithEntity(FSeinEntityHandle Handle)
 
 FSeinEntityHandle ASeinActor::GetEntityHandle() const
 {
-	if (!SeinComponent)
+	if (!SeinActorBridge)
 	{
 		return FSeinEntityHandle::Invalid();
 	}
 
-	return SeinComponent->GetEntityHandle();
+	return SeinActorBridge->GetEntityHandle();
 }
 
 bool ASeinActor::HasValidEntity() const
 {
-	if (!SeinComponent)
+	if (!SeinActorBridge)
 	{
 		return false;
 	}
 
-	return SeinComponent->HasValidEntity();
+	return SeinActorBridge->HasValidEntity();
 }

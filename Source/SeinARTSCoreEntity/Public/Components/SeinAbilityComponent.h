@@ -4,6 +4,7 @@
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Abilities/SeinAbility.h"
+#include "Components/SeinComponent.h"
 #include "SeinAbilityComponent.generated.h"
 
 /**
@@ -11,7 +12,7 @@
  * Stores granted ability classes (from archetype) and runtime instances.
  */
 USTRUCT(BlueprintType)
-struct SEINARTSCOREENTITY_API FSeinAbilityComponent : public FTableRowBase
+struct SEINARTSCOREENTITY_API FSeinAbilityComponent : public FSeinComponent
 {
 	GENERATED_BODY()
 
