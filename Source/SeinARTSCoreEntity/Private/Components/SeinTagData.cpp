@@ -1,19 +1,11 @@
 /**
- * SeinARTS Framework 
- * Copyright (c) 2026 Phenom Studios, Inc.
- * 
- * @file:		SeinTagComponent.cpp
- * @date:		4/3/2026
- * @author:		RJ Macklem
- * @brief:		Implementation of tag component methods.
- * @disclaimer: This code was generated in part by an AI language model.
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinTagData.cpp
+ * @brief   FSeinTagData sim-payload implementation — combined-tag rebuild and
+ *          granted-tag mutation helpers.
  */
 
 #include "Components/SeinTagData.h"
-
-// ---------------------------------------------------------------------------
-// RebuildCombinedTags
-// ---------------------------------------------------------------------------
 
 void FSeinTagData::RebuildCombinedTags()
 {
@@ -22,36 +14,20 @@ void FSeinTagData::RebuildCombinedTags()
 	CombinedTags.AppendTags(GrantedTags);
 }
 
-// ---------------------------------------------------------------------------
-// HasTag
-// ---------------------------------------------------------------------------
-
 bool FSeinTagData::HasTag(const FGameplayTag& Tag) const
 {
 	return CombinedTags.HasTag(Tag);
 }
-
-// ---------------------------------------------------------------------------
-// HasAnyTag
-// ---------------------------------------------------------------------------
 
 bool FSeinTagData::HasAnyTag(const FGameplayTagContainer& Tags) const
 {
 	return CombinedTags.HasAny(Tags);
 }
 
-// ---------------------------------------------------------------------------
-// HasAllTags
-// ---------------------------------------------------------------------------
-
 bool FSeinTagData::HasAllTags(const FGameplayTagContainer& Tags) const
 {
 	return CombinedTags.HasAll(Tags);
 }
-
-// ---------------------------------------------------------------------------
-// AddGrantedTag
-// ---------------------------------------------------------------------------
 
 void FSeinTagData::AddGrantedTag(const FGameplayTag& Tag)
 {
@@ -61,10 +37,6 @@ void FSeinTagData::AddGrantedTag(const FGameplayTag& Tag)
 		RebuildCombinedTags();
 	}
 }
-
-// ---------------------------------------------------------------------------
-// RemoveGrantedTag
-// ---------------------------------------------------------------------------
 
 void FSeinTagData::RemoveGrantedTag(const FGameplayTag& Tag)
 {

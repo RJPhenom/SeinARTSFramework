@@ -1,14 +1,11 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinActiveEffectsComponent.cpp
- * @brief   Implementation of the active effects component.
+ * @file    SeinActiveEffectsData.cpp
+ * @brief   FSeinActiveEffectsData sim-payload implementation — effect add/remove,
+ *          tag queries, stack counting, modifier collection for attribute resolve.
  */
 
 #include "Components/SeinActiveEffectsData.h"
-
-// ---------------------------------------------------------------------------
-// AddEffect
-// ---------------------------------------------------------------------------
 
 uint32 FSeinActiveEffectsData::AddEffect(const FSeinActiveEffect& Effect)
 {
@@ -16,10 +13,6 @@ uint32 FSeinActiveEffectsData::AddEffect(const FSeinActiveEffect& Effect)
 	Added.EffectInstanceID = NextEffectInstanceID++;
 	return Added.EffectInstanceID;
 }
-
-// ---------------------------------------------------------------------------
-// RemoveEffect
-// ---------------------------------------------------------------------------
 
 void FSeinActiveEffectsData::RemoveEffect(uint32 EffectInstanceID)
 {
@@ -32,10 +25,6 @@ void FSeinActiveEffectsData::RemoveEffect(uint32 EffectInstanceID)
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// RemoveEffectsWithTag
-// ---------------------------------------------------------------------------
 
 void FSeinActiveEffectsData::RemoveEffectsWithTag(const FGameplayTag& Tag)
 {
@@ -52,10 +41,6 @@ void FSeinActiveEffectsData::RemoveEffectsWithTag(const FGameplayTag& Tag)
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// HasEffectWithTag
-// ---------------------------------------------------------------------------
 
 bool FSeinActiveEffectsData::HasEffectWithTag(const FGameplayTag& Tag) const
 {
@@ -74,10 +59,6 @@ bool FSeinActiveEffectsData::HasEffectWithTag(const FGameplayTag& Tag) const
 	return false;
 }
 
-// ---------------------------------------------------------------------------
-// GetStackCount
-// ---------------------------------------------------------------------------
-
 int32 FSeinActiveEffectsData::GetStackCount(FName EffectName) const
 {
 	int32 TotalStacks = 0;
@@ -90,10 +71,6 @@ int32 FSeinActiveEffectsData::GetStackCount(FName EffectName) const
 	}
 	return TotalStacks;
 }
-
-// ---------------------------------------------------------------------------
-// CollectModifiers
-// ---------------------------------------------------------------------------
 
 void FSeinActiveEffectsData::CollectModifiers(TArray<FSeinModifier>& OutModifiers) const
 {
@@ -110,10 +87,6 @@ void FSeinActiveEffectsData::CollectModifiers(TArray<FSeinModifier>& OutModifier
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Clear
-// ---------------------------------------------------------------------------
 
 void FSeinActiveEffectsData::Clear()
 {

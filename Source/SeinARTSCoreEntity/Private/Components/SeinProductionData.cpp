@@ -1,12 +1,8 @@
 /**
- * SeinARTS Framework 
- * Copyright (c) 2026 Phenom Studios, Inc.
- * 
- * @file:		SeinProductionComponent.cpp
- * @date:		4/3/2026
- * @author:		RJ Macklem
- * @brief:		Implementation of production component methods.
- * @disclaimer: This code was generated in part by an AI language model.
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinProductionData.cpp
+ * @brief   FSeinProductionData sim-payload implementation — queue state
+ *          queries and build-progress accessors.
  */
 
 #include "Components/SeinProductionData.h"

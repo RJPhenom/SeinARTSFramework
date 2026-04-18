@@ -96,7 +96,7 @@ float USeinEntityViewModel::GetBaseAttribute(UScriptStruct* ComponentType, FName
 		return 0.0f;
 	}
 
-	ISeinComponentStorageV2* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
+	ISeinComponentStorage* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
 	if (!Storage)
 	{
 		return 0.0f;
@@ -132,7 +132,7 @@ bool USeinEntityViewModel::HasComponent(UScriptStruct* ComponentType) const
 		return false;
 	}
 
-	const ISeinComponentStorageV2* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
+	const ISeinComponentStorage* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
 	if (!Storage)
 	{
 		return false;
@@ -148,7 +148,7 @@ FInstancedStruct USeinEntityViewModel::GetComponentData(UScriptStruct* Component
 		return FInstancedStruct();
 	}
 
-	const ISeinComponentStorageV2* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
+	const ISeinComponentStorage* Storage = WorldSubsystem->GetComponentStorageRaw(ComponentType);
 	if (!Storage)
 	{
 		return FInstancedStruct();

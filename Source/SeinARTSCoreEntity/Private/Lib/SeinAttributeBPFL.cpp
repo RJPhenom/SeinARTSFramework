@@ -6,7 +6,7 @@
 
 #include "Lib/SeinAttributeBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
-#include "Simulation/ComponentStorageV2.h"
+#include "Simulation/ComponentStorage.h"
 
 USeinWorldSubsystem* USeinAttributeBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
@@ -27,7 +27,7 @@ FFixedPoint USeinAttributeBPFL::SeinGetBaseAttribute(const UObject* WorldContext
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem || !ComponentType) return FFixedPoint::Zero;
 
-	ISeinComponentStorageV2* Storage = Subsystem->GetComponentStorageRaw(ComponentType);
+	ISeinComponentStorage* Storage = Subsystem->GetComponentStorageRaw(ComponentType);
 	if (!Storage) return FFixedPoint::Zero;
 
 	const void* ComponentData = Storage->GetComponentRaw(EntityHandle);
@@ -50,7 +50,7 @@ void USeinAttributeBPFL::SeinSetBaseAttribute(const UObject* WorldContextObject,
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem || !ComponentType) return;
 
-	ISeinComponentStorageV2* Storage = Subsystem->GetComponentStorageRaw(ComponentType);
+	ISeinComponentStorage* Storage = Subsystem->GetComponentStorageRaw(ComponentType);
 	if (!Storage) return;
 
 	void* ComponentData = Storage->GetComponentRaw(EntityHandle);

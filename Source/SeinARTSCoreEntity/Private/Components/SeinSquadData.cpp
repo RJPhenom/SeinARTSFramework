@@ -1,12 +1,8 @@
 /**
- * SeinARTS Framework 
- * Copyright (c) 2026 Phenom Studios, Inc.
- * 
- * @file:		SeinSquadComponent.cpp
- * @date:		4/3/2026
- * @author:		RJ Macklem
- * @brief:		Implementation of squad component methods.
- * @disclaimer: This code was generated in part by an AI language model.
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinSquadData.cpp
+ * @brief   FSeinSquadData sim-payload implementation — membership mutation
+ *          and leader promotion.
  */
 
 #include "Components/SeinSquadData.h"

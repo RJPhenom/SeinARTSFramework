@@ -1,173 +1,239 @@
 /**
- * SeinARTS Framework 
- * Copyright (c) 2026 Phenom Studios, Inc.
- * 
- * @file:		ComponentStorage.h
- * @date:		2/28/2026
- * @author:		RJ Macklem
- * @brief:		Dynamic component storage system for entity components.
- * @disclaimer: This code was generated in part by an AI language model.
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    ComponentStorage.h
+ * @brief   Slot-indexed component storage keyed by FSeinEntityHandle.
+ *
+ * Flat arrays parallel to the entity pool: O(1) add/remove/get by slot index,
+ * cache-friendly iteration over active slots via a TBitArray.
  */
 
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Types/EntityID.h"
+#include "Containers/BitArray.h"
+#include "Core/SeinEntityHandle.h"
+#include "UObject/UnrealType.h"
 
 /**
- * Abstract interface for component storage.
- * Allows subsystem to manage different component types polymorphically.
+ * Abstract interface for entity-handle-keyed component storage.
  */
 class SEINARTSCOREENTITY_API ISeinComponentStorage
 {
 public:
 	virtual ~ISeinComponentStorage() = default;
 
-	/**
-	 * Add a component for the given entity.
-	 * @param EntityID - Entity to add component to
-	 * @param ComponentData - Pointer to component data to copy
-	 */
-	virtual void AddComponent(FSeinID EntityID, const void* ComponentData) = 0;
-
-	/**
-	 * Remove component from entity.
-	 * @param EntityID - Entity to remove component from
-	 */
-	virtual void RemoveComponent(FSeinID EntityID) = 0;
-
-	/**
-	 * Check if entity has this component.
-	 * @param EntityID - Entity to check
-	 * @return True if entity has this component
-	 */
-	virtual bool HasComponent(FSeinID EntityID) const = 0;
-
-	/**
-	 * Get raw pointer to component data for entity.
-	 * @param EntityID - Entity to get component for
-	 * @return Pointer to component data, or nullptr if not found
-	 */
-	virtual void* GetComponentRaw(FSeinID EntityID) = 0;
-	virtual const void* GetComponentRaw(FSeinID EntityID) const = 0;
-
-	/**
-	 * Compute hash of all components for determinism validation.
-	 * @return Combined hash of all component data
-	 */
+	virtual void AddComponent(FSeinEntityHandle Handle, const void* ComponentData) = 0;
+	virtual void RemoveComponent(FSeinEntityHandle Handle) = 0;
+	virtual bool HasComponent(FSeinEntityHandle Handle) const = 0;
+	virtual void* GetComponentRaw(FSeinEntityHandle Handle) = 0;
+	virtual const void* GetComponentRaw(FSeinEntityHandle Handle) const = 0;
 	virtual uint32 ComputeHash() const = 0;
-
-	/**
-	 * Get number of components stored.
-	 * @return Component count
-	 */
 	virtual int32 GetComponentCount() const = 0;
-
-	/**
-	 * Clear all components.
-	 */
 	virtual void Clear() = 0;
+
+	/** Alias for RemoveComponent — clearer intent when cleaning up a destroyed entity. */
+	virtual void RemoveAllForEntity(FSeinEntityHandle Handle) = 0;
+
+	/** Grow internal arrays to accommodate a larger entity pool. */
+	virtual void Grow(int32 NewCapacity) = 0;
 };
 
 /**
- * Template implementation of component storage for a specific component type.
- * Wraps TMap<FSeinID, T> and provides type-safe access.
+ * Component storage for reflection-based access, used by the runtime.
+ *
+ * Component types are discovered at entity spawn by walking the Blueprint
+ * CDO's USeinActorComponents and injecting the struct each Resolve() returns.
+ * Payloads are stored as raw bytes, with construction/copy/destroy dispatched
+ * through UScriptStruct so TArrays, UPROPERTY references, etc. are handled
+ * correctly.
  */
-template<typename T>
-class TSeinComponentStorage : public ISeinComponentStorage
+class SEINARTSCOREENTITY_API FSeinGenericComponentStorage : public ISeinComponentStorage
 {
-private:
-	TMap<FSeinID, T> Components;
-
 public:
-	virtual ~TSeinComponentStorage() override = default;
-
-	// ISeinComponentStorage interface
-	virtual void AddComponent(FSeinID EntityID, const void* ComponentData) override
+	FSeinGenericComponentStorage(UScriptStruct* InStructType, int32 InitialCapacity = 0)
+		: StructType(InStructType)
+		, StructSize(InStructType ? InStructType->GetStructureSize() : 0)
+		, ComponentCount(0)
 	{
+		check(StructType && StructSize > 0);
+		if (InitialCapacity > 0)
+		{
+			const int32 TotalSlots = InitialCapacity + 1; // +1 for reserved slot 0
+			Data.SetNumZeroed(TotalSlots * StructSize);
+			HasComponentBits.Init(false, TotalSlots);
+			SlotCapacity = TotalSlots;
+
+			// Initialize all slots with default-constructed structs
+			for (int32 i = 0; i < TotalSlots; ++i)
+			{
+				StructType->InitializeStruct(GetSlotPtr(i));
+			}
+		}
+	}
+
+	virtual ~FSeinGenericComponentStorage() override
+	{
+		// Destroy all initialized structs
+		for (int32 i = 0; i < SlotCapacity; ++i)
+		{
+			StructType->DestroyStruct(GetSlotPtr(i));
+		}
+	}
+
+	virtual void Grow(int32 NewCapacity) override
+	{
+		const int32 NewTotalSlots = NewCapacity + 1;
+		if (NewTotalSlots <= SlotCapacity)
+		{
+			return;
+		}
+
+		const int32 OldCapacity = SlotCapacity;
+		Data.SetNumZeroed(NewTotalSlots * StructSize);
+
+		const int32 BitsToAdd = NewTotalSlots - HasComponentBits.Num();
+		if (BitsToAdd > 0)
+		{
+			HasComponentBits.Add(false, BitsToAdd);
+		}
+
+		SlotCapacity = NewTotalSlots;
+
+		// Initialize newly allocated slots
+		for (int32 i = OldCapacity; i < NewTotalSlots; ++i)
+		{
+			StructType->InitializeStruct(GetSlotPtr(i));
+		}
+	}
+
+	virtual void AddComponent(FSeinEntityHandle Handle, const void* ComponentData) override
+	{
+		const int32 SlotIndex = static_cast<int32>(Handle.Index);
+		EnsureSlotCapacity(SlotIndex);
+
+		if (!HasComponentBits[SlotIndex])
+		{
+			ComponentCount++;
+		}
+
+		uint8* SlotPtr = GetSlotPtr(SlotIndex);
 		if (ComponentData)
 		{
-			Components.Add(EntityID, *static_cast<const T*>(ComponentData));
+			StructType->CopyScriptStruct(SlotPtr, ComponentData);
 		}
 		else
 		{
-			Components.Add(EntityID, T{});
+			StructType->ClearScriptStruct(SlotPtr);
+			StructType->InitializeStruct(SlotPtr);
+		}
+
+		HasComponentBits[SlotIndex] = true;
+	}
+
+	virtual void RemoveComponent(FSeinEntityHandle Handle) override
+	{
+		const int32 SlotIndex = static_cast<int32>(Handle.Index);
+		if (SlotIndex < SlotCapacity && HasComponentBits[SlotIndex])
+		{
+			HasComponentBits[SlotIndex] = false;
+			uint8* SlotPtr = GetSlotPtr(SlotIndex);
+			StructType->ClearScriptStruct(SlotPtr);
+			StructType->InitializeStruct(SlotPtr);
+			ComponentCount--;
 		}
 	}
 
-	virtual void RemoveComponent(FSeinID EntityID) override
+	virtual void RemoveAllForEntity(FSeinEntityHandle Handle) override
 	{
-		Components.Remove(EntityID);
+		RemoveComponent(Handle);
 	}
 
-	virtual bool HasComponent(FSeinID EntityID) const override
+	virtual bool HasComponent(FSeinEntityHandle Handle) const override
 	{
-		return Components.Contains(EntityID);
+		const int32 SlotIndex = static_cast<int32>(Handle.Index);
+		return SlotIndex < SlotCapacity && HasComponentBits[SlotIndex];
 	}
 
-	virtual void* GetComponentRaw(FSeinID EntityID) override
+	virtual void* GetComponentRaw(FSeinEntityHandle Handle) override
 	{
-		return Components.Find(EntityID);
+		const int32 SlotIndex = static_cast<int32>(Handle.Index);
+		if (SlotIndex < SlotCapacity && HasComponentBits[SlotIndex])
+		{
+			return GetSlotPtr(SlotIndex);
+		}
+		return nullptr;
 	}
 
-	virtual const void* GetComponentRaw(FSeinID EntityID) const override
+	virtual const void* GetComponentRaw(FSeinEntityHandle Handle) const override
 	{
-		return Components.Find(EntityID);
+		const int32 SlotIndex = static_cast<int32>(Handle.Index);
+		if (SlotIndex < SlotCapacity && HasComponentBits[SlotIndex])
+		{
+			return GetSlotPtr(SlotIndex);
+		}
+		return nullptr;
 	}
 
 	virtual uint32 ComputeHash() const override
 	{
 		uint32 Hash = 0;
-		for (const auto& Pair : Components)
+		for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
 		{
-			Hash = HashCombine(Hash, GetTypeHash(Pair.Key));
-			Hash = HashCombine(Hash, GetTypeHash(Pair.Value));
+			const int32 SlotIndex = It.GetIndex();
+			Hash = HashCombine(Hash, GetTypeHash(static_cast<uint32>(SlotIndex)));
+			// Use raw memory hash — individual struct fields should implement GetTypeHash
+			const uint8* SlotPtr = GetSlotPtr(SlotIndex);
+			for (int32 i = 0; i < StructSize; ++i)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(SlotPtr[i]));
+			}
 		}
 		return Hash;
 	}
 
 	virtual int32 GetComponentCount() const override
 	{
-		return Components.Num();
+		return ComponentCount;
 	}
 
 	virtual void Clear() override
 	{
-		Components.Empty();
+		for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
+		{
+			uint8* SlotPtr = GetSlotPtr(It.GetIndex());
+			StructType->ClearScriptStruct(SlotPtr);
+			StructType->InitializeStruct(SlotPtr);
+		}
+		HasComponentBits.Init(false, HasComponentBits.Num());
+		ComponentCount = 0;
 	}
 
-	// Type-safe accessors
-	/**
-	 * Get component for entity (mutable).
-	 * @param EntityID - Entity to get component for
-	 * @return Pointer to component, or nullptr if not found
-	 */
-	T* GetComponent(FSeinID EntityID)
+	UScriptStruct* GetStructType() const { return StructType; }
+
+private:
+	void EnsureSlotCapacity(int32 SlotIndex)
 	{
-		return Components.Find(EntityID);
+		const int32 RequiredSize = SlotIndex + 1;
+		if (RequiredSize > SlotCapacity)
+		{
+			Grow(RequiredSize - 1);
+		}
 	}
 
-	/**
-	 * Get component for entity (const).
-	 * @param EntityID - Entity to get component for
-	 * @return Pointer to component, or nullptr if not found
-	 */
-	const T* GetComponent(FSeinID EntityID) const
+	uint8* GetSlotPtr(int32 SlotIndex)
 	{
-		return Components.Find(EntityID);
+		return Data.GetData() + (SlotIndex * StructSize);
 	}
 
-	/**
-	 * Get all components (for system iteration).
-	 * @return Reference to internal component map
-	 */
-	TMap<FSeinID, T>& GetAllComponents()
+	const uint8* GetSlotPtr(int32 SlotIndex) const
 	{
-		return Components;
+		return Data.GetData() + (SlotIndex * StructSize);
 	}
 
-	const TMap<FSeinID, T>& GetAllComponents() const
-	{
-		return Components;
-	}
+	UScriptStruct* StructType;
+	int32 StructSize;
+	TArray<uint8> Data;
+	TBitArray<> HasComponentBits;
+	int32 SlotCapacity = 0;
+	int32 ComponentCount;
 };

@@ -22,25 +22,17 @@
 bool USeinBlueprintThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 {
 	const ESeinAssetType Type = ClassifyBlueprint(Object);
-	const bool bSuperResult = (Type == ESeinAssetType::None) ? Super::CanVisualizeAsset(Object) : false;
-	const bool bResult = (Type != ESeinAssetType::None) || bSuperResult;
-
-	UE_LOG(LogTemp, Log, TEXT("[SeinARTSEditor] CanVisualizeAsset for %s (class=%s) classified=%d -> %s"),
-		Object ? *Object->GetName() : TEXT("<null>"),
-		Object && Object->GetClass() ? *Object->GetClass()->GetName() : TEXT("<null>"),
-		(int32)Type,
-		bResult ? TEXT("true") : TEXT("false"));
-
-	return bResult;
+	if (Type != ESeinAssetType::None)
+	{
+		return true;
+	}
+	return Super::CanVisualizeAsset(Object);
 }
 
 void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height,
 	FRenderTarget* RenderTarget, FCanvas* Canvas, bool bAdditionalViewFamily)
 {
 	const ESeinAssetType AssetType = ClassifyBlueprint(Object);
-
-	UE_LOG(LogTemp, Log, TEXT("[SeinARTSEditor] USeinBlueprintThumbnailRenderer::Draw for %s — classified as %d"),
-		Object ? *Object->GetName() : TEXT("<null>"), (int32)AssetType);
 
 	// Non-SeinARTS Blueprints: fall through to default rendering
 	if (AssetType == ESeinAssetType::None)

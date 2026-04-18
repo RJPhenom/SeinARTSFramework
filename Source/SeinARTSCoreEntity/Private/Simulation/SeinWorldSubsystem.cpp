@@ -257,7 +257,7 @@ void USeinWorldSubsystem::ProcessCommands()
 			FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Cmd.EntityHandle);
 			if (!AbilityComp)
 			{
-				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no SeinAbilityComponent"),
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no FSeinAbilityData"),
 					*Cmd.AbilityTag.ToString(), *Cmd.EntityHandle.ToString());
 				break;
 			}
@@ -265,7 +265,7 @@ void USeinWorldSubsystem::ProcessCommands()
 			USeinAbility* Ability = AbilityComp->FindAbilityByTag(Cmd.AbilityTag);
 			if (!Ability)
 			{
-				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has AbilityComponent but no ability with that tag (has %d instances from %d granted classes)"),
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no ability with that tag (%d instances from %d granted classes)"),
 					*Cmd.AbilityTag.ToString(), *Cmd.EntityHandle.ToString(),
 					AbilityComp->AbilityInstances.Num(), AbilityComp->GrantedAbilityClasses.Num());
 				break;
@@ -275,16 +275,43 @@ void USeinWorldSubsystem::ProcessCommands()
 				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: on cooldown"), *Cmd.AbilityTag.ToString());
 				break;
 			}
-			if (Ability->bIsActive)
+
+			// Tag-based activation arbitration.
+			//
+			// 1) ActivationBlockedTags: if the entity carries any of these tags,
+			//    refuse the activation. Combined with an ability owning the same
+			//    tag it blocks on, this gives self-block (e.g., grenade throw
+			//    can't reissue while channeling).
+			//
+			// 2) CancelAbilitiesWithTag: for every active ability on the entity
+			//    (including this one), if its OwnedTags intersect this ability's
+			//    cancel set, cancel it. An ability that lists one of its own
+			//    OwnedTags in CancelAbilitiesWithTag gets self-cancelling reissue
+			//    (e.g., right-click-spam Move).
+			//
+			// 3) Activate. USeinAbility::ActivateAbility applies OwnedTags (diffed
+			//    against tags already present) and fires OnActivate.
+			if (!Ability->ActivationBlockedTags.IsEmpty())
 			{
-				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: already active"), *Cmd.AbilityTag.ToString());
-				break;
+				const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Cmd.EntityHandle);
+				if (TagComp && TagComp->CombinedTags.HasAny(Ability->ActivationBlockedTags))
+				{
+					UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: blocked by entity tags"),
+						*Cmd.AbilityTag.ToString());
+					break;
+				}
 			}
 
-			// Cancel current active ability if needed
-			if (AbilityComp->ActiveAbility && AbilityComp->ActiveAbility->bIsActive)
+			if (!Ability->CancelAbilitiesWithTag.IsEmpty())
 			{
-				AbilityComp->ActiveAbility->CancelAbility();
+				for (USeinAbility* Other : AbilityComp->AbilityInstances)
+				{
+					if (Other && Other->bIsActive &&
+						Other->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
+					{
+						Other->CancelAbility();
+					}
+				}
 			}
 
 			Ability->ActivateAbility(Cmd.TargetEntity, Cmd.TargetLocation);
@@ -445,15 +472,14 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	// Store actor class for bridge spawning
 	EntityActorClassMap.Add(Handle, ActorClass);
 
-	// Walk the CDO's USeinActorComponent subobjects and inject each one's sim
-	// payload into deterministic storage. This replaces the legacy inline
-	// ArchetypeDefinition.Components array — designers now author sim data via
-	// typed wrapper ACs (Sein Movement, Sein Combat, ...) or BP subclasses of
-	// USeinDynamicComponent.
+	// Walk the Blueprint CDO's USeinActorComponent subobjects and inject each
+	// one's sim payload into deterministic storage. Designers author sim data
+	// via typed wrapper ACs (USeinAbilitiesComponent, USeinMovementComponent,
+	// ...) or USeinDynamicComponent BP subclasses.
 	//
-	// AActor::GetComponents() on a CDO returns only native CreateDefaultSubobject
-	// components — BP-editor-added components live on the SCS, not the CDO. Use
-	// the engine's CDO-inspection helper which walks both lists in a stable order.
+	// NB: AActor::GetComponents() on a CDO only sees native CreateDefaultSubobject
+	// components — BP-editor-added components live on the SCS. The helper below
+	// walks native components + SCS nodes up the BP hierarchy in a stable order.
 	TArray<const USeinActorComponent*> SimACs;
 	AActor::GetActorClassDefaultComponents<USeinActorComponent>(ActorClass, SimACs);
 	for (const USeinActorComponent* AC : SimACs)
@@ -463,14 +489,14 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 		if (!Payload.IsValid()) continue;
 
 		UScriptStruct* ComponentType = const_cast<UScriptStruct*>(Payload.GetScriptStruct());
-		ISeinComponentStorageV2* Storage = GetOrCreateStorageForType(ComponentType);
+		ISeinComponentStorage* Storage = GetOrCreateStorageForType(ComponentType);
 		if (Storage)
 		{
 			Storage->AddComponent(Handle, Payload.GetMemory());
 		}
 	}
 
-	// Initialize abilities if entity has an ability component
+	// Instantiate ability UObjects if the entity was granted any
 	InitializeEntityAbilities(Handle);
 
 	// Auto-tag entity with its archetype tag (for archetype-scope modifier matching)
@@ -527,14 +553,11 @@ void USeinWorldSubsystem::ProcessDeferredDestroys()
 			Pair.Value->RemoveAllForEntity(Handle);
 		}
 
-		// Fire destroy event
 		EnqueueVisualEvent(FSeinVisualEvent::MakeDestroyEvent(Handle));
-
-		// Remove from actor class map
 		EntityActorClassMap.Remove(Handle);
-
-		// Release slot back to pool
 		EntityPool.Release(Handle);
+
+		UE_LOG(LogSeinSim, Log, TEXT("Destroyed entity %s"), *Handle.ToString());
 	}
 
 	PendingDestroy.Empty();
@@ -634,7 +657,7 @@ void USeinWorldSubsystem::RegisterFaction(USeinFaction* Faction)
 FFixedPoint USeinWorldSubsystem::ResolveAttribute(FSeinEntityHandle Handle, UScriptStruct* ComponentType, FName FieldName)
 {
 	// Get base value from component
-	ISeinComponentStorageV2* Storage = GetComponentStorageRaw(ComponentType);
+	ISeinComponentStorage* Storage = GetComponentStorageRaw(ComponentType);
 	if (!Storage) return FFixedPoint::Zero;
 
 	void* CompData = Storage->GetComponentRaw(Handle);
@@ -697,31 +720,29 @@ FFixedPoint USeinWorldSubsystem::ResolveAttribute(FSeinEntityHandle Handle, UScr
 
 // ==================== Component Storage Helpers ====================
 
-ISeinComponentStorageV2* USeinWorldSubsystem::GetComponentStorageRaw(UScriptStruct* StructType)
+ISeinComponentStorage* USeinWorldSubsystem::GetComponentStorageRaw(UScriptStruct* StructType)
 {
-	ISeinComponentStorageV2** Found = ComponentStorages.Find(StructType);
+	ISeinComponentStorage** Found = ComponentStorages.Find(StructType);
 	return Found ? *Found : nullptr;
 }
 
-const ISeinComponentStorageV2* USeinWorldSubsystem::GetComponentStorageRaw(UScriptStruct* StructType) const
+const ISeinComponentStorage* USeinWorldSubsystem::GetComponentStorageRaw(UScriptStruct* StructType) const
 {
-	ISeinComponentStorageV2* const* Found = ComponentStorages.Find(StructType);
+	ISeinComponentStorage* const* Found = ComponentStorages.Find(StructType);
 	return Found ? *Found : nullptr;
 }
 
-ISeinComponentStorageV2* USeinWorldSubsystem::GetOrCreateStorageForType(UScriptStruct* StructType)
+ISeinComponentStorage* USeinWorldSubsystem::GetOrCreateStorageForType(UScriptStruct* StructType)
 {
-	if (ISeinComponentStorageV2** Found = ComponentStorages.Find(StructType))
+	if (ISeinComponentStorage** Found = ComponentStorages.Find(StructType))
 	{
 		return *Found;
 	}
 
-	// Create a generic byte-buffer storage for reflection-based component types.
-	// This handles archetype-defined components that weren't pre-registered via RegisterComponentType<T>().
-	FSeinGenericComponentStorageV2* Storage = new FSeinGenericComponentStorageV2(StructType, EntityPool.GetCapacity());
+	FSeinGenericComponentStorage* Storage = new FSeinGenericComponentStorage(StructType, EntityPool.GetCapacity());
 	ComponentStorages.Add(StructType, Storage);
 
-	UE_LOG(LogSeinSim, Log, TEXT("Created generic storage for: %s"), *StructType->GetName());
+	UE_LOG(LogSeinSim, Verbose, TEXT("Created component storage for %s"), *StructType->GetName());
 	return Storage;
 }
 
@@ -801,20 +822,17 @@ void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 	FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Handle);
 	if (!AbilityComp)
 	{
-		UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s has no FSeinAbilityData"),
-			*Handle.ToString());
+		// Not every entity has abilities (projectiles, static props, resource piles);
+		// this is expected, not an error.
 		return;
 	}
 
-	UE_LOG(LogSeinSim, Warning, TEXT("InitializeEntityAbilities: entity %s  GrantedAbilityClasses=%d"),
-		*Handle.ToString(), AbilityComp->GrantedAbilityClasses.Num());
-
-	// Instantiate ability objects from class list
 	for (const TSubclassOf<USeinAbility>& AbilityClass : AbilityComp->GrantedAbilityClasses)
 	{
 		if (!AbilityClass)
 		{
-			UE_LOG(LogSeinSim, Warning, TEXT("  - null ability class entry, skipping"));
+			UE_LOG(LogSeinSim, Warning, TEXT("Entity %s: null ability class in GrantedAbilityClasses"),
+				*Handle.ToString());
 			continue;
 		}
 
@@ -822,12 +840,12 @@ void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 		AbilityInstance->InitializeAbility(Handle, this);
 		AbilityComp->AbilityInstances.Add(AbilityInstance);
 
-		UE_LOG(LogSeinSim, Warning, TEXT("  + instantiated %s  tag=%s  passive=%d"),
+		UE_LOG(LogSeinSim, Verbose, TEXT("Entity %s: granted ability %s [tag=%s passive=%d]"),
+			*Handle.ToString(),
 			*AbilityClass->GetName(),
 			*AbilityInstance->AbilityTag.ToString(),
 			AbilityInstance->bIsPassive ? 1 : 0);
 
-		// Auto-activate passives
 		if (AbilityInstance->bIsPassive)
 		{
 			AbilityInstance->ActivateAbility(Handle, FFixedVector::ZeroVector);

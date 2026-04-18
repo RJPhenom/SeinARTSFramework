@@ -17,7 +17,7 @@
 #include "Core/SeinFactionID.h"
 #include "Core/SeinPlayerState.h"
 #include "Core/SeinTickPhase.h"
-#include "Simulation/ComponentStorageV2.h"
+#include "Simulation/ComponentStorage.h"
 #include "Input/SeinCommand.h"
 #include "Events/SeinVisualEvent.h"
 #include "SeinWorldSubsystem.generated.h"
@@ -126,16 +126,12 @@ public:
 	/** Get mutable player state by ID. Returns null if not found. C++ only. */
 	FSeinPlayerState* GetPlayerStateMutable(FSeinPlayerID PlayerID);
 
-	// ========== Component Management (V2 - slot indexed) ==========
-
-	template<typename T>
-	TSeinComponentStorageV2<T>* RegisterComponentType();
-
-	template<typename T>
-	TSeinComponentStorageV2<T>* GetComponentStorage();
-
-	template<typename T>
-	const TSeinComponentStorageV2<T>* GetComponentStorage() const;
+	// ========== Component Management (slot-indexed) ==========
+	//
+	// Component types are resolved at spawn time by walking the Blueprint
+	// CDO's USeinActorComponents; each one's payload struct is injected into
+	// a reflection-backed FSeinGenericComponentStorage keyed by UScriptStruct.
+	// Templated accessors are thin typed wrappers over the raw-bytes path.
 
 	template<typename T>
 	void AddComponent(FSeinEntityHandle Handle, const T& Component);
@@ -152,9 +148,9 @@ public:
 	template<typename T>
 	bool HasComponent(FSeinEntityHandle Handle) const;
 
-	/** Get raw component storage by struct type (for reflection-based access). */
-	ISeinComponentStorageV2* GetComponentStorageRaw(UScriptStruct* StructType);
-	const ISeinComponentStorageV2* GetComponentStorageRaw(UScriptStruct* StructType) const;
+	/** Get raw component storage by struct type. */
+	ISeinComponentStorage* GetComponentStorageRaw(UScriptStruct* StructType);
+	const ISeinComponentStorage* GetComponentStorageRaw(UScriptStruct* StructType) const;
 
 	// ========== Player & Faction ==========
 
@@ -225,8 +221,8 @@ private:
 	// Entity pool (replaces TMap<FSeinID, FSeinEntity>)
 	FSeinEntityPool EntityPool;
 
-	// Component storage registry (V2: slot-indexed)
-	TMap<UScriptStruct*, ISeinComponentStorageV2*> ComponentStorages;
+	// Component storage registry (slot-indexed, keyed by UScriptStruct*)
+	TMap<UScriptStruct*, ISeinComponentStorage*> ComponentStorages;
 
 	// Player states
 	TMap<FSeinPlayerID, FSeinPlayerState> PlayerStates;
@@ -254,9 +250,17 @@ private:
 	// Simulation state
 	bool bIsRunning = false;
 	int32 CurrentTick = 0;
+	FTSTicker::FDelegateHandle TickerHandle;
+
+	// Wall-clock scheduling (NOT sim state — do not "fix" these to FFixedPoint).
+	// TimeAccumulator is the render-frame wall-clock budget waiting to be drained
+	// into sim ticks; FixedDeltaTimeSeconds is the wall-clock cadence of one tick.
+	// The delta actually fed into the sim each tick is a deterministic FFixedPoint
+	// derived from SimulationTickRate (see TickSimulation). Clients may drift
+	// apart on wall clock between ticks but remain bit-identical at any given
+	// tick N, which is what determinism/lockstep requires.
 	float TimeAccumulator = 0.0f;
 	float FixedDeltaTimeSeconds = 1.0f / 30.0f;
-	FTSTicker::FDelegateHandle TickerHandle;
 
 	// Tick pipeline
 	bool TickSimulation(float DeltaTime);
@@ -266,7 +270,7 @@ private:
 	void SortSystemsIfNeeded();
 
 	// Archetype to component storage helper
-	ISeinComponentStorageV2* GetOrCreateStorageForType(UScriptStruct* StructType);
+	ISeinComponentStorage* GetOrCreateStorageForType(UScriptStruct* StructType);
 
 	// Ability initialization for spawned entities
 	void InitializeEntityAbilities(FSeinEntityHandle Handle);
@@ -275,42 +279,9 @@ private:
 // ==================== Template Implementations ====================
 
 template<typename T>
-TSeinComponentStorageV2<T>* USeinWorldSubsystem::RegisterComponentType()
-{
-	UScriptStruct* TypeInfo = T::StaticStruct();
-
-	if (ISeinComponentStorageV2** Existing = ComponentStorages.Find(TypeInfo))
-	{
-		return static_cast<TSeinComponentStorageV2<T>*>(*Existing);
-	}
-
-	TSeinComponentStorageV2<T>* Storage = new TSeinComponentStorageV2<T>(EntityPool.GetCapacity());
-	ComponentStorages.Add(TypeInfo, Storage);
-	return Storage;
-}
-
-template<typename T>
-TSeinComponentStorageV2<T>* USeinWorldSubsystem::GetComponentStorage()
-{
-	// Deprecated: the storage backing any given component type at runtime is
-	// FSeinGenericComponentStorageV2 (created by GetOrCreateStorageForType),
-	// not the templated TSeinComponentStorageV2<T>. static_cast-ing the two
-	// is UB — they're sibling classes with different memory layouts.
-	// Callers should use GetComponent<T>/HasComponent<T>/AddComponent<T>
-	// instead, which route through the virtual ISeinComponentStorageV2 API.
-	return nullptr;
-}
-
-template<typename T>
-const TSeinComponentStorageV2<T>* USeinWorldSubsystem::GetComponentStorage() const
-{
-	return nullptr;
-}
-
-template<typename T>
 void USeinWorldSubsystem::AddComponent(FSeinEntityHandle Handle, const T& Component)
 {
-	ISeinComponentStorageV2* Storage = GetOrCreateStorageForType(T::StaticStruct());
+	ISeinComponentStorage* Storage = GetOrCreateStorageForType(T::StaticStruct());
 	if (Storage)
 	{
 		Storage->AddComponent(Handle, &Component);
@@ -320,7 +291,7 @@ void USeinWorldSubsystem::AddComponent(FSeinEntityHandle Handle, const T& Compon
 template<typename T>
 void USeinWorldSubsystem::RemoveComponent(FSeinEntityHandle Handle)
 {
-	if (ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct()))
+	if (ISeinComponentStorage* Storage = GetComponentStorageRaw(T::StaticStruct()))
 	{
 		Storage->RemoveComponent(Handle);
 	}
@@ -329,20 +300,20 @@ void USeinWorldSubsystem::RemoveComponent(FSeinEntityHandle Handle)
 template<typename T>
 T* USeinWorldSubsystem::GetComponent(FSeinEntityHandle Handle)
 {
-	ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	ISeinComponentStorage* Storage = GetComponentStorageRaw(T::StaticStruct());
 	return Storage ? static_cast<T*>(Storage->GetComponentRaw(Handle)) : nullptr;
 }
 
 template<typename T>
 const T* USeinWorldSubsystem::GetComponent(FSeinEntityHandle Handle) const
 {
-	const ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	const ISeinComponentStorage* Storage = GetComponentStorageRaw(T::StaticStruct());
 	return Storage ? static_cast<const T*>(Storage->GetComponentRaw(Handle)) : nullptr;
 }
 
 template<typename T>
 bool USeinWorldSubsystem::HasComponent(FSeinEntityHandle Handle) const
 {
-	const ISeinComponentStorageV2* Storage = GetComponentStorageRaw(T::StaticStruct());
+	const ISeinComponentStorage* Storage = GetComponentStorageRaw(T::StaticStruct());
 	return Storage && Storage->HasComponent(Handle);
 }

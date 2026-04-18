@@ -47,9 +47,28 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
 	FGameplayTagContainer QueryTags;
 
-	/** Tags on entity that block this ability from activating */
+	/** If the entity has any of these tags, this ability refuses to activate.
+	 *  Combine with OwnedTags on the same ability to self-block (e.g., a grenade
+	 *  that owns Ability.State.Channeling and blocks on the same tag cannot
+	 *  reissue while a throw is in progress).
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
 	FGameplayTagContainer ActivationBlockedTags;
+
+	/** Tags this ability grants to the entity while active. Applied on activate
+	 *  (only the ones not already present — diffed so we never strip a tag the
+	 *  archetype or another source already owned), stripped on deactivate.
+	 *  Used with CancelAbilitiesWithTag for cross-ability arbitration.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
+	FGameplayTagContainer OwnedTags;
+
+	/** On activate, cancel any currently-active ability (including this one) whose
+	 *  OwnedTags intersect this set. Including this ability's own OwnedTag here
+	 *  gives you self-cancelling reissue (e.g., repeat-right-click Move).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
+	FGameplayTagContainer CancelAbilitiesWithTag;
 
 	/** Passive abilities tick continuously without explicit activation */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ability")
@@ -71,6 +90,13 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, Category = "Ability|Runtime")
 	bool bIsActive = false;
+
+	/** Subset of OwnedTags actually granted to the entity on the current activation.
+	 *  Rebuilt each activate from (OwnedTags \ entity.CombinedTags) so we strip
+	 *  only what we added and leave pre-existing tags in place on deactivate.
+	 */
+	UPROPERTY(Transient)
+	FGameplayTagContainer AppliedOwnedTags;
 
 	/** World subsystem reference (set on initialization) */
 	UPROPERTY(Transient)
