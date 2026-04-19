@@ -140,7 +140,7 @@ public:
 	/**
 	 * Action slot keys (12 slots for ability/action panel buttons).
 	 * Default (WASD mode): 1-6 + Shift+1-6, or designer-assigned.
-	 * Grid mode (CoH-style): Q,W,E,R / A,S,D,F / Z,X,C,V.
+	 * Grid mode (squad-tactical layout): Q,W,E,R / A,S,D,F / Z,X,C,V.
 	 * Value: digital (trigger on press).
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Input|Actions")

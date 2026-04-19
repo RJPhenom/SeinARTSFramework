@@ -45,7 +45,7 @@ sequenceDiagram
 
 ## Building a Multi-Unit Selection Panel
 
-A multi-unit panel (like the portrait grid in Company of Heroes) shows all selected units as clickable portraits.
+A multi-unit panel (squad-tactical portrait grid style) shows all selected units as clickable portraits.
 
 ### Pattern
 
@@ -126,7 +126,7 @@ Use this to:
 ## Tips
 
 !!! tip "Subgroup by type"
-    For CoH-style selection, group the `GetSelectedViewModels()` array by `ArchetypeTag` before displaying. Show one row per unit type with a count badge, rather than individual portraits for large selections.
+    For grouped-selection UIs (one row per unit type rather than one portrait per unit), group the `GetSelectedViewModels()` array by `ArchetypeTag` before displaying. Show one row per unit type with a count badge, rather than individual portraits for large selections.
 
 !!! tip "Performance with large selections"
     `USeinWorldWidgetPool` is ideal for the portrait grid. Initialize a pool of portrait widgets and acquire/release as the selection changes. This avoids widget creation/destruction churn when rapidly selecting and deselecting.
