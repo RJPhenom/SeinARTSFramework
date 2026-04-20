@@ -37,22 +37,22 @@ public:
 	// ====================================================================================================
 
 	/** Request a path from start to end. Returns a path result (check bIsValid). */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation", meta = (DisplayName = "Sein Request Path"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation", meta = (DisplayName = "Request Path"))
 	static FSeinPath SeinRequestPath(USeinPathfinder* Pathfinder, FFixedVector Start, FFixedVector End, FSeinEntityHandle Requester, FGameplayTagContainer BlockedTerrainTags);
 
 	/** Check whether a path result is valid */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Sein Is Path Valid"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Is Path Valid"))
 	static bool SeinIsPathValid(const FSeinPath& Path);
 
 	/** Get the waypoints of a computed path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Sein Get Path Waypoints"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Waypoints"))
 	static TArray<FFixedVector> SeinGetPathWaypoints(const FSeinPath& Path);
 
 	/** Get the total cost of a computed path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Sein Get Path Cost"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Cost"))
 	static FFixedPoint SeinGetPathCost(const FSeinPath& Path);
 
 	/** Get the number of waypoints in a path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Sein Get Path Length"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Length"))
 	static int32 SeinGetPathLength(const FSeinPath& Path);
 };

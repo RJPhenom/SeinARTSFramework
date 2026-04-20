@@ -19,7 +19,7 @@
 #include "Rotator.generated.h"
 
 /** Deterministic rotation using fixed-point angles */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedRotator
 {
 	GENERATED_BODY()

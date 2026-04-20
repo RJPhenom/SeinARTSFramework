@@ -14,20 +14,24 @@
 #include "IAssetTools.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Thumbnails/SeinBlueprintThumbnailRenderer.h"
+#include "Thumbnails/SeinStructThumbnailRenderer.h"
+#include "Validators/SeinDeterministicStructValidator.h"
+#include "StructUtils/UserDefinedStruct.h"
 #include "Engine/Blueprint.h"
 #include "Actor/SeinActorBlueprint.h"
 #include "Abilities/SeinAbilityBlueprint.h"
-#include "Components/ActorComponents/SeinComponentBlueprint.h"
+#include "Effects/SeinEffectBlueprint.h"
 #include "Widgets/SeinWidgetBlueprint.h"
 #include "WidgetBlueprint.h"
 #include "KismetCompiler.h"
-#include "BlueprintCompilationManager.h"
 #include "EdGraphUtilities.h"
 #include "Graph/SeinPinFactory.h"
 #include "PropertyEditorModule.h"
 #include "Details/SeinFixedPointDetails.h"
 #include "Details/SeinInstancedStructDetails.h"
-#include "Compile/SeinComponentCompilerExtension.h"
+#include "Brokers/SeinStructAssetBroker.h"
+#include "ComponentAssetBroker.h"
+#include "Components/ActorComponents/SeinStructComponent.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -71,8 +75,14 @@ void FSeinARTSEditorModule::StartupModule()
 		USeinBlueprintThumbnailRenderer::StaticClass()
 	);
 	ThumbnailMgr.RegisterCustomRenderer(
-		USeinComponentBlueprint::StaticClass(),
+		USeinEffectBlueprint::StaticClass(),
 		USeinBlueprintThumbnailRenderer::StaticClass()
+	);
+	// Sein UDSes (Right-click → Component) get the SeinComponentIcon92 tile.
+	// The renderer falls through to the engine default for non-Sein UDSes.
+	ThumbnailMgr.RegisterCustomRenderer(
+		UUserDefinedStruct::StaticClass(),
+		USeinStructThumbnailRenderer::StaticClass()
 	);
 	// Intentionally do NOT register our custom renderer for USeinWidgetBlueprint.
 	// Widget BPs need the engine's UWidgetBlueprintThumbnailRenderer to draw the
@@ -85,11 +95,17 @@ void FSeinARTSEditorModule::StartupModule()
 	SeinPinFactory = MakeShared<FSeinPinFactory>();
 	FEdGraphUtilities::RegisterVisualPinFactory(SeinPinFactory);
 
-	// Register the BP compile hook that synthesises a sidecar UUserDefinedStruct
-	// for Blueprint subclasses of USeinDynamicComponent. TStrongObjectPtr
-	// keeps the object alive across the editor session and tears down safely.
-	ComponentCompilerExtension.Reset(NewObject<USeinComponentCompilerExtension>(GetTransientPackage(), NAME_None, RF_Transient));
-	FBlueprintCompilationManager::RegisterCompilerExtension(UBlueprint::StaticClass(), ComponentCompilerExtension.Get());
+	// Wire UDS → USeinStructComponent composition per DESIGN.md §2.
+	// Designers drag a Sein-marked UDS onto an actor BP's components panel;
+	// the broker creates a USeinStructComponent and types its Data by the UDS.
+	StructAssetBroker = MakeShared<FSeinStructAssetBroker>();
+	FComponentAssetBrokerage::RegisterBroker(StructAssetBroker, USeinStructComponent::StaticClass(), /*bSetAsPrimary=*/true, /*bMapComponentForAssets=*/true);
+
+	// Enforce the determinism whitelist on Sein UDSes. The validator auto-
+	// registers with FStructureEditorUtils::FStructEditorManager in its ctor
+	// (via INotifyOnStructChanged/InnerListenerType) and auto-removes in its
+	// dtor when UDSValidator is reset at shutdown.
+	UDSValidator = MakeUnique<FSeinDeterministicStructValidator>();
 
 	{
 		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -121,10 +137,14 @@ void FSeinARTSEditorModule::ShutdownModule()
 		SeinPinFactory.Reset();
 	}
 
-	// The compilation manager still holds a strong ref to the extension via its
-	// internal TObjectPtr map; we just drop our side. TStrongObjectPtr's
-	// destructor handles the "UObject array is mid-teardown" case gracefully.
-	ComponentCompilerExtension.Reset();
+	if (StructAssetBroker.IsValid())
+	{
+		FComponentAssetBrokerage::UnregisterBroker(StructAssetBroker);
+		StructAssetBroker.Reset();
+	}
+
+	// Dtor unregisters the listener via INotifyOnStructChanged RAII.
+	UDSValidator.Reset();
 
 	UnregisterAssetTypeActions();
 	FSeinARTSEditorStyle::Shutdown();
@@ -147,7 +167,7 @@ void FSeinARTSEditorModule::RegisterAssetTypeActions()
 
 	RegisterAction(MakeShared<FAssetTypeActions_SeinActorBlueprint>());
 	RegisterAction(MakeShared<FAssetTypeActions_SeinAbilityBlueprint>());
-	RegisterAction(MakeShared<FAssetTypeActions_SeinComponentBlueprint>());
+	RegisterAction(MakeShared<FAssetTypeActions_SeinEffectBlueprint>());
 }
 
 void FSeinARTSEditorModule::UnregisterAssetTypeActions()

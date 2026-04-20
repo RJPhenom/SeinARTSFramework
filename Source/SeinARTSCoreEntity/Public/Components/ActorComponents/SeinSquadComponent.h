@@ -12,13 +12,13 @@
 #include "Components/SeinSquadData.h"
 #include "SeinSquadComponent.generated.h"
 
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Sein Squad Component"))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Squad Component"))
 class SEINARTSCOREENTITY_API USeinSquadComponent : public USeinActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS", meta = (ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Squad", meta = (ShowOnlyInnerProperties))
 	FSeinSquadData Data;
 
 	virtual FInstancedStruct GetSimComponent() const override

@@ -23,18 +23,18 @@
  * Deterministic fixed-point transform.
  * Position, Rotation (quaternion), and Scale for entity placement in lockstep simulation.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedTransform
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Math|Transform")
 	FFixedVector Location;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Math|Transform")
 	FFixedQuaternion Rotation;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Transform")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Math|Transform")
 	FFixedVector Scale;
 
 	// Constructors

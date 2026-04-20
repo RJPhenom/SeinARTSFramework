@@ -17,7 +17,7 @@
  * to an entity. Created when an effect is applied, removed when it expires
  * or is explicitly removed.
  */
-USTRUCT()
+USTRUCT(meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinActiveEffect
 {
 	GENERATED_BODY()

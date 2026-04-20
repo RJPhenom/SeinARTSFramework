@@ -78,8 +78,6 @@ public:
 			// --- Remove expired effects and clean up granted tags ---
 			if (ExpiredEffectIDs.Num() > 0)
 			{
-				FSeinTagData* TagComp = World.GetComponent<FSeinTagData>(Handle);
-
 				for (uint32 EffectID : ExpiredEffectIDs)
 				{
 					// Find the effect before removal so we can read its granted tags.
@@ -95,13 +93,12 @@ public:
 
 					if (EffectPtr)
 					{
-						// Strip granted tags from the entity.
-						if (TagComp)
+						// Release our refcount on each granted tag. Other sources
+						// (archetype BaseTags, other effects, abilities) keep their
+						// own refcounts independently — see DESIGN.md §2.
+						for (const FGameplayTag& Tag : EffectPtr->Definition.GrantedTags)
 						{
-							for (const FGameplayTag& Tag : EffectPtr->Definition.GrantedTags)
-							{
-								TagComp->RemoveGrantedTag(Tag);
-							}
+							World.UngrantTag(Handle, Tag);
 						}
 
 						// Fire visual event for effect removal.

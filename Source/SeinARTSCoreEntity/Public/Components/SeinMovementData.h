@@ -16,29 +16,29 @@
 #include "Types/Vector.h"
 #include "SeinMovementData.generated.h"
 
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 {
 	GENERATED_BODY()
 
 	/** Movement speed in units per second */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement")
 	FFixedPoint MoveSpeed;
 
 	/** Target location to move toward */
-	UPROPERTY(BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Movement")
 	FFixedVector TargetLocation;
 
 	/** Whether entity currently has a move target */
-	UPROPERTY(BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Movement")
 	bool bHasTarget;
 
 	/** Acceleration rate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement")
 	FFixedPoint Acceleration;
 
 	/** Turn rate in radians per second */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement")
 	FFixedPoint TurnRate;
 
 	FSeinMovementData()

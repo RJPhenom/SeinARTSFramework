@@ -22,7 +22,7 @@
  * Represents a capsule defined by a line segment and radius.
  * The capsule is essentially a sphere swept along a line segment.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedCapsule
 {
 	GENERATED_BODY()

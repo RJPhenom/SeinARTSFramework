@@ -23,7 +23,7 @@ struct SEINARTSCORE_API FSeinID
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	int32 Value;
 
 	FSeinID()

@@ -13,15 +13,15 @@
  * Generational entity handle. Combines a slot index with a generation counter
  * to detect stale references after entity recycling.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinEntityHandle
 {
 	GENERATED_BODY()
 
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	int32 Index;
 
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	int32 Generation;
 
 	FSeinEntityHandle()

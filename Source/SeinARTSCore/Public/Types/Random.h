@@ -24,7 +24,7 @@
  * Deterministic RNG state using Xorshift128+ algorithm.
  * Guaranteed to produce identical results across all platforms.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedRandom
 {
 	GENERATED_BODY()

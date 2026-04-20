@@ -23,7 +23,7 @@
  * Contains both a box and sphere for efficient broad-phase collision detection.
  * Use box for tight axis-aligned checks, sphere for quick distance checks.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedBounds
 {
 	GENERATED_BODY()

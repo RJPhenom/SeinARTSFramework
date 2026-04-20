@@ -16,29 +16,29 @@
 #include "Types/EntityID.h"
 #include "SeinCombatData.generated.h"
 
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinCombatData : public FSeinComponent
 {
 	GENERATED_BODY()
 
 	/** Damage dealt per attack */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
 	FFixedPoint AttackDamage;
 
 	/** Attack range */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
 	FFixedPoint AttackRange;
 
 	/** Time between attacks (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Combat")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
 	FFixedPoint AttackCooldown;
 
 	/** Current cooldown remaining */
-	UPROPERTY(BlueprintReadWrite, Category = "Combat")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Combat")
 	FFixedPoint CurrentCooldown;
 
 	/** Current attack target (if any) */
-	UPROPERTY(BlueprintReadWrite, Category = "Combat")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Combat")
 	FSeinID TargetEntity;
 
 	FSeinCombatData()

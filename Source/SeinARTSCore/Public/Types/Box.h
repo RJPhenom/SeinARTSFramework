@@ -20,7 +20,7 @@
  * Axis-aligned bounding box using fixed-point arithmetic.
  * Represents a box defined by minimum and maximum corners.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedBox
 {
 	GENERATED_BODY()

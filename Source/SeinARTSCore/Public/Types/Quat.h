@@ -21,7 +21,7 @@
 struct FFixedRotator;
 
 /** Deterministic quaternion using fixed-point arithmetic */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedQuaternion
 {
 	GENERATED_BODY()

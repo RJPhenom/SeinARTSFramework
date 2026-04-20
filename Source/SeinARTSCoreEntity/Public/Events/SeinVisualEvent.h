@@ -42,37 +42,37 @@ enum class ESeinVisualEventType : uint8
  * A single visual event emitted by the simulation for the render layer to consume.
  * These are strictly one-way: simulation -> render. The render layer never writes back.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinVisualEvent
 {
 	GENERATED_BODY()
 
 	/** The type of visual event */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	ESeinVisualEventType Type = ESeinVisualEventType::EntitySpawned;
 
 	/** Primary entity involved in this event */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FSeinEntityHandle PrimaryEntity;
 
 	/** Secondary entity involved (e.g. damage source, target) */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FSeinEntityHandle SecondaryEntity;
 
 	/** Numeric value associated with the event (damage amount, resource delta, etc.) */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FFixedPoint Value;
 
 	/** Gameplay tag for ability, effect, or archetype identification */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FGameplayTag Tag;
 
 	/** World location relevant to the event */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FFixedVector Location;
 
 	/** Player who owns or triggered this event */
-	UPROPERTY(BlueprintReadOnly, Category = "VisualEvent")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|VisualEvent")
 	FSeinPlayerID PlayerID;
 
 	/** Create an entity spawn event */
@@ -104,7 +104,7 @@ struct SEINARTSCOREENTITY_API FSeinVisualEvent
  * Queue of visual events. The simulation enqueues events during its tick,
  * and the render layer drains them each frame via Flush().
  */
-USTRUCT()
+USTRUCT(meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinVisualEventQueue
 {
 	GENERATED_BODY()

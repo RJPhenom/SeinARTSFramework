@@ -22,16 +22,16 @@ enum class ESeinAbilityTargetType : uint8
  * Tag-based gating requirements for ability activation.
  * The owning entity must satisfy both tag sets for the ability to activate.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinAbilityRequirements
 {
 	GENERATED_BODY()
 
 	/** Entity must have ALL of these tags to activate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ability")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Ability")
 	FGameplayTagContainer RequiredTags;
 
 	/** Entity must have NONE of these tags to activate */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ability")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Ability")
 	FGameplayTagContainer BlockedTags;
 };

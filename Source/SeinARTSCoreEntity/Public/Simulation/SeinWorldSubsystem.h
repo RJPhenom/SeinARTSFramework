@@ -152,6 +152,10 @@ public:
 	ISeinComponentStorage* GetComponentStorageRaw(UScriptStruct* StructType);
 	const ISeinComponentStorage* GetComponentStorageRaw(UScriptStruct* StructType) const;
 
+	/** Read-only view over every registered storage (UScriptStruct* → storage). Used by
+	 *  USeinComponentBPFL for "list every component on entity X" iteration. */
+	const TMap<UScriptStruct*, ISeinComponentStorage*>& GetAllComponentStorages() const { return ComponentStorages; }
+
 	// ========== Player & Faction ==========
 
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player")
@@ -170,6 +174,57 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Player")
 	int32 GetPlayerCount() const { return PlayerStates.Num(); }
+
+	// ========== Tags (refcounted, auto-indexed) ==========
+	//
+	// All tag mutations route through the subsystem so the global
+	// EntityTagIndex stays in sync with per-entity refcounts. See DESIGN.md §2.
+
+	/** Grant a tag (refcount++). Adds to EntityTagIndex on the 0→1 edge. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	void GrantTag(FSeinEntityHandle Handle, FGameplayTag Tag);
+
+	/** Ungrant a tag (refcount--). Removes from EntityTagIndex on the 1→0 edge.
+	 *  Safe to call on tags that were never granted (no-op). */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	void UngrantTag(FSeinEntityHandle Handle, FGameplayTag Tag);
+
+	/** Add a tag to BaseTags and grant. Returns true if BaseTags changed. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	bool AddBaseTag(FSeinEntityHandle Handle, FGameplayTag Tag);
+
+	/** Remove a tag from BaseTags and ungrant. Returns true if BaseTags changed. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	bool RemoveBaseTag(FSeinEntityHandle Handle, FGameplayTag Tag);
+
+	/** Replace the entity's BaseTags. Diffs vs the current set: ungrants removed
+	 *  tags, grants new ones, leaves unchanged tags alone. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	void ReplaceBaseTags(FSeinEntityHandle Handle, const FGameplayTagContainer& NewBaseTags);
+
+	/** Returns a copy of the entity handles currently carrying the tag. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags")
+	TArray<FSeinEntityHandle> GetEntitiesWithTag(FGameplayTag Tag) const;
+
+	/** Pointer to the underlying index bucket (C++ only; nullptr if tag is absent). */
+	const TArray<FSeinEntityHandle>* FindEntitiesWithTag(FGameplayTag Tag) const;
+
+	/** Whole-index access (C++ only, for iteration and debugging). */
+	const TMap<FGameplayTag, TArray<FSeinEntityHandle>>& GetEntityTagIndex() const { return EntityTagIndex; }
+
+	// ========== Named Entity Registry ==========
+
+	/** Register an entity under a named alias. Overwrites any existing mapping. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Entity")
+	void RegisterNamedEntity(FName Name, FSeinEntityHandle Handle);
+
+	/** Look up an entity by its registered name. Returns an invalid handle if unregistered. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Entity")
+	FSeinEntityHandle LookupNamedEntity(FName Name) const;
+
+	/** Remove a named alias. No-op if the name was never registered. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Entity")
+	void UnregisterNamedEntity(FName Name);
 
 	// ========== Attribute Resolution ==========
 
@@ -247,6 +302,14 @@ private:
 	// Entity → Blueprint class map (for actor bridge spawning)
 	TMap<FSeinEntityHandle, TSubclassOf<ASeinActor>> EntityActorClassMap;
 
+	// Global tag → entity index. Maintained by Grant/UngrantTag on 0↔1 refcount
+	// transitions. Destroy paths call UnindexEntityTags to clear a handle's
+	// buckets before its FSeinTagData storage is freed. See DESIGN.md §2.
+	TMap<FGameplayTag, TArray<FSeinEntityHandle>> EntityTagIndex;
+
+	// Named entity registry (designer-addressable aliases).
+	TMap<FName, FSeinEntityHandle> NamedEntityRegistry;
+
 	// Simulation state
 	bool bIsRunning = false;
 	int32 CurrentTick = 0;
@@ -274,6 +337,15 @@ private:
 
 	// Ability initialization for spawned entities
 	void InitializeEntityAbilities(FSeinEntityHandle Handle);
+
+	// Seed an entity's tag refcounts + EntityTagIndex from its BaseTags (at spawn).
+	void SeedEntityTagsFromBase(FSeinEntityHandle Handle);
+
+	// Strip a handle from every EntityTagIndex bucket it appears in (at destroy).
+	void UnindexEntityTags(FSeinEntityHandle Handle);
+
+	// Drop any named-registry entries that reference the given handle (at destroy).
+	void UnregisterHandleFromNames(FSeinEntityHandle Handle);
 };
 
 // ==================== Template Implementations ====================

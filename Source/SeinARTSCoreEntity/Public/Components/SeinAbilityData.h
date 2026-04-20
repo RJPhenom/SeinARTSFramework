@@ -11,13 +11,13 @@
  * Component tracking an entity's abilities.
  * Stores granted ability classes (from archetype) and runtime instances.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinAbilityData : public FSeinComponent
 {
 	GENERATED_BODY()
 
 	/** Ability classes granted to this entity (set from archetype) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Abilities")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Ability")
 	TArray<TSubclassOf<USeinAbility>> GrantedAbilityClasses;
 
 	/** Runtime instances (created on entity spawn) */

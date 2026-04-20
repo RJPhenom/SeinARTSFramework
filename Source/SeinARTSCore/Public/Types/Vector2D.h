@@ -18,7 +18,7 @@
 #include "Vector2D.generated.h"
 
 /** Deterministic 2D vector using fixed-point arithmetic */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedVector2D
 {
 	GENERATED_BODY()

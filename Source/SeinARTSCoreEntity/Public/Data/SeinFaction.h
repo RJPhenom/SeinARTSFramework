@@ -25,22 +25,22 @@ class SEINARTSCOREENTITY_API USeinFaction : public UDataAsset
 
 public:
 	/** Display name of this faction */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faction")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")
 	FText FactionName;
 
 	/** Unique faction identifier used by the simulation */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faction")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")
 	FSeinFactionID FactionID;
 
 	/** Blueprint classes this faction can build/produce */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faction")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")
 	TArray<TSubclassOf<ASeinActor>> AvailableUnitClasses;
 
 	/** Starting resources granted to players of this faction */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Economy")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Economy")
 	TMap<FName, FFixedPoint> StartingResources;
 
 	/** Entity classes to spawn on game start (e.g., HQ building) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Faction")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")
 	TArray<TSubclassOf<ASeinActor>> StartingEntityClasses;
 };

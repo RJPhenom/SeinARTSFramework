@@ -45,7 +45,39 @@ Every primitive and system in this document must satisfy these. A design that fi
 
 9. **Batch-tick heavy systems.** Systems doing expensive work (vision stamping, capture polling, large-radius spatial scans, flow-field recomputation) declare a `TickInterval` on `ISeinSystem` and run every N sim ticks. Default 4-tick batching for heavy work (7.5 Hz at 30 Hz sim — below human latency threshold for non-critical feedback). Only latency-sensitive systems (command processing, ability ticks, damage resolution) tick every frame. All clients batch on identical ticks; determinism preserved.
 
-10. **Entity lookup is framework-DNA-level.** `USeinWorldSubsystem` maintains two global indices updated automatically by the tag-refcount system (§2) and explicit registration: a `TMap<FGameplayTag, TArray<FSeinEntityHandle>>` auto-indexed by entity tags (every grant/ungrant updates it), and a `TMap<FName, FSeinEntityHandle>` for singleton named lookups. Tag-based queries ("all Riflemen", "all stealthed enemies in radius") are O(1) TMap lookups, not O(entities) iterations. Named lookups ("the scenario", "HeroBob") are O(1) direct fetches. Every grid-backed or entity-iterating system should prefer these lookups over manual filter-sweeps.
+10. **Entity lookup is framework-DNA-level.** `USeinWorldSubsystem` maintains two global indices updated automatically by the tag-refcount system (§3) and explicit registration: a `TMap<FGameplayTag, TArray<FSeinEntityHandle>>` auto-indexed by entity tags (every grant/ungrant updates it), and a `TMap<FName, FSeinEntityHandle>` for singleton named lookups. Tag-based queries ("all Riflemen", "all stealthed enemies in radius") are O(1) TMap lookups, not O(entities) iterations. Named lookups ("the scenario", "HeroBob") are O(1) direct fetches. Every grid-backed or entity-iterating system should prefer these lookups over manual filter-sweeps.
+
+---
+
+## Naming & API conventions `[locked]`
+
+Cross-cutting rules every BP-exposed surface must follow. Designer-facing search (BP graph, details panel, class picker) is the primary user, so consistency is the goal — one mental model for "where does this live."
+
+### Categories
+
+- **Every** BP-visible `Category = "..."` lives under `SeinARTS|...`. No bare `"Player"`, no engine-style top-level `"Math|..."`. The plugin is one searchable namespace.
+- Hierarchy: `SeinARTS|<Subsystem>[|<Subgroup>...]`. Examples: `SeinARTS|Tags`, `SeinARTS|Entity|Lookup`, `SeinARTS|Math|FixedPoint|Constants`.
+- **Plurality:** singular by default for nouns operating on a single thing (`Ability`, `Effect`, `Modifier`, `Player`, `Entity`, `Squad`, `Command`, `Combat`, `Production`, `Movement`, `Tech`, `Faction`). **Exception:** `Tags` stays plural — matches the GameplayTags engine plugin convention. Don't invent new exceptions without a reason.
+- Subsystem subgroups are short, BP-readable nouns: `Lookup`, `Runtime`, `Target`, `Duration`, `Periodic`, `Stacking`, `Tracked`, `Wheeled`, `Path`, `Grid`, `Constants`. Avoid abbreviations (`Cfg`, `Mgr`, `Util`).
+- Editor-system metas (`Content Browser|Factory Visibility`, `Engine`) are not BP graph categories — leave those alone.
+
+### DisplayName meta
+
+- **Drop the `Sein` prefix from every function-level DisplayName.** The `SeinARTS` category already namespaces it; `"Sein Has Tag"` reads as noise after the category badge. `DisplayName = "Has Tag"` is correct. Apply uniformly — every UFUNCTION whose C++ symbol starts with `Sein` carries an explicit DisplayName meta to suppress the auto-derivation.
+- Function symbols whose names already read clean unprefixed (e.g., MathBPFL's `Sqrt`, `Abs`, `Min`, `Max`) may omit DisplayName; auto-derivation produces the same string.
+- **Class-level UCLASS DisplayName** for BPFLs keeps the `SeinARTS` brand: `"SeinARTS Tag Library"`, `"SeinARTS Combat Library"`. These appear in the static-function-library picker and disambiguate from engine/other-plugin libraries.
+- **ActorComponent UCLASS DisplayName** stays unprefixed (`"Abilities Component"`, `"Combat Component"`); the `ClassGroup = (SeinARTS)` meta provides the filter grouping in the Add Component picker.
+
+### C++ symbols
+
+- Type prefixes match Unreal convention: `FSein` for USTRUCTs, `USein` for UObjects, `ASein` for AActors, `ESein` for enums, `ISein` for interfaces.
+- Function symbols: prefix `Sein` only when needed to avoid collision with engine APIs or to make global free functions self-identifying. Static methods inside namespaced BPFL classes don't need it (e.g., `USeinTagBPFL::SeinHasTag` is fine because BPFL convention is established, but `USeinMathBPFL::Sqrt` is fine too because the class name already namespaces).
+- **UPROPERTY field names never carry `Sein` prefix.** The owning struct/class type already carries it.
+- Renaming a `Sein`-prefixed symbol to drop the prefix is fine *if* it doesn't collide with engine code or shadow a UE built-in. If a clean unprefixed name conflicts, keep the prefix and add an explicit DisplayName meta to clean up the BP-visible side.
+
+### Authoring rule
+
+When adding a new UFUNCTION/UPROPERTY, write the Category and DisplayName before writing the body. Trying to retro-fit naming consistency across a 75-file plugin is a separate session of work — prevent the drift at point of authoring.
 
 ---
 
@@ -83,7 +115,79 @@ The atomic unit of sim existence. Anything with sim-side state.
 
 ---
 
-## 2. Tags `[locked]`
+## 2. Components `[locked]`
+
+The data carriers attached to entities. A component is a USTRUCT that lives in deterministic sim storage (`FSeinGenericComponentStorage`, keyed by `UScriptStruct*`). Components hold **data only** — no logic, no event hooks, no callable methods that mutate state. Sim logic belongs in abilities (§7), effects (§8), AI controllers (§16), and command brokers (§5).
+
+This separation is enforced at every layer of the authoring stack: framework-shipped typed wrappers are non-Blueprintable, designer-authored components are User Defined Structs with a restricted variable-type whitelist, and the actor-component classes used for composition onto a `ASeinActor` Blueprint are auto-generated and explicitly non-Blueprintable. There is no "component graph" anywhere in the framework.
+
+### Decisions
+
+- **Components are pure data.** Logic-bearing primitives are abilities (§7), effects (§8), AI controllers (§16), command brokers (§5). Components are read by those primitives via the `USeinWorldSubsystem::GetComponent<T>(Handle)` template path (in C++) or the BPFL surface (in BP). Mutations only happen from sim-context code. There is no per-component event graph, no per-component tick, no per-component override hook anywhere in the stack. If a designer needs per-entity logic, the answer is always an ability or a passive effect — never a component.
+
+- **Two component flavors.**
+  - **Framework-native components.** Shipped as USTRUCTs in the `SeinARTSCoreEntity` module (`FSeinAbilityData`, `FSeinCombatData`, `FSeinMovementData`, `FSeinProductionData`, `FSeinSquadData`, `FSeinResourceIncomeData`, `FSeinActiveEffectsData`, etc.). Each comes paired with a non-Blueprintable typed wrapper `UActorComponent` (`USeinAbilitiesComponent`, `USeinCombatComponent`, ...) that designers attach to `ASeinActor` Blueprints for composition. The wrapper holds an inline `Data` UPROPERTY of the matching struct type for authoring; at spawn `Resolve()` returns it as an `FInstancedStruct` payload that gets copied into deterministic component storage.
+  - **Designer-authored components.** Created via the Content Browser as User Defined Struct (UDS) assets through the **Right-click → Component** factory. Each authored UDS is automatically paired with a synthesized non-Blueprintable AC at editor time so it can be composed onto actor BPs identically to framework-native components.
+
+- **Designer authoring surface is a UDS, not a Blueprint subclass.** The previous `USeinDynamicComponent`-as-BP-class workflow is retired. UDS removes the "BP with no graph" awkwardness entirely, gives designers a pure data-editing experience identical to authoring a Blueprint Struct, and makes the determinism contract enforceable at the type-picker level.
+
+- **Determinism contract: restricted variable types.** UDSes created via the Sein component factory carry the `SeinDeterministic` USTRUCT meta marker. The UDS variable picker is filtered (via `IPinTypeSelectorFilter` installed only on Sein-marked UDS editors — not regular Blueprint variable editing) to allow only:
+  - `bool`
+  - Integer types (`int8` / `int16` / `int32` / `int64` / `uint8` / `uint16` / `uint32` / `uint64`)
+  - `FName` (interned, deterministic comparison)
+  - `FGameplayTag`, `FGameplayTagContainer` (interned)
+  - Plugin-shipped fixed-point structs: `FFixedPoint`, `FFixedVector`, `FFixedVector2D`, `FFixedTransform`, `FFixedQuat`, `FFixedRotator`
+  - Plugin-shipped sim primitive structs: `FSeinEntityHandle`, `FSeinPlayerID`, `FSeinFactionID`, `FSeinResourceCost`, `FSeinModifier`, etc. — any USTRUCT marked `SeinDeterministic`
+  - `FInstancedStruct` (deterministic iff the runtime instance struct is itself `SeinDeterministic`-marked)
+  - `TArray<T>` / `TMap<K,V>` / `TSet<T>` containers of any of the above
+  - **Disallowed:** `float`, `double`, `FVector`, `FRotator`, `FTransform`, `FQuat`, `FColor`, `FLinearColor`, `AActor*`, `UObject*` (any pointer to a non-deterministic UE built-in), `TSubclassOf` of a non-Sein class, soft references, delegates, anything that varies bit-by-bit across platforms or that touches the renderer.
+
+- **Native sim structs participate via opt-in meta.** Every USTRUCT in the `SeinARTSCoreEntity` module that's safe for use in sim component fields gets `USTRUCT(meta = (SeinDeterministic))`. The struct picker on UDS variable creation filters via `IStructViewerFilter` so designers see only structs carrying this meta. Native structs and designer-authored UDSes (which auto-carry the meta) appear in the same filtered picker.
+
+- **Composition via asset-broker pattern, not per-UDS class synthesis.** The framework ships one native non-Blueprintable `USeinStructComponent : USeinActorComponent` with a single `FInstancedStruct Data` UPROPERTY. A companion `FSeinStructAssetBroker` (`IComponentAssetBroker`) is registered against the UDS asset class on plugin startup via `FComponentAssetBrokerage::RegisterBroker`. Designer workflow: drag a Sein-marked UDS from the Content Browser onto a `ASeinActor` BP's components panel. The broker intercepts the drop, instantiates a `USeinStructComponent`, and calls `Data.InitializeAs(UDS)` so the instance is typed by the source UDS. Designers edit the Data defaults in the details panel using the UDS as the schema.
+  - **Trade-off vs per-UDS class synthesis:** this approach trades per-UDS entries in the "Add Component" dropdown for a single generic "Struct Component" entry — composition happens via drag-from-Content-Browser instead. Implementation cost drops by an order of magnitude (one broker vs full UClass synthesis, package generation, mount points, hot-reload plumbing). Revisit per-UDS synthesis as a future enhancement if designer ergonomics demand dropdown entries.
+
+- **Broker fires for every UDS, not just Sein-marked ones.** `IComponentAssetBroker` matches by asset class only (UE API limitation). `FSeinStructAssetBroker::AssignAssetToComponent` checks `USeinSimComponentFactory::IsSeinDeterministicStruct(UDS)` and returns `false` for non-Sein UDSes — the determinism contract doesn't leak into random UDS assets in the project. The "failure" surface is benign: a non-Sein UDS dragged onto an actor BP silently refuses composition.
+
+- **At entity spawn, USeinStructComponent behaves identically to the typed wrappers.** The world subsystem walks the actor's CDO components, calls `Resolve()` on each, and copies the returned `FInstancedStruct` into deterministic component storage. From that point on, the AC's Data field is authoring metadata — sim storage is the source of truth. Typed wrappers (USeinCombatComponent, …) and USeinStructComponent instances coexist naturally on the same actor BP.
+
+- **No Blueprintable AC subclasses anywhere.** Both framework-native typed wrappers and `USeinStructComponent` are explicitly non-Blueprintable. Designers cannot subclass them, cannot add logic, cannot override events. The only ways to extend the framework are: (a) author a new UDS for new component data, (b) author a new ability/effect Blueprint for logic, (c) C++ for new framework-shipped components or systems.
+
+- **Hot-reload and schema-change semantics.** When a UDS schema changes, UE's UDS recompile path re-binds FInstancedStruct instances automatically. Live entities in PIE keep their existing data layout until destroyed and respawned (schema migration on live data is explicitly out of scope). Designers iterating on a UDS schema during PIE should respawn affected entities to see the new layout.
+
+- **Variable-type enforcement: post-selection validation (landed).** The original design called for `IPinTypeSelectorFilter` to restrict the UDS variable picker pre-selection. UE 5.7's UDS editor (`FUserDefinedStructureFieldLayout` in `UserDefinedStructureEditor.cpp`) constructs its `SPinTypeSelector` without the `CustomFilters` argument and does not query `FBlueprintEditor::GetPinTypeSelectorFilters` — pre-selection filtering would require replacing the UDS editor toolkit entirely. Enforcement landed via **Option A: post-selection validation**. `FSeinDeterministicStructValidator` implements `FStructureEditorUtils::INotifyOnStructChanged`; when a field with a non-deterministic type is added or retyped on a `SeinDeterministic`-marked UDS, the validator removes it and surfaces a Slate toast. Registered on editor-module startup and auto-unregistered on shutdown via RAII. Replacing the UDS editor toolkit (Option B) for pre-selection filtering remains a future enhancement if designer feedback shows the add-then-remove UX is annoying in practice.
+
+- **FInstancedStruct picker filtering (landed).** FInstancedStruct UPROPERTYs carrying `meta = (SeinDeterministicOnly)` restrict the struct picker to Sein-marked structs (both native USTRUCTs with the meta and UDSes tagged by the factory). Implemented in `FSeinInstancedStructDetails` via the `bRestrictToSeinDeterministic` filter flag. `USeinStructComponent::Data` uses this meta — the UDS picker on the broker-composed AC only shows deterministic-safe struct types.
+
+- **Special case: framework-managed components without ACs.** `FSeinTagData` is auto-provisioned by `SpawnEntity` and has no typed wrapper AC (per §1). The auto-AC pattern applies to designer-authored components and to most framework-shipped components, but a few framework-managed components are universal and don't appear in the components panel at all — they're invariants, not authoring surfaces.
+
+### Non-goals
+
+- Designer-authored AC subclasses with logic. Use abilities, effects, or AI controllers.
+- Mid-component-lifetime UDS schema migration on live entities. Designers respawn or write a one-shot ability if they need it.
+- `float` / `double` / unrestricted UE built-in types in sim component fields. Period.
+- A separate "data asset" workflow for per-instance component config. The UDS + AC composition pattern covers it.
+- Per-component event hooks at the AC level (no `OnComponentSpawn`, no `OnComponentTick`). Sim primitives that need per-tick work declare a system on `ISeinSystem`.
+- Automatic recovery from source-UDS deletion. Designers handle the cascade as they would any deleted asset reference.
+
+### Implementation deltas that fall out
+
+- New `USeinSimComponentFactory` (replaces the old `USeinComponentFactory`) — Right-click → Component creates a `UUserDefinedStruct` and tags it with struct-level `SeinDeterministic` meta via `UStruct::SetMetaData`. Detection API: `USeinSimComponentFactory::IsSeinDeterministicStruct(const UStruct*)` — one call path for native USTRUCTs (meta populated by UHT from the `USTRUCT(meta = (SeinDeterministic))` macro) and UDSes (meta set by the factory on creation).
+- New `USeinStructComponent : USeinActorComponent` — generic non-Blueprintable actor component with a single `FInstancedStruct Data` UPROPERTY and a `GetSimComponent()` override returning Data. One native class; designers compose multiple instances per actor, each typed by a different UDS.
+- New `FSeinStructAssetBroker : IComponentAssetBroker` — registered with `FComponentAssetBrokerage::RegisterBroker(UUserDefinedStruct, USeinStructComponent, bPrimary=true, bMapComponentForAssets=true)` on plugin startup. `AssignAssetToComponent(Comp, UDS)` refuses non-Sein UDSes via `IsSeinDeterministicStruct` and otherwise calls `Data.InitializeAs(UDS)`.
+- All framework sim USTRUCTs marked with `USTRUCT(meta = (SeinDeterministic))`. Comprehensive sweep across `SeinARTSCore/Types/*` (all `FFixed*`, geometry, PRNG, time), `SeinARTSCoreEntity/Components/Sein*Data.h`, `Effects/SeinActiveEffect.h` + `SeinEffectDefinition.h`, `Attributes/SeinModifier.h`, `Input/SeinCommand.h`, `Events/SeinVisualEvent.h`, `Core/SeinEntityHandle.h`/`SeinPlayerID.h`/`SeinFactionID.h`, `Data/SeinArchetypeDefinition.h`, `Abilities/SeinAbilityTypes.h`. Intentionally unmarked (internal-use): `FSeinPlayerState`, `FSeinEntity`, `FSeinEntityID`, `FSeinComponent` (base), `FSeinProductionAvailability` (UI binding with non-deterministic fields).
+- Retire `USeinDynamicComponent` (old BP-subclass class), `USeinComponentBlueprint` (old UBlueprint subclass), `USeinComponentCompilerExtension` (old sidecar-UDS synthesizer), and the old BP-based `USeinComponentFactory`. Zero migration concern — empty Content folder.
+- Thumbnail renderer cleanup: drop the `Component` enum value from `USeinBlueprintThumbnailRenderer::ESeinAssetType`; `SeinSimComponent` thumbnail key registered in `FSeinARTSEditorStyle` for the UDS factory's asset tile.
+- Update CLAUDE.md `## Code Conventions` section to reflect the rule: components are pure data; no event graphs anywhere; logic lives in ability / effect / AI primitives.
+
+### Deferred enhancements (future sessions)
+
+- **Pre-selection variable-type filtering in the UDS editor** — requires replacing the UDS editor toolkit. Current enforcement is post-selection via `FSeinDeterministicStructValidator` (adds then removes with a toast). Only worth doing if designer feedback shows the add-then-remove UX is actually bothersome.
+- **Per-UDS class synthesis** — if designer ergonomics demand per-UDS entries in the "Add Component" dropdown rather than drag-from-Content-Browser composition. Full UClass synthesis pipeline per the original design.
+
+---
+
+## 3. Tags `[locked]`
 
 Gameplay tags on entities. Used for arbitration, queries, classification, and cross-system communication. Every entity carries `FSeinTagData` (per §1).
 
@@ -138,11 +242,11 @@ SeinARTS.Entity.<Modifier>                // Entity.Transient, Entity.Garrisoned
 
 ---
 
-## 3. Commands `[locked]`
+## 4. Commands `[locked]`
 
 Player/AI intent crossing the wire. A command is an entry in the lockstep txn log; all clients deterministically re-derive sim state from the command stream.
 
-See also: **§4 CommandBrokers** (the sim-side primitive that mediates commands to dynamic member sets).
+See also: **§5 CommandBrokers** (the sim-side primitive that mediates commands to dynamic member sets).
 
 ### Decisions
 
@@ -164,7 +268,7 @@ See also: **§4 CommandBrokers** (the sim-side primitive that mediates commands 
 
 - **Client-side validation is additive, not authoritative.** The player controller MAY pre-validate commands before emitting to save a round-trip for obviously-invalid inputs. But it never short-circuits sim validation — state at command-emit time can differ from state at command-processing time by several ticks in lockstep. Sim is always the authority.
 
-- **Smart command resolution happens sim-side.** Right-click on the ground vs an enemy vs a resource vs a friendly transport resolves to different abilities. The resolver lives in the CommandBroker (§4) — it inspects the target, queries member capability maps, and dispatches per-member ActivateAbility calls. The player controller emits one pre-resolution command regardless of target type.
+- **Smart command resolution happens sim-side.** Right-click on the ground vs an enemy vs a resource vs a friendly transport resolves to different abilities. The resolver lives in the CommandBroker (§5) — it inspects the target, queries member capability maps, and dispatches per-member ActivateAbility calls. The player controller emits one pre-resolution command regardless of target type.
 
 - **AI uses the same lockstep buffer as human players.** No separate AI channel. AI is a server-side command issuer; its commands flow through the same `FSeinCommand` stream. Makes replay / multiplayer-in-lobby / AI-vs-AI all reproducible from the command log alone.
 
@@ -188,7 +292,7 @@ See also: **§4 CommandBrokers** (the sim-side primitive that mediates commands 
 
 ---
 
-## 4. CommandBrokers `[locked]`
+## 5. CommandBrokers `[locked]`
 
 Sim-side primitive that mediates between a player's (or AI's) single dispatch-level command and the dynamic set of entity members receiving it. Replaces the old "formation manager" concept from the pre-ECS plugin, generalized.
 
@@ -220,7 +324,7 @@ The txn log carries ONE entry per player click regardless of selection size (`FS
 
 - **Capability map is polled per-dispatch, rebuilt on membership change.** The broker inspects each member's `FSeinAbilityData::AbilityInstances` to build `TMap<FGameplayTag, TArray<FSeinEntityHandle>>` — "which members can service each ability tag." Cached on the component, invalidated when members are added/removed. Polled fresh on each command dispatch for correctness. This enables heterogeneous dispatch: Attack order → only Attack-capable members; other members fall through to a designer-defined default (e.g., Move-toward-target for non-combatants).
 
-- **Resolver is a designer-subclassable UObject.** `USeinCommandBrokerResolver` (abstract, Blueprintable) with `ResolveDispatch(members, contextTag, targetLocation, targetEntity) → dispatch plan` and `ResolvePositions(members, anchor, facing) → per-member positions`. Default implementation in C++. Designers subclass in BP or C++ for custom behavior (tight-rank resolver, class-clustered spacing, formation-shape presets, etc.). Resolver output integrates with the nav composition (§12) — per-member target positions feed into flow-field-driven steering via each unit's `USeinMovementProfile`.
+- **Resolver is a designer-subclassable UObject.** `USeinCommandBrokerResolver` (abstract, Blueprintable) with `ResolveDispatch(members, contextTag, targetLocation, targetEntity) → dispatch plan` and `ResolvePositions(members, anchor, facing) → per-member positions`. Default implementation in C++. Designers subclass in BP or C++ for custom behavior (tight-rank resolver, class-clustered spacing, formation-shape presets, etc.). Resolver output integrates with the nav composition (§13) — per-member target positions feed into flow-field-driven steering via each unit's `USeinMovementProfile`.
 
 - **Resolver class selection via plugin settings.** `USeinARTSCoreSettings` gets a `TSoftClassPtr<USeinCommandBrokerResolver> DefaultResolverClass` field. Framework ships a sane default (class-clustered uniform spacing). Designers can override globally via settings or per-match by setting a different default before `StartSimulation()`.
 
@@ -258,7 +362,7 @@ The txn log carries ONE entry per player click regardless of selection size (`FS
 
 ---
 
-## 5. Resources `[locked]`
+## 6. Resources `[locked]`
 
 Player-level economy. Everything that "costs" something (abilities, production, upkeep) bills against this layer.
 
@@ -292,7 +396,7 @@ Player-level economy. Everything that "costs" something (abilities, production, 
 - **Resource sharing is match-settings-controlled, not a plugin-wide setting.**
   - Default: strictly per-player.
   - Match settings allow enabling team-shared pools (co-op classic), designer-hybrid sharing (some resources shared, others private), or player-gift commands (explicit transfer only).
-  - Implies a `FSeinMatchSettings` concept — flagged for future design pass (see §16 or a new match-settings section TBD).
+  - Implies a `FSeinMatchSettings` concept — flagged for future design pass (see §17 or a new match-settings section TBD).
 
 - **Unified cost model.** `FSeinResourceCost` is a single struct type used for both ability cost and production cost. Single validation function (`CanAfford`), single deduction function (`Deduct`), single refund function (`Refund`). Cost semantics:
   ```cpp
@@ -325,13 +429,13 @@ Player-level economy. Everything that "costs" something (abilities, production, 
 - Add `USeinFaction::ResourceKit: TArray<FSeinFactionResourceEntry>` (references a catalog entry by tag + optional overrides).
 - Add `FSeinResourceCost` struct; refactor ability cost and production cost to share it.
 - Add `USeinResourceBPFL` with `CanAfford`, `Deduct`, `Refund`, `GrantIncome`, `Transfer` (transfer respects match-settings sharing rules).
-- Wire `USeinAbility::ActivateAbility` to check affordability + deduct cost; wire `DeactivateAbility(bCancelled=true)` to refund if the ability's `bRefundOnCancel` flag is set (flag decision pending §6 Abilities Q&A).
+- Wire `USeinAbility::ActivateAbility` to check affordability + deduct cost; wire `DeactivateAbility(bCancelled=true)` to refund if the ability's `bRefundOnCancel` flag is set (flag decision pending §7 Abilities Q&A).
 - Wire income computation: a `FSeinResourceSystem` (exists) ticks per-player income, combining faction passive + entity-source income + modifier effects (for army-size-scaled upkeep).
 - Flag: **match settings** are a future topic. Resource-sharing mode, starting-value overrides, and per-resource match-level tweaks live there. Create a match settings primitive in a later pass.
 
 ---
 
-## 6. Abilities `[locked]`
+## 7. Abilities `[locked]`
 
 The unit's implementation of commands. Activated explicitly or passively, with tag-based arbitration, latent-action execution, BP-scriptable lifecycle, and declarative validation.
 
@@ -339,7 +443,7 @@ The unit's implementation of commands. Activated explicitly or passively, with t
 
 - **Tag-based arbitration** (recap). Three BP-editable containers on `USeinAbility`:
   - `ActivationBlockedTags` — entity tags that refuse this ability from activating. Combined with `OwnedTags` on the same ability to self-block (grenade-during-channel).
-  - `OwnedTags` — tags this ability grants to the entity while active. Applied via refcount grant (per §2); removed via refcount ungrant on deactivate.
+  - `OwnedTags` — tags this ability grants to the entity while active. Applied via refcount grant (per §3); removed via refcount ungrant on deactivate.
   - `CancelAbilitiesWithTag` — on activate, cancels any active ability (including self) whose `OwnedTags` intersect this set. An ability listing one of its own owned tags here gets self-cancelling reissue (repeat-right-click Move).
 
 - **Activation flow in `ProcessCommands`**:
@@ -373,7 +477,7 @@ The unit's implementation of commands. Activated explicitly or passively, with t
 - **Target validation is hybrid declarative + BP (Q5c + Q6 hybrid).** Declarative fields on the ability class cover common cases:
   - `FFixedPoint MaxRange` (0 = unlimited) — distance from owner entity to target location/entity
   - `FGameplayTagQuery ValidTargetTags` — tag query the target entity must satisfy (e.g., "has `Unit.Hostile`")
-  - `bool bRequiresLineOfSight` — integrates with §11 Vision
+  - `bool bRequiresLineOfSight` — integrates with §12 Vision
   - `ESeinAbilityTargetType TargetType` — None / Location / Entity / Both (exists today)
   
   `CanActivate` BlueprintNativeEvent remains the escape hatch for unusual rules (facing constraints, high-ground requirements, combo-window checks). Sim runs declarative validation first, then calls `CanActivate` only if declarative passes.
@@ -392,13 +496,13 @@ The unit's implementation of commands. Activated explicitly or passively, with t
   - `bIsPassive = true` triggers auto-activation during `InitializeEntityAbilities`. Otherwise lifecycle is identical to active abilities.
   - Passives participate fully in tag arbitration — they can be cancelled by other abilities' `CancelAbilitiesWithTag`.
   - **Cancelled passives do NOT auto-reactivate.** If a passive is cancelled mid-match (damage cancels stealth, another ability's `CancelAbilitiesWithTag` hits), it stays cancelled until a BPFL re-activates it or the entity respawns. Designers write explicit reactivation hooks for narrow cases (stealth re-engages after combat ends).
-  - Passives have no cost and no cooldown semantics. If you want toggleable-with-upkeep behavior, model it as a normal active ability with indefinite duration + upkeep via §5 Resources.
+  - Passives have no cost and no cooldown semantics. If you want toggleable-with-upkeep behavior, model it as a normal active ability with indefinite duration + upkeep via §6 Resources.
 
 - **DefaultCommands move from archetype def to `USeinAbilitiesComponent` (Q9).** `FSeinAbilityData` gains `TArray<FSeinCommandMapping> DefaultCommands` + `FGameplayTag FallbackAbilityTag`. The `ResolveCommand` method moves with the data. Archetype def no longer carries command-mapping concerns.
   - **Sole source of truth.** No ability-self-declaration hybrid. Designers author all command→ability mappings on the abilities component. Single view, single edit surface.
 
 - **Ability upgrades use existing primitives, not a new one (Q10).** Three patterns, all expressible today:
-  - **Stat upgrades** (movespeed +30%, damage +50%) → `FSeinModifier` effects scoped to archetype or instance (exists via §7 Effects + `FSeinPlayerState::ArchetypeModifiers`).
+  - **Stat upgrades** (movespeed +30%, damage +50%) → `FSeinModifier` effects scoped to archetype or instance (exists via §8 Effects + `FSeinPlayerState::ArchetypeModifiers`).
   - **Ability replacement** (basic Move → Move-with-Sprint) → grant new ability class, revoke old. Command resolver picks the new tag. Typically driven by a tech completion or effect application.
   - **Ability enhancement** (Move gains a charge ability) → grant additional ability; command resolver's priority picks appropriately based on context.
   - No "upgrade" primitive; upgrades are compositions of grant/revoke/modify.
@@ -423,10 +527,10 @@ The unit's implementation of commands. Activated explicitly or passively, with t
   - Add `FFixedPoint MaxRange = FFixedPoint::Zero; // 0 = unlimited`
   - Add `FGameplayTagQuery ValidTargetTags;`
   - Add `bool bRequiresLineOfSight = false;`
-  - Remove `AppliedOwnedTags` runtime field (refcount replaces diff-on-activate, per §2 delta).
+  - Remove `AppliedOwnedTags` runtime field (refcount replaces diff-on-activate, per §3 delta).
 - **`USeinAbility::ActivateAbility`:** integrate cost-deduct via `USeinResourceBPFL::Deduct` with the resolved `FSeinResourceCost`. Apply `OwnedTags` via refcount grant (no more diff). Start cooldown per `CooldownStartTiming`.
 - **`USeinAbility::DeactivateAbility`:** on `bCancelled=true`, refund cost if `bRefundCostOnCancel`, reset cooldown if `bRefundCooldownOnCancel`. On any end, start cooldown if `CooldownStartTiming == OnEnd` and not already refunded. Refcount ungrant of `OwnedTags`.
-- **`USeinAbility::ResourceCost`:** refactor to `FSeinResourceCost` (per §5) — `TMap<FGameplayTag, FFixedPoint>` instead of `TMap<FName, FFixedPoint>`.
+- **`USeinAbility::ResourceCost`:** refactor to `FSeinResourceCost` (per §6) — `TMap<FGameplayTag, FFixedPoint>` instead of `TMap<FName, FFixedPoint>`.
 - **`ProcessCommands::ActivateAbility`:** implement the full activation flow above, including declarative validation before `CanActivate`.
 - **Declarative target validation:** add helper `FSeinAbilityValidation::ValidateTarget(Ability, Owner, Target, Location)` that checks range + tags + LOS.
 - **`AutoMoveThen`:** integrate with CommandBroker — when an ability command arrives with this behavior and target is out of range, the broker prepends an internal Move order to get within range, then re-attempts the ability on arrival. Implementation details TBD.
@@ -438,7 +542,7 @@ The unit's implementation of commands. Activated explicitly or passively, with t
 
 ---
 
-## 7. Effects `[locked]`
+## 8. Effects `[locked]`
 
 Runtime modifiers applied to entities or to a player's archetype-scope state. Health regen, damage-over-time, stat buffs, production discounts, veterancy stacks, cover bonuses, tech-granted upgrades — all expressed as effects.
 
@@ -471,7 +575,7 @@ Runtime modifiers applied to entities or to a player's archetype-scope state. He
 - **Conditional effects are emergent, not a primitive (Q3).** The framework does NOT support "auto-remove when condition X becomes false." Instead, the condition source drives apply/remove explicitly — a cover zone has its own passive ability / polling system that applies cover effects to entities entering and removes them on exit. Keeps the effect primitive dumb and the condition logic localized. Matches the past plugin's approach.
 
 - **Rich effect definitions (Q6).** Beyond modifiers, an effect can:
-  - **Grant tags** (`GrantedTags` container) — applied via refcount grant on apply, ungrant on remove. Same tag refcount system as abilities' `OwnedTags` (§2).
+  - **Grant tags** (`GrantedTags` container) — applied via refcount grant on apply, ungrant on remove. Same tag refcount system as abilities' `OwnedTags` (§3).
   - **Remove other effects** (`RemoveEffectsWithTag` container) — on apply, strips any existing effect whose `EffectTag` matches. Anti-poison removes Poison.
   - **Fire BP hooks** — `OnApply`, `OnTick`, `OnExpire`, `OnRemoved` BlueprintImplementableEvents on the effect class for custom logic.
 
@@ -548,7 +652,7 @@ class USeinEffect : public UObject
 - Promote `FSeinActiveEffect.Definition` (currently `FSeinEffectDefinition` struct) into the `USeinEffect` UObject class. Instances carry a `TSubclassOf<USeinEffect>` reference; config reads go through the CDO.
 - Add `USeinEffectBPFL::SeinApplyEffect(target, class, source) → FSeinEffectHandle` (or effect instance ID) so BP scripts can apply and track effects.
 - Add `USeinEffectBPFL::SeinRemoveEffect(target, instanceID)` and `SeinRemoveEffectsWithTag(target, tag)`.
-- Wire `GrantedTags` into the refcount grant/ungrant path (per §2) so effects and abilities share the same tag plumbing.
+- Wire `GrantedTags` into the refcount grant/ungrant path (per §3) so effects and abilities share the same tag plumbing.
 - Refactor `FSeinEffectTickSystem` to drive both duration decrement and `TickInterval` firing. Pending-apply queue drained at PreTick.
 - Dev-mode warning system: log once per entity when active effect count crosses the threshold (configurable in plugin settings).
 - Extend `ESeinModifierScope` enum with `Player` value (currently only `Instance` and `Archetype`).
@@ -559,9 +663,9 @@ class USeinEffect : public UObject
 
 ---
 
-## 8. Production `[locked]`
+## 9. Production `[locked]`
 
-Unit production, research production, upgrade production. Builds on the Resources primitive (§5) and uses the same `FSeinResourceCost` as abilities (§6).
+Unit production, research production, upgrade production. Builds on the Resources primitive (§6) and uses the same `FSeinResourceCost` as abilities (§7).
 
 ### Decisions
 
@@ -610,7 +714,7 @@ Unit production, research production, upgrade production. Builds on the Resource
 
 - **Rally point extensions (Q9).**
   - Rally target can be a location OR an entity handle. `FSeinProductionData::RallyTarget` becomes a union-ish struct (`FSeinEntityHandle` + `FFixedVector`; `.bIsEntityTarget` flag).
-  - On spawn, framework auto-issues a Move command via a CommandBroker (§4) — the produced unit immediately gets a move order to the rally target.
+  - On spawn, framework auto-issues a Move command via a CommandBroker (§5) — the produced unit immediately gets a move order to the rally target.
   - No rally chains. A produced unit's move order doesn't inherit or re-trigger rally logic from intermediate points.
 
 - **Abilities can enqueue production (Q10).** `USeinProductionBPFL::SeinQueueProduction(building, archetypeTag, player)` is callable from BP. Ability-driven production (squad reinforce, call-down drops, tech-completion grants) is first-class.
@@ -639,14 +743,14 @@ Unit production, research production, upgrade production. Builds on the Resource
 - Change the default refund behavior from flat 100% to progress-proportional. **Breaking change**: existing content may rely on the old behavior; flag in release notes / migration guide.
 - Add `ProductionStalled` visual event + event enum entry. Fire from `USeinProductionSystem` when `AttemptSpawn` fails due to cap.
 - Extend `FSeinProductionData::RallyTarget` to support entity-or-location. On spawn, invoke the CommandBroker pathway to issue the move command.
-- Wire the production deduction path to share `USeinResourceBPFL::CanAfford` / `Deduct` / `Refund` with ability cost handling (per §5).
+- Wire the production deduction path to share `USeinResourceBPFL::CanAfford` / `Deduct` / `Refund` with ability cost handling (per §6).
 - Update `USeinProductionBPFL::SeinGetProductionAvailability` to account for the new two-bucket cost model (can-enqueue-afford vs can-spawn-afford separately).
 
 ---
 
-## 9. Tech / Upgrades `[locked]`
+## 10. Tech / Upgrades `[locked]`
 
-Player progression — tech trees, commander choices, faction upgrades, per-unit refinements. **Not a distinct primitive** — tech *is* an effect (§7) granted by research, scenarios, abilities, or map events, using whichever scope (Instance / Archetype / Player) fits the thing being modified.
+Player progression — tech trees, commander choices, faction upgrades, per-unit refinements. **Not a distinct primitive** — tech *is* an effect (§8) granted by research, scenarios, abilities, or map events, using whichever scope (Instance / Archetype / Player) fits the thing being modified.
 
 ### The core unification
 
@@ -667,7 +771,7 @@ Common fields regardless of scope:
 - `Duration` = typically `-1` (infinite) for tech; `bRevocable` gates external removal.
 - `OnApply` / `OnRemoved` BP hooks for cinematic feedback, research-complete SFX, tech-revoked cleanup.
 
-Research production (§8 with `bIsResearch=true`) becomes: on completion, call `SeinApplyEffect(target, TechEffectClass, source)` where the target depends on scope. Same primitive, same flow. Tech revocation calls `SeinRemoveEffect`.
+Research production (§9 with `bIsResearch=true`) becomes: on completion, call `SeinApplyEffect(target, TechEffectClass, source)` where the target depends on scope. Same primitive, same flow. Tech revocation calls `SeinRemoveEffect`.
 
 Upgrades that modify existing units (veterancy, rifle upgrades, armor plating) use Instance scope. Faction-wide bonuses use Archetype. Economy tweaks use Player. No separate "upgrade" primitive.
 
@@ -675,7 +779,7 @@ Upgrades that modify existing units (veterancy, rifle upgrades, armor plating) u
 
 - **Revocability — per-tech flag, default permanent (Q1c).** `USeinEffect` subclasses used as tech carry a `bRevocable` boolean (on the effect config). Default false. Revocable tech enables patterns like mid-match commander-swap or era-regression; permanent tech is the norm for most RTS baselines. The effect system supports removal infrastructure already; the flag gates external remove calls.
 
-- **Source-tracking via explicit BP revoke (Q2b).** The framework does NOT track "which entity granted this tech." If a designer wants building-death-revokes-tech, the building's BP scripts an `OnDeath` handler that calls `SeinRemoveEffect(playerState, techClass)`. Keeps the effect primitive source-agnostic (matches the general principle from §7 that condition sources drive apply/remove themselves).
+- **Source-tracking via explicit BP revoke (Q2b).** The framework does NOT track "which entity granted this tech." If a designer wants building-death-revokes-tech, the building's BP scripts an `OnDeath` handler that calls `SeinRemoveEffect(playerState, techClass)`. Keeps the effect primitive source-agnostic (matches the general principle from §8 that condition sources drive apply/remove themselves).
 
 - **Tech scope is per-tech, not per-match (Q5).** `USeinEffect::TechScope` enum:
   ```cpp
@@ -696,15 +800,15 @@ Upgrades that modify existing units (veterancy, rifle upgrades, armor plating) u
 
 - **All granting paths use one API (Q8).** `USeinEffectBPFL::SeinApplyEffect(playerState, TechEffectClass, Source)` is the sole grant entry point. Covers:
   - Research completion (production system calls it).
-  - Scenario scripts (§16 scenario event calls it).
+  - Scenario scripts (§17 scenario event calls it).
   - Abilities (commander call-in ability calls it).
   - Map events (trigger volume's BP calls it).
-  - Ally sharing (§17 match settings enable an explicit gift command that calls it).
+  - Ally sharing (§18 match settings enable an explicit gift command that calls it).
   
   No special "grant tech" API — just the effect apply API.
 
 - **Tech revocation affects forward-looking state only (Q10).** Removing a tech from a player:
-  - Removes its tag from player-state tag set (refcount ungrant per §2).
+  - Removes its tag from player-state tag set (refcount ungrant per §3).
   - Removes its modifiers (auto via effect removal — modifiers are the effect's config).
   - Does NOT un-produce units that were conditional on the tech. Existing units stay.
   - DOES cause existing units to lose the archetype-scope stat buffs the tech provided (this is correct — the modifier layer resolves dynamically; remove the modifier, attribute reverts).
@@ -712,11 +816,11 @@ Upgrades that modify existing units (veterancy, rifle upgrades, armor plating) u
 
 - **Tech availability query (Q9).** `USeinTechBPFL::SeinGetTechAvailability(playerState, techClass) → FSeinTechAvailability` returns: `{ bAlreadyResearched, bInProgress, bPrerequisitesMet, bForbiddenPresent, bCustomCheckPassed, bAffordable }`. UI binds uniformly. Matches the shape of ability/production availability queries.
 
-- **Stacking via effect stacking (no new concept).** If a designer wants "research this tech 3 times for +30% damage cumulative," it's just a `MaxStacks > 1` effect. The effect system's stacking rules (§7 Q1) handle it. Standard effect mechanics, no tech-specific plumbing.
+- **Stacking via effect stacking (no new concept).** If a designer wants "research this tech 3 times for +30% damage cumulative," it's just a `MaxStacks > 1` effect. The effect system's stacking rules (§8 Q1) handle it. Standard effect mechanics, no tech-specific plumbing.
 
 ### Player-state tag unification
 
-With tech-as-effect, the player state needs first-class tag storage the same way entities do (§2). The `FSeinPlayerState::UnlockedTechTags` container becomes a refcounted tag set updated by effect apply/remove hooks. Implementation:
+With tech-as-effect, the player state needs first-class tag storage the same way entities do (§3). The `FSeinPlayerState::UnlockedTechTags` container becomes a refcounted tag set updated by effect apply/remove hooks. Implementation:
 
 - `FSeinPlayerState` gains `FSeinTagData PlayerTags` (or an equivalent inline refcounted tag container).
 - Archetype-scope effects' `EffectTag` + `GrantedTags` grant on apply (refcount++), ungrant on remove (refcount--).
@@ -727,7 +831,7 @@ With tech-as-effect, the player state needs first-class tag storage the same way
 
 - Explicit tier / phase primitive. Emergent from prerequisites.
 - Framework-tracked source attribution for tech grants. Designers script revocation hooks.
-- Tech-specific cost/time primitives. Uses production (§8) as the granting mechanism with `bIsResearch` + the unified `FSeinResourceCost`.
+- Tech-specific cost/time primitives. Uses production (§9) as the granting mechanism with `bIsResearch` + the unified `FSeinResourceCost`.
 - Match-settings tech-sharing toggles. Scope is per-tech; if a designer wants "all tech is team-shared in this mode," they re-author the tech effects.
 - Retroactive unit removal on tech revoke.
 - Dedicated tech tree authoring tool. Designers compose tech trees from prerequisite graphs the same way they compose the rest of their content.
@@ -737,8 +841,8 @@ With tech-as-effect, the player state needs first-class tag storage the same way
 - Add `bRevocable: bool` + `TechScope: ESeinTechScope` + `ForbiddenPrerequisiteTags: FGameplayTagContainer` to `USeinEffect`. Research-specific fields on the effect base class are fine — they're inert for non-tech effects.
 - Add `CanResearch` BlueprintNativeEvent to `USeinEffect`.
 - Extend `USeinEffectBPFL::SeinApplyEffect` to respect `TechScope` — `Team`-scope effects apply to all teammates' player states.
-- Production system (§8): on research completion, call `SeinApplyEffect(playerState, TechEffectClass)` instead of the current `GrantTechTag` + `AddArchetypeModifier` pair. Deprecate those specific paths; keep generic `ApplyEffect` as the canonical way.
-- `FSeinPlayerState::UnlockedTechTags` migrates to a refcounted tag container (unified with the entity tag system from §2). `HasTechTag` / `HasAllTechTags` BPFLs delegate through.
+- Production system (§9): on research completion, call `SeinApplyEffect(playerState, TechEffectClass)` instead of the current `GrantTechTag` + `AddArchetypeModifier` pair. Deprecate those specific paths; keep generic `ApplyEffect` as the canonical way.
+- `FSeinPlayerState::UnlockedTechTags` migrates to a refcounted tag container (unified with the entity tag system from §3). `HasTechTag` / `HasAllTechTags` BPFLs delegate through.
 - `FSeinPlayerState::ArchetypeModifiers` deprecated — modifiers now live on the archetype effects; `ResolveAttribute` iterates the active effects list instead. Same data, different home.
 - Add `USeinTechBPFL::SeinGetTechAvailability` for UI binding.
 - Add `TechRevoked` visual event (complement to the existing `TechResearched` event).
@@ -746,9 +850,9 @@ With tech-as-effect, the player state needs first-class tag storage the same way
 
 ---
 
-## 10. Combat `[locked]`
+## 11. Combat `[locked]`
 
-**Combat is NOT a framework pipeline.** It is an emergent pattern composed from abilities (§6), effects (§7), attributes, tags, and the deterministic PRNG. Designers implement their game's combat identity (damage types, armor model, accuracy approach, resolution order, cover bonuses, friendly-fire policy, death animations, weapons) in ability scripts and extension components. The framework provides a minimal set of conveniences and invariants that any combat philosophy uses regardless.
+**Combat is NOT a framework pipeline.** It is an emergent pattern composed from abilities (§7), effects (§8), attributes, tags, and the deterministic PRNG. Designers implement their game's combat identity (damage types, armor model, accuracy approach, resolution order, cover bonuses, friendly-fire policy, death animations, weapons) in ability scripts and extension components. The framework provides a minimal set of conveniences and invariants that any combat philosophy uses regardless.
 
 This section is short on purpose — it's defining the narrow set of primitives the framework owns, not a combat system.
 
@@ -834,8 +938,8 @@ All of the following are explicitly NOT framework concerns:
 - **Armor mechanics** (flat / typed / directional / none). Implement via attributes + effects.
 - **Accuracy approach** (PRNG / deterministic average / none). Use `SeinRollAccuracy` if you want PRNG, or skip it.
 - **Damage resolution order** (which modifiers apply when). Ability script decides.
-- **Cover / terrain bonuses.** Tag-queried in attack ability script; effect-applied from terrain zone (§12); whatever pattern the designer wants.
-- **Friendly fire policy.** Match setting (§17) exposes a default; ability target filtering enforces. Abilities can override.
+- **Cover / terrain bonuses.** Tag-queried in attack ability script; effect-applied from terrain zone (§13); whatever pattern the designer wants.
+- **Friendly fire policy.** Match setting (§18) exposes a default; ability target filtering enforces. Abilities can override.
 - **Death animations / dying-state visuals.** Actor-side, via `OnDeath` BP event + `ActorBridge` visual event routing.
 - **Weapons.** Designer-authored components + attack abilities that iterate them.
 - **Projectile mechanics.** Designer-authored entities with movement components + `OnHit` abilities + `FSeinLifespanData` for expiration. Framework provides the primitives; designer composes projectiles.
@@ -867,7 +971,7 @@ All of the following are explicitly NOT framework concerns:
 
 ---
 
-## 11. Vision / LOS / Fog `[locked]`
+## 12. Vision / LOS / Fog `[locked]`
 
 Per-player or per-team fog-of-war with multi-layer stealth/detection. Deterministic sim-side computation; render-side fog layer reads the latest sim state and presents it to the local player.
 
@@ -878,7 +982,7 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
   enum class ESeinVisionScope : uint8 { Private, TeamShared };
   ESeinVisionScope Scope = ESeinVisionScope::Private;
   ```
-  Match settings (§17) set the default; tech or abilities can flip at runtime (e.g., intel-themed tech upgrades "Private" → "TeamShared"; a commander-down debuff regresses to "Private").
+  Match settings (§18) set the default; tech or abilities can flip at runtime (e.g., intel-themed tech upgrades "Private" → "TeamShared"; a commander-down debuff regresses to "Private").
 
 - **VisionGroups** abstract ownership of the fog state.
   - Each player maps to a VisionGroup ID at any given moment.
@@ -914,7 +1018,7 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
 
 - **Batch-tick update — 4-tick default.** The vision system declares `TickInterval = 4` (runs every 4 sim ticks = 7.5 Hz at 30 Hz sim). Stamp deltas from moved sources are processed in batches, not per-tick. Responsive enough for RTS (below perceptual latency for non-critical UI); saves CPU substantially. Plugin-configurable per-game via `VisionTickInterval`.
 
-- **Tile-partitioned source registry.** Vision sources register to the tile grid (§12). Stamp operations iterate only tiles the source's stamp overlaps. For TeamShared groups, tile contribution is shared. Empty tiles are skipped entirely — early-game sparse vision hits near-zero cost.
+- **Tile-partitioned source registry.** Vision sources register to the tile grid (§13). Stamp operations iterate only tiles the source's stamp overlaps. For TeamShared groups, tile contribution is shared. Empty tiles are skipped entirely — early-game sparse vision hits near-zero cost.
 
 - **Memory at realistic scales** (default 4:1 coarse, 2 declared layers, 4-bit packed refcounts, 8 vision-groups):
   - 1000² nav (small-scale squad-tactical 1v1) → 250² vision × 8 × (1 bitfield + 1 refcount byte) = **1 MB**
@@ -957,16 +1061,16 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
 - **Vision sources.**
   1. **Entity-based** — any entity with `FSeinVisionData` contributes (units, buildings, observation towers).
   2. **Ability-spawned** — a scan/recon ability spawns a short-lived vision-only entity (`FSeinVisionData + FSeinLifespanData`). Uses the entity pool (§1); expires on lifespan.
-  3. **Effect-modified** — effects (§7) can modify a unit's `Radius` or `PerceptionLayers` temporarily.
-  4. **Terrain-influenced** — high ground and other terrain features grant vision bonuses via terrain query at stamp time (§12).
+  3. **Effect-modified** — effects (§8) can modify a unit's `Radius` or `PerceptionLayers` temporarily.
+  4. **Terrain-influenced** — high ground and other terrain features grant vision bonuses via terrain query at stamp time (§13).
 
 - **LOS raycasting: discrete grid.**
-  - Steps cell-by-cell from source cell to target cell; checks each intersected cell for terrain blockers (from §12 nav grid) and entity blockers.
+  - Steps cell-by-cell from source cell to target cell; checks each intersected cell for terrain blockers (from §13 nav grid) and entity blockers.
   - Per-layer LOS: a blocker with `BlockedLayers = {Normal, Thermal}` blocks those layers but not `Radar`.
   - Deterministic integer math.
 
 - **Blockers.**
-  - Terrain-level (static map geometry) — baked into the nav grid's terrain data per cell. Always blocks `Normal` by default; designer can extend per-cell block-layer sets via terrain data (§12).
+  - Terrain-level (static map geometry) — baked into the nav grid's terrain data per cell. Always blocks `Normal` by default; designer can extend per-cell block-layer sets via terrain data (§13).
   - Entity-level (dynamic) — `FSeinVisionBlockerData` component with `BlockedLayers: FGameplayTagContainer`. Smoke grenades, destructible forests, constructed walls, ability-spawned cover.
   - Raycasting queries both in a single pass.
 
@@ -1029,7 +1133,7 @@ Locked defaults already include the biggest wins (coarse vision grid, 4-bit pack
 
 ---
 
-## 12. Terrain / Environment `[locked]`
+## 13. Terrain / Environment `[locked]`
 
 Positional sim state — walkability, elevation, biome, cover, capture points, forests, walls, craters. Layered onto the nav grid + sim entity pool. This section also captures the **nav composition** (HPA* + regional flow fields + formation resolver + steering profiles) and **tile partitioning infrastructure** that serves every grid-backed system.
 
@@ -1136,7 +1240,7 @@ Pathing at the scales we target needs three layers working together. Locked as b
 - Cheap to compute (Dijkstra sweep over cluster cells; clusters are small).
 - Cached per CommandBroker order; recomputed only when goal/members change or cells in the cluster mutate.
 
-**3. Formation layer — CommandBroker resolver (§4).**
+**3. Formation layer — CommandBroker resolver (§5).**
 - Given group + goal + formation shape, produces per-member target positions.
 - Formation offsets rotate with anchor facing.
 - Outputs per-member desired world position, not just "go here."
@@ -1307,7 +1411,7 @@ Framework provides the data structures; tooling is a later task. For v1, two aut
 - `USeinCaptureAbility_Proximity` starter passive ability.
 - `SeinARTS.Environment.Default` cell-tag.
 - Visual event `TerrainMutated(cells)` for render-side reactions.
-- Cell-mutation BPFLs invalidate vision-template cache (§11) for affected cells.
+- Cell-mutation BPFLs invalidate vision-template cache (§12) for affected cells.
 - Volume-based terrain authoring: blueprint actor base class `ASeinTerrainVolume` with `OnBake(navGrid)` hook that rasterizes its declared tags onto covered cells.
 - Nav-refactor binding requirements: HPA* + regional flow fields + per-cluster flow-field cache + hierarchical path query API.
 
@@ -1325,9 +1429,9 @@ Numbers scale within budget at all RTS sizes; memory is not the limiting factor 
 
 ---
 
-## 13. Relationships (containment, transport, garrison, attachment) `[locked]`
+## 14. Relationships (containment, transport, garrison, attachment) `[locked]`
 
-Entity-to-entity edges that aren't CommandBroker membership (§4). Garrison, transport, attachment, crewing. **Hybrid primitive** — a base `FSeinContainmentData` covers common plumbing; specialized components layer on for type-specific semantics.
+Entity-to-entity edges that aren't CommandBroker membership (§5). Garrison, transport, attachment, crewing. **Hybrid primitive** — a base `FSeinContainmentData` covers common plumbing; specialized components layer on for type-specific semantics.
 
 ### Core primitive: hybrid base + specializations
 
@@ -1378,7 +1482,7 @@ Specializations are optional. A plain building with infantry garrison can use ju
 
 - **Orthogonal relationship types per entity.** An entity may have at most **one** attachment AND at most **one** containment simultaneously. They're independent axes.
   - Example: a hero entity is *attached* to a squad; the squad is *contained* in a transport; the transport is *contained* in a freighter. Tree of containments, with an attachment at the leaf.
-  - An entity in a CommandBroker (§4) is orthogonal to both — broker membership, attachment, and containment are three independent axes.
+  - An entity in a CommandBroker (§5) is orthogonal to both — broker membership, attachment, and containment are three independent axes.
 
 - **Containments chain; attachments rarely do but aren't forbidden.** Walking the containment chain from an entity returns its parent, its parent's parent, etc., up to the root (the outermost container). Queries like `SeinGetImmediateContainer(entity)` and `SeinGetRootContainer(entity)` are both provided.
 
@@ -1473,9 +1577,9 @@ Specializations are optional. A plain building with infantry garrison can use ju
 
 ---
 
-## 14. Selection & control groups `[locked]`
+## 15. Selection & control groups `[locked]`
 
-Client-side ephemeral state for player UI. Not sim. Logged as observer commands (§3) for replay/save UI reconstruction. Control groups are cached selection arrays bound to hotkeys — distinct from CommandBrokers (§4) which are sim-side dispatch entities.
+Client-side ephemeral state for player UI. Not sim. Logged as observer commands (§4) for replay/save UI reconstruction. Control groups are cached selection arrays bound to hotkeys — distinct from CommandBrokers (§5) which are sim-side dispatch entities.
 
 ### Decisions
 
@@ -1494,9 +1598,9 @@ Client-side ephemeral state for player UI. Not sim. Logged as observer commands 
 - **`bSelectable: bool` on every entity.** Default true. Projectiles, ability-spawned vision stubs, scenario pseudo-entities, etc. set false. Lives on `FSeinEntityData` or as a universal flag (similar treatment to ownership). Stored as a flag, not a tag — tags are for query/inheritance semantics; selectability is a simple yes/no.
 
 - **Selection does NOT require ownership; command issuance DOES.** Two separate permissions:
-  - **Selection**: any entity with `bSelectable = true` and visible to the viewing player (not in fog per §11). Can select neutral resource piles, enemy buildings, allied units, etc. — for info-panel display.
+  - **Selection**: any entity with `bSelectable = true` and visible to the viewing player (not in fog per §12). Can select neutral resource piles, enemy buildings, allied units, etc. — for info-panel display.
   - **Command issuance**: player controller's command-dispatch layer filters the current selection to owned entities (or allied-owned per match settings) before emitting an `ActivateAbility` command. Enemy-selected units are viewable but not orderable.
-  - **Broker instantiation enforces wholly-owned invariant** (§4). Even if the controller tries to dispatch a mixed-ownership broker order, the broker primitive filters/rejects. Belt-and-suspenders — the controller filters for UX; the broker enforces as the trust boundary.
+  - **Broker instantiation enforces wholly-owned invariant** (§5). Even if the controller tries to dispatch a mixed-ownership broker order, the broker primitive filters/rejects. Belt-and-suspenders — the controller filters for UX; the broker enforces as the trust boundary.
 
 - **Control groups are client-side cached selections.** Control group N is a `TArray<FSeinEntityHandle>` bound to a hotkey. Pressing the hotkey issues `ControlGroupSelected` observer command, which the local controller converts to a `SelectionReplaced` with the group's current (post-filtering) members.
 
@@ -1562,9 +1666,9 @@ Client-side ephemeral state. Who is currently selected, what control groups are 
 
 ---
 
-## 15. AI `[locked]`
+## 16. AI `[locked]`
 
-**Strategic AI only.** Unit-level micro-AI (dodge, auto-cover, auto-retreat-on-damage) is expressed as passive abilities (§6) with OnTick reactions — not a separate system. This section covers AI opponents and player-equivalent command issuers.
+**Strategic AI only.** Unit-level micro-AI (dodge, auto-cover, auto-retreat-on-damage) is expressed as passive abilities (§7) with OnTick reactions — not a separate system. This section covers AI opponents and player-equivalent command issuers.
 
 ### The key insight
 
@@ -1580,13 +1684,13 @@ Strategic AI sits **above** the sim layer, like a human player. It emits `FSeinC
 
 - **Two sim-state query flavors.** Both are framework-provided, deterministic, and efficient. Designer picks which fits their AI design:
   - `SeinQueryAllEntities(filter)` — perfect-information query. Ignores fog. Fastest; enables "cheating AI" common in RTS.
-  - `SeinQueryVisibleEntitiesForPlayer(PlayerID, filter)` — respects §11 vision state. Used for fog-respecting AI that "plays fair."
+  - `SeinQueryVisibleEntitiesForPlayer(PlayerID, filter)` — respects §12 vision state. Used for fog-respecting AI that "plays fair."
   - Both are available; AI author chooses. Framework doesn't enforce a style.
 
 - **AI runs on the designated host client.** In multiplayer: one client is the authoritative AI runner. On host migration (planned/graceful) or dropped-player takeover, the framework spins up the strategic AI on the new host mid-match. Implies:
   - AI controller state is re-createable from current sim state (the new host can pick up where the old one left off; it won't replicate the "thinking" but will make decisions forward from the current state).
   - Short AI absence during migration is acceptable (no commands emitted during the gap).
-  - Stateless-resumable AI patterns are preferred; stateful AI needs a snapshot → serialized state passed to the new host at migration time. Design concern for later (match-settings / §17 territory).
+  - Stateless-resumable AI patterns are preferred; stateful AI needs a snapshot → serialized state passed to the new host at migration time. Design concern for later (match-settings / §18 territory).
 
 - **No framework difficulty primitive.** Difficulty is a designer concern. Multiple AI controller classes, parameter scaling, per-difficulty BP content — all designer choice. Framework provides no Easy/Medium/Hard enum.
 
@@ -1602,7 +1706,7 @@ Strategic AI sits **above** the sim layer, like a human player. It emits `FSeinC
 
 - Framework-prescribed AI architecture (BT, FSM, utility, GOAP).
 - Difficulty enum or tuning primitives.
-- Per-unit micro AI as a separate system — it's abilities (§6).
+- Per-unit micro AI as a separate system — it's abilities (§7).
 - Determinism of AI internal logic. Only emitted commands participate in lockstep.
 - Server-authoritative AI simulation (cheating prevention via AI replication). Lockstep + command validation cover that already.
 - Sophisticated host-migration AI state transfer. Initial version restarts AI on the new host from current sim state; stateful hand-off is a future enhancement.
@@ -1637,7 +1741,7 @@ Server/host-resident command issuer. Issues `FSeinCommand`s the same way a human
 
 ---
 
-## 16. Scenario events / cinematics `[locked]`
+## 17. Scenario events / cinematics `[locked]`
 
 Co-op campaigns, mission scripting, cinematics, objectives, scripted events. **Not a new primitive** — scenarios compose from entities + abilities + tags + effects + visual events, with a thin utility layer for the patterns that recur (cinematic playback, sim pause, named entity lookup).
 
@@ -1657,12 +1761,12 @@ This uses only existing primitives. No `USeinScenario` UObject. No event-subscri
 
 - **Abstract-entity support via `bIsAbstract` flag.** Added to `USeinArchetypeDefinition`. When true: `USeinActorBridgeSubsystem` spawns the backing `ASeinActor` with `bHidden=true` and skips cosmetic visual-event routing. Archetype metadata (tag, display name) still populated for debug/inspection. Overhead negligible.
 
-- **Entity lookup via framework-level infrastructure.** Scenarios use `USeinEntityLookupBPFL` (framework primitive, per §2 + invariant #10) for named singleton lookup and tag-based set lookup. No scenario-specific registry. Typical scenario patterns:
+- **Entity lookup via framework-level infrastructure.** Scenarios use `USeinEntityLookupBPFL` (framework primitive, per §3 + invariant #10) for named singleton lookup and tag-based set lookup. No scenario-specific registry. Typical scenario patterns:
   - Singleton: on scenario spawn, call `SeinRegisterNamedEntity("MissionScenario", self)`. Any ability anywhere calls `SeinLookupNamedEntity("MissionScenario")` to get the handle.
   - Set query: `SeinLookupEntitiesByTag(Unit.Rifleman)` returns all Rifleman entities in the match, no iteration. Auto-indexed by the tag refcount system.
   - Mission-critical unique entities: tag them with a unique tag (`Mission.Hero.Bob`) and use `SeinLookupFirstEntityByTag` — or register by name if the tag isn't granted elsewhere.
 
-- **Message pattern for entity-to-scenario signaling.** Capture completes → capture ability looks up the scenario handle via registry → `SeinActivateAbility(scenarioHandle, Tag.Response.CapturePointTaken, capturePointHandle)`. Scenario's response ability activates with the payload in its `TargetEntity` / `TargetLocation` / `FInstancedStruct Payload` fields (per §3 command shape). No new messaging primitive — it's ability activation with a payload.
+- **Message pattern for entity-to-scenario signaling.** Capture completes → capture ability looks up the scenario handle via registry → `SeinActivateAbility(scenarioHandle, Tag.Response.CapturePointTaken, capturePointHandle)`. Scenario's response ability activates with the payload in its `TargetEntity` / `TargetLocation` / `FInstancedStruct Payload` fields (per §4 command shape). No new messaging primitive — it's ability activation with a payload.
 
 - **Cinematic support — three BPFLs + two visual events + a skip-mode enum.**
   - `USeinScenarioBPFL::SeinSetSimPaused(bool bPaused)` — global sim pause. Pauses the tick loop; commands still accumulate in the txn buffer but don't process until resumed. Used by blocking cinematics; designer choice per-trigger in their scenario graph.
@@ -1674,12 +1778,12 @@ This uses only existing primitives. No `USeinScenario` UObject. No event-subscri
     enum class ESeinCinematicSkipMode : uint8
     {
         Individual,   // Each player's local video stops on their skip. Non-blocking-sim only.
-        VoteToSkip,   // Uses §17 voting primitive; threshold reached → EndCinematic fires globally.
+        VoteToSkip,   // Uses §18 voting primitive; threshold reached → EndCinematic fires globally.
         HostOnly,     // Only host can skip.
         NoSkip,       // Skip input ignored.
     };
     ```
-  - For `VoteToSkip`: forward-references §17 voting primitive. Cinematic-start spawns a `Vote.SkipCinematic.{cinematicID}` vote context. Players submit `CastVote` commands via the skip button. When threshold met, `OnVoteResolved` fires and scenario's listener calls `EndCinematic`.
+  - For `VoteToSkip`: forward-references §18 voting primitive. Cinematic-start spawns a `Vote.SkipCinematic.{cinematicID}` vote context. Players submit `CastVote` commands via the skip button. When threshold met, `OnVoteResolved` fires and scenario's listener calls `EndCinematic`.
 
 - **Deterministic cinematic coordination.** Video playback is render-side (wall-clock). Sim-side is deterministic via the pause + sim-tick of the EndCinematic event. All clients see sim resume at identical tick when a blocking cinematic ends. Per-client wall-clock variance in video playback duration is tolerable — clients with faster video catch up to the sim-tick resume together.
 
@@ -1694,12 +1798,12 @@ This uses only existing primitives. No `USeinScenario` UObject. No event-subscri
 ### What gets used from other sections
 
 - §1 Entities — scenario is an abstract entity.
-- §6 Abilities — scenario logic IS abilities.
-- §7 Effects — scenarios grant effects (unlock tech, apply buffs to mission units, trigger story-driven debuffs).
-- §3 Commands — scenario abilities emit commands; scenarios can themselves be command issuers (like strategic AI).
-- §11 Vision — scenarios reveal/hide map regions via vision-source entities spawned/despawned.
-- §12 Terrain — scenarios mutate terrain, spawn/destroy obstacle entities.
-- §17 Match Settings — voting primitive for skip coordination; cinematic defaults; match-flow events.
+- §7 Abilities — scenario logic IS abilities.
+- §8 Effects — scenarios grant effects (unlock tech, apply buffs to mission units, trigger story-driven debuffs).
+- §4 Commands — scenario abilities emit commands; scenarios can themselves be command issuers (like strategic AI).
+- §12 Vision — scenarios reveal/hide map regions via vision-source entities spawned/despawned.
+- §13 Terrain — scenarios mutate terrain, spawn/destroy obstacle entities.
+- §18 Match Settings — voting primitive for skip coordination; cinematic defaults; match-flow events.
 
 ### Non-goals
 
@@ -1714,16 +1818,16 @@ This uses only existing primitives. No `USeinScenario` UObject. No event-subscri
 
 - Add `bIsAbstract: bool` field to `USeinArchetypeDefinition` (default false).
 - `USeinActorBridgeSubsystem`: on entity spawn with `bIsAbstract=true`, spawn actor hidden + skip cosmetic visual event routing.
-- Scenario code uses the framework-level `USeinEntityLookupBPFL` (defined in the §2 implementation deltas) for named + tag-based lookups. No scenario-specific lookup primitive.
+- Scenario code uses the framework-level `USeinEntityLookupBPFL` (defined in the §3 implementation deltas) for named + tag-based lookups. No scenario-specific lookup primitive.
 - `USeinScenarioBPFL` with `SeinSetSimPaused` + cinematic helpers.
 - `USeinWorldSubsystem::bSimPaused` flag respected by tick loop (paused = commands accumulate but don't process; visual events still flush to render).
 - `PlayPreRenderedCinematic` / `EndCinematic` visual events added to the visual event enum.
 - `ESeinCinematicSkipMode` enum.
-- Integration with §17 voting for `VoteToSkip` mode (forward-reference).
+- Integration with §18 voting for `VoteToSkip` mode (forward-reference).
 - Rename `SeinActorFactory` → `SeinEntityFactory` (minimal, kept as-is functionality).
 - Add `SeinUnitFactory` (pre-seeds Archetype + Bridge + Abilities + Movement + Combat components).
 - Starter scenario BP under `SeinARTS.Starter.*` content.
-- Example playable scene wiring: starter scenario + starter AI (§15) + example units.
+- Example playable scene wiring: starter scenario + starter AI (§16) + example units.
 
 Co-op campaign scripting. "When X dies, spawn Y and reveal Z." "Cinematic at tick N triggers dialogue and camera pan." Must play in sync across all co-op clients.
 
@@ -1737,7 +1841,7 @@ Co-op campaign scripting. "When X dies, spawn Y and reveal Z." "Cinematic at tic
 - Interaction with replay: scenario scripts should replay identically because their inputs (sim state) replay identically.
 - Mid-mission save/resume (if that's on the roadmap)?
 
-## 17. Match Settings & match flow `[locked]`
+## 18. Match Settings & match flow `[locked]`
 
 Match-level configuration and flow infrastructure. Everything that's "not a sim primitive but affects how a match plays out": resource sharing, friendly fire, voting mechanics, pause modes, host migration, victory triggers, replay headers, diplomacy, match state machine.
 
@@ -1823,7 +1927,7 @@ Composed-above-choke-points (designer freestyle):
   SeinSetSimPaused(bool bPaused, ESeinPauseMode Mode = Tactical);
   ```
   
-  `SeinSetSimPaused` from §16 gains the mode parameter. Default comes from `FSeinMatchSettings::DefaultPauseMode`; per-call override possible (e.g., campaign cinematic forces Tactical; PvP vote-to-pause uses Hard).
+  `SeinSetSimPaused` from §17 gains the mode parameter. Default comes from `FSeinMatchSettings::DefaultPauseMode`; per-call override possible (e.g., campaign cinematic forces Tactical; PvP vote-to-pause uses Hard).
 
 - **Voting primitive.** First-class sim state — supports cinematic skip, concede, pause requests, restart, kick-player, campaign decisions.
   ```cpp
@@ -1855,7 +1959,7 @@ Composed-above-choke-points (designer freestyle):
   USeinVoteBPFL::SeinCheckVoteStatus(voteType) → (Active/Passed/Failed/NotStarted);
   ```
   
-  Designers use votes for: skip cinematics (§16), concede, pause-request, kick-player, restart-mission, campaign decision-gates. Fully tag-keyed and extensible.
+  Designers use votes for: skip cinematics (§17), concede, pause-request, kick-player, restart-mission, campaign decision-gates. Fully tag-keyed and extensible.
 
 - **Victory is scenario-driven, not a framework primitive.** Framework provides:
   ```cpp
@@ -1898,18 +2002,18 @@ Composed-above-choke-points (designer freestyle):
   SeinARTS.Diplomacy.State.Peace          // neutral, no conflict
   SeinARTS.Diplomacy.State.Truce          // temporary peace, auto-expires
   SeinARTS.Diplomacy.Permission.Allied           // treated as ally for combat / command
-  SeinARTS.Diplomacy.Permission.SharedVision     // vision propagates (§11 TeamShared equivalent)
+  SeinARTS.Diplomacy.Permission.SharedVision     // vision propagates (§12 TeamShared equivalent)
   SeinARTS.Diplomacy.Permission.OpenBorders      // units may traverse territory
-  SeinARTS.Diplomacy.Permission.ResourceShare    // resource pool shares (see §5 sharing modes)
-  SeinARTS.Diplomacy.Permission.CommandSharing   // gates §4 allied-command invariant
+  SeinARTS.Diplomacy.Permission.ResourceShare    // resource pool shares (see §6 sharing modes)
+  SeinARTS.Diplomacy.Permission.CommandSharing   // gates §5 allied-command invariant
   ```
   
   Designers extend (`MyGame.Diplomacy.Treaty.NonAggressionPact`, `MyGame.Diplomacy.Status.Vassal`, etc.) without touching framework code.
   
   **Framework-gated semantics (the choke points):**
-  - `Permission.Allied` → §4 broker ownership loosening (if `bAlliedCommandSharing` match-setting is on).
-  - `Permission.SharedVision` → §11 VisionGroup aggregation.
-  - `Permission.Allied` + `bFriendlyFire=false` → §10 damage filter skips allied targets.
+  - `Permission.Allied` → §5 broker ownership loosening (if `bAlliedCommandSharing` match-setting is on).
+  - `Permission.SharedVision` → §12 VisionGroup aggregation.
+  - `Permission.Allied` + `bFriendlyFire=false` → §11 damage filter skips allied targets.
   - `State.AtWar` → targetability default-hostile.
   
   **Everything else is designer territory**: treaty negotiation, AI diplomacy preferences, war-declaration consequences, reputation systems, treaty breach penalties.
@@ -1942,7 +2046,7 @@ Composed-above-choke-points (designer freestyle):
   // Cross-cutting framework-system helpers (bidirectional checks)
   bool  SeinAreAllied(playerA, playerB);
   bool  SeinAreAtWar(playerA, playerB);
-  bool  SeinHasSharedVision(viewer, target);  // consults diplomacy + §11 VisionScope
+  bool  SeinHasSharedVision(viewer, target);  // consults diplomacy + §12 VisionScope
   ```
   
   **Visual event** fires on every `ModifyDiplomacy` application:
@@ -1952,7 +2056,7 @@ Composed-above-choke-points (designer freestyle):
   
   Scenarios, UI, and AI subscribe. Replays fire the same events at identical ticks because the command stream is deterministic.
   
-  **Parallel tag index** (mirrors §2's entity-tag-index pattern): `USeinWorldSubsystem::DiplomacyTagIndex: TMap<FGameplayTag, TArray<TPair<FSeinPlayerID, FSeinPlayerID>>>`. Auto-maintained by the `ModifyDiplomacy` command handler. Enables O(1) queries like "find all pairs with `State.AtWar`." Memory trivial (≤ N_players² × a few tags).
+  **Parallel tag index** (mirrors §3's entity-tag-index pattern): `USeinWorldSubsystem::DiplomacyTagIndex: TMap<FGameplayTag, TArray<TPair<FSeinPlayerID, FSeinPlayerID>>>`. Auto-maintained by the `ModifyDiplomacy` command handler. Enables O(1) queries like "find all pairs with `State.AtWar`." Memory trivial (≤ N_players² × a few tags).
   
   **`FSeinMatchSettings::bAllowMidMatchDiplomacy`** gates runtime mutation. If false, the diplomacy command handler rejects mid-match `ModifyDiplomacy` commands (diplomacy locked at match start — typical for team-based competitive). If true, mid-match declare-war / treaty / alliance-swap are possible (grand-strategy / campaign).
 
@@ -1968,7 +2072,7 @@ Composed-above-choke-points (designer freestyle):
   - `OnMatchResumed` — sim resumed
   - `OnMatchEnding(winner, reason)` — EndMatch called
   - `OnMatchEnded` — cleanup complete, ready for next match
-  - Plus the player-level events from §16 Q4 expansion (registered/dropped/ready/surrendered/voted).
+  - Plus the player-level events from §17 Q4 expansion (registered/dropped/ready/surrendered/voted).
 
 - **Replay header + serialization.**
   ```cpp
@@ -1992,7 +2096,7 @@ Composed-above-choke-points (designer freestyle):
   
   Framework ships `USeinReplayBPFL::SeinSaveReplay(path)` / `SeinLoadReplay(path)`. Replay playback = load header → register players → feed command log at recorded ticks → sim re-runs deterministically.
 
-- **Game modes are designer compositions, not a framework primitive.** Each game's `AGameModeBase` subclass selects a `USeinMatchSettings` preset, spawns the appropriate scenario (§16), configures faction assignments, wires lobby UI. Framework provides the settings + scenario + voting infrastructure; designer assembles.
+- **Game modes are designer compositions, not a framework primitive.** Each game's `AGameModeBase` subclass selects a `USeinMatchSettings` preset, spawns the appropriate scenario (§17), configures faction assignments, wires lobby UI. Framework provides the settings + scenario + voting infrastructure; designer assembles.
 
 ### Non-goals
 
@@ -2013,7 +2117,7 @@ Composed-above-choke-points (designer freestyle):
 - Match flow commands: `StartMatch`, `PauseMatchRequest`, `ResumeMatchRequest`, `EndMatch`, `ConcedeMatch`, `RestartMatch`.
 - `FSeinVoteState` storage on `USeinWorldSubsystem` + `USeinVoteBPFL` with start/cast/check/get BPFLs. Auto-expire votes via a sim system ticking votes.
 - Vote visual events: `OnVoteStarted`, `OnVoteProgress`, `OnVoteResolved`.
-- `ESeinPauseMode` enum; update `SeinSetSimPaused` signature (§16 revision).
+- `ESeinPauseMode` enum; update `SeinSetSimPaused` signature (§17 revision).
 - `ESeinHostDropAction` enum + migration plumbing hooks.
 - Tag-based diplomacy storage: `TMap<TPair<FSeinPlayerID, FSeinPlayerID>, FGameplayTagContainer> DiplomacyRelations` on `USeinWorldSubsystem`.
 - Parallel `DiplomacyTagIndex: TMap<FGameplayTag, TArray<TPair<FSeinPlayerID, FSeinPlayerID>>>` auto-maintained by the `ModifyDiplomacy` command handler.
@@ -2021,7 +2125,7 @@ Composed-above-choke-points (designer freestyle):
 - Register framework diplomacy tags: `SeinARTS.Diplomacy.State.{AtWar, Peace, Truce}` + `SeinARTS.Diplomacy.Permission.{Allied, SharedVision, OpenBorders, ResourceShare, CommandSharing}`.
 - `FSeinCommand::ModifyDiplomacy` command type + `ProcessCommands` handler that respects `bAllowMidMatchDiplomacy`.
 - `OnDiplomacyChanged` visual event.
-- Integration points: §4 broker owner-scope checks `Permission.Allied`; §10 damage filter checks `Permission.Allied` vs `bFriendlyFire`; §11 VisionGroup aggregates across `Permission.SharedVision` relations.
+- Integration points: §5 broker owner-scope checks `Permission.Allied`; §11 damage filter checks `Permission.Allied` vs `bFriendlyFire`; §12 VisionGroup aggregates across `Permission.SharedVision` relations.
 - `USeinMatchFlowBPFL::SeinEndMatch` + match flow visual events.
 - Spectator command filter in `ProcessCommands`.
 - `FSeinReplayHeader` struct + `USeinReplayBPFL::SeinSaveReplay` / `SeinLoadReplay`.
@@ -2032,9 +2136,9 @@ Composed-above-choke-points (designer freestyle):
 ## Open cross-system questions (to resolve during Q&A)
 
 - **Default component set.** Tabled for now per discussion — revisit if composition cost becomes a pain point.
-- **Reference counting for shared tag state.** Resolved in §2 via refcount model.
+- **Reference counting for shared tag state.** Resolved in §3 via refcount model.
 - **Whether `USeinArchetypeDefinition` itself should shrink** as things like `DefaultCommands` move off it. Likely yes — it ends up carrying identity, cost, tech metadata, archetype-scope modifier declarations, and (per §1) `BaseTags`.
-- **Match settings primitive.** Resolved in §17.
+- **Match settings primitive.** Resolved in §18.
 - **Sim-speed multipliers.** Flagged as future enhancement (skirmish-mode 2x/slow-mo for single-player). Not in v1.
 - **Stateful AI hand-off on host migration.** Flagged; v1 restarts AI from current sim state on new host.
 - **Custom paint tool in SeinARTSEditor.** Deferred to editor-module pass.
@@ -2045,23 +2149,23 @@ Composed-above-choke-points (designer freestyle):
 
 - **2026-04-17** — Initial scaffold, cross-cutting invariants locked, 15 sections staked out. Abilities partially drafted (arbitration model and latent cleanup already implemented during the preceding cleanup chapter).
 - **2026-04-17** — Q&A round 1: Entities and Tags locked. Key outcomes: single entity pool with optional transform, implicit `FSeinTagData` on every entity (initial tags sourced from `USeinArchetypeDefinition::BaseTags`, authored in one place), refcounted tag presence, `Neutral` player as the owner sentinel, deletion of the `USeinTagsComponent` wrapper AC, and simplification of `USeinAbility::OwnedTags` to plain grant/ungrant (refcount replaces the diff-on-activate workaround).
-- **2026-04-17** — Q&A round 2: Commands locked, CommandBrokers added as a new §4 primitive (16 sections total). Key outcomes: txn log carries pre-resolution intent (not post-resolution ability activations); `CommandType` is a gameplay tag rather than a C++ enum (designer-extensible, version-stable replays); common fields + optional `FInstancedStruct Payload` for per-type data; observer commands logged-but-non-sim with a hard "no sim influence" rule; one flat log; sim-side validation with `CommandRejected` visual events for UX. CommandBroker primitive subsumes formations / multi-unit dispatch / shift-queue / smart resolution: self-spawning and self-culling sim entities that mediate one player command to a dynamic member set, with pluggable resolvers via plugin settings, centroid + anchor transform semantics, and strict one-broker-per-member membership. Control groups remain a pure client-side selection preset, orthogonal to brokers.
+- **2026-04-17** — Q&A round 2: Commands locked, CommandBrokers added as a new §5 primitive (16 sections total at that time, current §5). Key outcomes: txn log carries pre-resolution intent (not post-resolution ability activations); `CommandType` is a gameplay tag rather than a C++ enum (designer-extensible, version-stable replays); common fields + optional `FInstancedStruct Payload` for per-type data; observer commands logged-but-non-sim with a hard "no sim influence" rule; one flat log; sim-side validation with `CommandRejected` visual events for UX. CommandBroker primitive subsumes formations / multi-unit dispatch / shift-queue / smart resolution: self-spawning and self-culling sim entities that mediate one player command to a dynamic member set, with pluggable resolvers via plugin settings, centroid + anchor transform semantics, and strict one-broker-per-member membership. Control groups remain a pure client-side selection preset, orthogonal to brokers.
 - **2026-04-17** — Q&A round 3: Resources locked. Key outcomes: stockpile-only (flow is explicit non-goal), tag-keyed resources in `SeinARTS.Resource.*` namespace, hybrid resource authoring (plugin-settings catalog + per-faction kits), designer-configurable cap/overflow/spend behavior per resource with clamp-and-reject defaults, all four income sources supported (passive / entity / ability / trade), all three upkeep patterns supported (flat drain / pop cap / income-rate modifiers), match-settings-controlled resource sharing (not plugin-wide), unified `FSeinResourceCost` for abilities and production, symmetric availability APIs. Surfaced **match settings** as a new cross-cutting design area requiring its own pass.
 - **2026-04-17** — Q&A round 4: Abilities locked (fully, not drafting). Key outcomes: full activation flow with deterministic ordering (cooldown → arbitration → target-validation → CanActivate → affordability → cost-deduct → cancel-others → cooldown-start → OwnedTags → OnActivate); cost deducts on activation success with `bRefundCostOnCancel` default true; cooldown refund `bRefundCooldownOnCancel` default false; `CooldownStartTiming` enum (OnActivate / OnEnd) per-ability; hybrid declarative + BP target validation (MaxRange, ValidTargetTags, RequiresLineOfSight on the class, CanActivate BP as escape hatch); `ESeinOutOfRangeBehavior` enum (Reject / AutoMoveThen) with AutoMoveThen integrating with CommandBrokers; passives are actives that auto-activate at spawn with no cost/cooldown and no auto-revive when cancelled; DefaultCommands + FallbackAbilityTag + resolver move from archetype def to `FSeinAbilityData` as sole source of truth; ability upgrades use existing primitives (effects for stats, grant/revoke for replacement) with no new "upgrade" concept.
-- **2026-04-17** — Q&A round 5: Effects locked. Key outcomes: single `FSeinActiveEffect` primitive covering instant / finite / infinite durations via a sentinel-encoded `Duration` field + optional `TickInterval` for periodic payloads; per-effect stacking rule (Stack/Refresh/Independent) with `MaxStacks` integer cap; `bRemoveOnSourceDeath` flag default false (effects persist past source death by default); conditional effects are emergent (condition sources drive apply/remove themselves — no new primitive); rich effect definitions add `GrantedTags` (refcounted per §2), `RemoveEffectsWithTag`, and BP hooks (OnApply/OnTick/OnExpire/OnRemoved); `USeinEffect : UObject` as Blueprintable authoring surface with struct instances in sim storage (mirrors the ability authoring pattern); three application paths supported (ability-applied / condition-source-applied / effect-from-effect); recursion handled by apply-batching at tick boundaries with a dev-mode count-threshold warning; archetype-scope effects use the full effect treatment via an unified `FSeinActiveEffect` list on `FSeinPlayerState`.
+- **2026-04-17** — Q&A round 5: Effects locked. Key outcomes: single `FSeinActiveEffect` primitive covering instant / finite / infinite durations via a sentinel-encoded `Duration` field + optional `TickInterval` for periodic payloads; per-effect stacking rule (Stack/Refresh/Independent) with `MaxStacks` integer cap; `bRemoveOnSourceDeath` flag default false (effects persist past source death by default); conditional effects are emergent (condition sources drive apply/remove themselves — no new primitive); rich effect definitions add `GrantedTags` (refcounted per §3), `RemoveEffectsWithTag`, and BP hooks (OnApply/OnTick/OnExpire/OnRemoved); `USeinEffect : UObject` as Blueprintable authoring surface with struct instances in sim storage (mirrors the ability authoring pattern); three application paths supported (ability-applied / condition-source-applied / effect-from-effect); recursion handled by apply-batching at tick boundaries with a dev-mode count-threshold warning; archetype-scope effects use the full effect treatment via an unified `FSeinActiveEffect` list on `FSeinPlayerState`.
 - **2026-04-17** — Q&A round 6: Production locked. Key outcomes: per-resource cost deduction timing (`AtEnqueue` vs `AtCompletion`) declared in the resource catalog; population / cap-bound resources via `CostDirection = AddTowardCap` with spawn-stall-at-completion semantics for natural cap-bound queue behavior; build time modifiers pre-bake at enqueue (tech doesn't retroactively speed existing queues); progress-proportional refund as the new default, opt-in fixed-percentage override via `FSeinProductionRefundPolicy` (breaking change from flat-100%); FIFO queues with cancel-any-index ratified; `ProductionCancelled` and `ProductionStalled` visual events; rally target extended to entity-or-location with auto-move-on-spawn via CommandBroker; production is not building-only (any entity with `FSeinProductionData` can produce); continuous auto-requeue deferred to designer-scripted abilities.
-- **2026-04-17** — Q&A round 7: Tech / Upgrades locked. **Key unification: tech is not a distinct primitive — it's an effect (§7) granted by research, scenario, ability, or map event.** Research completion calls `SeinApplyEffect(target, TechEffectClass)`; revocation calls `SeinRemoveEffect`. Same pattern handles all granting paths. Other outcomes: per-tech `bRevocable` flag default false; `TechScope` enum `{Player, Team}` for grant propagation (orthogonal to modifier scope); tiers are emergent from prerequisite chains (no tier primitive); `ForbiddenPrerequisiteTags` added for mutually-exclusive patterns; `CanResearch` BlueprintNativeEvent escape hatch for complex eligibility; tech revocation affects forward-looking state only (existing units stay, archetype-scope stat mods revert); `TechRevoked` visual event; `USeinTechBPFL::SeinGetTechAvailability` for UI; tech stacking via the effect stacking system (no tech-specific plumbing). **`FSeinPlayerState::UnlockedTechTags` migrates to a refcounted tag container unified with §2's entity tag system; `FSeinPlayerState::ArchetypeModifiers` is deprecated — modifiers live on archetype effects, `ResolveAttribute` iterates the effect list.**
-- **2026-04-17** — Effects + Tech scope revision (post-round-7 follow-up). **`ESeinModifierScope` extended to three values: `Instance`, `Archetype`, `Player`.** The new `Player` scope covers modifiers targeting player-state-level fields (resource income rates, caps, pop cap, upkeep rates) that aren't entity attributes. §7 Effects and §9 Tech updated to cover all three scopes; previous "tech = archetype-scope effect" framing was too narrow. `FSeinPlayerState` grows a `PlayerEffects` list alongside `ArchetypeEffects`. `ResolveAttribute` splits entity-attribute resolution from player-state-attribute resolution.
+- **2026-04-17** — Q&A round 7: Tech / Upgrades locked. **Key unification: tech is not a distinct primitive — it's an effect (§8) granted by research, scenario, ability, or map event.** Research completion calls `SeinApplyEffect(target, TechEffectClass)`; revocation calls `SeinRemoveEffect`. Same pattern handles all granting paths. Other outcomes: per-tech `bRevocable` flag default false; `TechScope` enum `{Player, Team}` for grant propagation (orthogonal to modifier scope); tiers are emergent from prerequisite chains (no tier primitive); `ForbiddenPrerequisiteTags` added for mutually-exclusive patterns; `CanResearch` BlueprintNativeEvent escape hatch for complex eligibility; tech revocation affects forward-looking state only (existing units stay, archetype-scope stat mods revert); `TechRevoked` visual event; `USeinTechBPFL::SeinGetTechAvailability` for UI; tech stacking via the effect stacking system (no tech-specific plumbing). **`FSeinPlayerState::UnlockedTechTags` migrates to a refcounted tag container unified with §3's entity tag system; `FSeinPlayerState::ArchetypeModifiers` is deprecated — modifiers live on archetype effects, `ResolveAttribute` iterates the effect list.**
+- **2026-04-17** — Effects + Tech scope revision (post-round-7 follow-up). **`ESeinModifierScope` extended to three values: `Instance`, `Archetype`, `Player`.** The new `Player` scope covers modifiers targeting player-state-level fields (resource income rates, caps, pop cap, upkeep rates) that aren't entity attributes. §8 Effects and §10 Tech updated to cover all three scopes; previous "tech = archetype-scope effect" framing was too narrow. `FSeinPlayerState` grows a `PlayerEffects` list alongside `ArchetypeEffects`. `ResolveAttribute` splits entity-attribute resolution from player-state-attribute resolution.
 - **2026-04-17** — Q&A round 8: Combat locked. **Key reframe: combat is NOT a framework pipeline.** Rewrote the section from a prescriptive damage-resolution flow to a minimal convenience layer. Framework provides: `FSeinCombatData` with only Health + MaxHealth; `SeinApplyDamage`/`SeinApplyHeal`/`SeinApplySplashDamage` BPFLs that write pre-computed deltas (no math); `SeinMutateAttribute` generic escape hatch; `SeinRollAccuracy` optional PRNG convenience; death lifecycle hook that activates a `SeinARTS.DeathHandler`-tagged ability if present then destroys; tag-keyed `FSeinPlayerStatsData` with `SeinARTS.Stat.*` defaults + `SeinBumpStat` BPFL for designer-extensible post-match stats; `DamageApplied`/`HealApplied`/`Death`/`Kill` visual events; `FSeinWeaponProfile` starter template that framework never reads (aid only); `SeinARTS.DamageType.Default` as the only shipped damage-type tag. Explicit non-goals: damage types / armor model / accuracy system / resolution order / weapons as primitives / death state machine. Designers own combat identity; framework provides conveniences.
 - **2026-04-17** — Q&A round 9: Vision / LOS / Fog locked. Key outcomes: per-player vision with runtime-mutable `Private`/`TeamShared` scope; VisionGroup abstraction to share bitfields across `TeamShared` teammates; per-cell per-VisionGroup u8 `EVNNNNNN` bitfield with 2 framework bits (Explored, Visible) + 6 designer-configurable layer bits (extensible to u16 for 14 layers); per-layer refcount arrays sized to declared layer count; stamp-delta update model with minimal per-source descriptor (PreviousCell + Radius + PerceptionLayers, no per-source cell-list storage); template cache for common (Radius, PerceptionLayers) combinations; emission + perception layer model for stealth/detection; `FSeinVisionData` + `FSeinVisionBlockerData` entity components; discrete grid raycasting with per-layer blocker sets; event-driven entity-visibility notifications (`EntityEnteredVision`/`EntityExitedVision`); render-side fog tick decoupled from sim (default 10 Hz); sim-authoritative command validity (no ghost filtering). Stamp-delta-refcount confirmed as industry-standard pattern (used by most production RTS); no radically different approach found that beats it under deterministic-lockstep constraints.
-- **2026-04-17** — Post-round-9 scale/memory revision (big one). Recognized RTS cell-count scales span 3+ orders of magnitude (small-scale squad-tactical ~1M cells to massive-unit ~25M+ cells). Promoted two cross-cutting invariants: **(8) Scale-aware grid-backed data** (compact per-cell structures, per-map tag palettes, tile partitioning, designer-configurable cell sizes matching unit scale) and **(9) Batch-tick heavy systems** (`TickInterval` on `ISeinSystem`, default 4-tick batching for heavy work like vision stamping). Rewrote §11 Vision defaults: vision grid 4:1 coarser than nav by default; 4-bit packed refcounts (15-cap, sufficient for RTS); 4-tick batched updates; tile-partitioned source registry; memory now fits at all target scales. Wrote §12 Terrain from scratch: compact cell-struct variants via plugin settings (`FSeinCellData_Flat`/`_Height`/`_HeightSlope`, 4-8 bytes per cell); per-map u8 tag palette with 4 inline indices + sparse overflow; tile grid as cross-cutting infrastructure (32×32 cells per tile default); `FSeinMapTile` summary struct used by vision, spatial queries, pathfinding, terrain-tag queries; `USeinSpatialBPFL::SeinQueryEntitiesInRadius` as a framework-level utility; nav composition locked as binding requirement for nav refactor (HPA* for inter-region abstract pathing + regional flow fields for intra-region/group orders + CommandBroker resolver for formations + `USeinMovementProfile` subclasses for steering — four-layer composition works at both small-scale and massive-scale RTS ends of the spectrum); `FSeinFootprintData` for multi-cell entities; cover query returns tags + directional facing vector for designer dot-product math; `FSeinCapturePointData` with pluggable `CaptureAbility` field; runtime terrain mutation BPFLs; placed-volumes + nav-derived authoring (custom paint tool deferred to editor pass); memory fits: small 1v1 ~3 MB, large competitive ~20 MB, massive-scale ~124 MB. Framework practical ceiling ~5000² cells regardless of physical map size; designers pick cell size matching unit scale.
+- **2026-04-17** — Post-round-9 scale/memory revision (big one). Recognized RTS cell-count scales span 3+ orders of magnitude (small-scale squad-tactical ~1M cells to massive-unit ~25M+ cells). Promoted two cross-cutting invariants: **(8) Scale-aware grid-backed data** (compact per-cell structures, per-map tag palettes, tile partitioning, designer-configurable cell sizes matching unit scale) and **(9) Batch-tick heavy systems** (`TickInterval` on `ISeinSystem`, default 4-tick batching for heavy work like vision stamping). Rewrote §12 Vision defaults: vision grid 4:1 coarser than nav by default; 4-bit packed refcounts (15-cap, sufficient for RTS); 4-tick batched updates; tile-partitioned source registry; memory now fits at all target scales. Wrote §13 Terrain from scratch: compact cell-struct variants via plugin settings (`FSeinCellData_Flat`/`_Height`/`_HeightSlope`, 4-8 bytes per cell); per-map u8 tag palette with 4 inline indices + sparse overflow; tile grid as cross-cutting infrastructure (32×32 cells per tile default); `FSeinMapTile` summary struct used by vision, spatial queries, pathfinding, terrain-tag queries; `USeinSpatialBPFL::SeinQueryEntitiesInRadius` as a framework-level utility; nav composition locked as binding requirement for nav refactor (HPA* for inter-region abstract pathing + regional flow fields for intra-region/group orders + CommandBroker resolver for formations + `USeinMovementProfile` subclasses for steering — four-layer composition works at both small-scale and massive-scale RTS ends of the spectrum); `FSeinFootprintData` for multi-cell entities; cover query returns tags + directional facing vector for designer dot-product math; `FSeinCapturePointData` with pluggable `CaptureAbility` field; runtime terrain mutation BPFLs; placed-volumes + nav-derived authoring (custom paint tool deferred to editor pass); memory fits: small 1v1 ~3 MB, large competitive ~20 MB, massive-scale ~124 MB. Framework practical ceiling ~5000² cells regardless of physical map size; designers pick cell size matching unit scale.
 - **2026-04-17** — Starter-content policy noted in intro. Framework stays genre-neutral; starter content matching specific RTS subgenres (squad-tactical, formation-heavy, economy-flow, etc.) ships as optional assets under clearly-labeled namespaces like `SeinARTS.Starter.SquadTactics.*`. Framework core never depends on starters; designers use, extend, replace, or ignore. Explicit IP-safety policy: no specific commercial-game references in docs or code.
 - **2026-04-17** — IP-safety scrub of DESIGN.md + CLAUDE.md. All specific commercial-game names (and abbreviations) removed from design documents and replaced with genre-descriptive language ("squad-tactical", "massive-scale", "large-formation", "cap-bound spawn-stall pattern"). Source code comments and docs site content still contain some references; queued as a follow-up cleanup pass before shipping.
 - **2026-04-17** — Q&A round 11: Relationships (containment/transport/garrison/attachment) locked. Hybrid primitive: base `FSeinContainmentData` (occupants, capacity, query filter, eject-on-death flag, visibility mode) + specialization components (`FSeinAttachmentSpec`, `FSeinTransportSpec`, `FSeinGarrisonSpec`). Orthogonal relationship axes: entity may have at most one attachment + one containment simultaneously (tree structure for chained containments). Destruction propagation configurable with on-eject and on-death effect hooks. Capacity model: integer capacity + entity-size + accepted-tag-query + `CanAccept` BP escape. Three visibility modes: `Hidden` (excluded from spatial queries), `PositionedRelative` (position from container + slot offset), `Partial` (hidden from targeting but participates in specific abilities). Attribution stats always count contained entities. Starter entry/exit abilities shipped; subgenre-specific starter content (garrison fire, crew weapon operation, retreat) under `SeinARTS.Starter.SquadTactics.*`. Optional deterministic visual-slot assignment for replay visual consistency. Command routing designer-authored; view-model pattern handles UI. Locked cleanly given the orthogonal-axes insight that broker membership + attachment + containment are three independent primitives.
 - **2026-04-19** — Q&A round 12: Selection & control groups locked. Client-side-only, no sim-state. Observer command stream (`SelectionReplaced`/`Added`/`Removed`, `ControlGroupAssigned`/`AddedTo`/`Selected`) is authoritative for replay UI reconstruction. `bSelectable: bool` flag on entities (default true; projectiles and other non-interactable entities opt out). **Selection does NOT require ownership; command issuance DOES** — enemy entities can be selected for info-panel display but not orderable; controller filters to owned entities before emitting `ActivateAbility`. Transport/containment selection nuance: group move commands disembark contained members if their container isn't also in the group; skip them (transport carries) if the container is in the group. Helper `SeinResolveMoveableSelection` partitions the selection. Death-driven cleanup: client-side `USeinSelectionComponent` listens to `Death` visual events and removes dead handles from groups/selection; replay reconstructs by filtering original assignments against live entities at playback. Nested containment exposed via three BPFLs (immediate occupants, flat all-nested, hierarchical tree). Framework ships a starter `USeinSelectionComponent` with standard selection primitives; designer subclasses or replaces. AI doesn't select — commands carry handles directly. Spectator/POV replay modes are a replay-app concern, not framework. Strengthened broker ownership invariant: broker member set must be wholly owned by single player; broker primitive enforces at instantiation (not just caller-side filter); allied-command-sharing is match-settings territory.
-- **2026-04-19** — Q&A round 13: AI locked, thin section. **Key reframe: strategic AI sits ABOVE the sim layer, like a human. It does NOT need to be deterministic** (runs on one designated host; emitted commands are what crosses the lockstep boundary). Unit-level micro-AI is just passive abilities (§6) — not a separate system. Framework provides thin `USeinAIController` base class with tick + sim-state query BPFLs (both all-entities for cheating AI and visible-per-player for fog-respecting AI) + command-emit BPFL. No prescribed architecture (designer picks BT / FSM / utility / GOAP / custom). No difficulty primitive. Host runs AI; on host migration or dropped-player takeover, new host spins up AI controllers from current sim state (stateful hand-off deferred). Debug logging to regular output log (never command txn log). Framework ships one starter `USeinAIController_Starter` BP under starter content as a playable example — not a blessed pattern. Replay just replays command stream; AI doesn't re-run.
-- **2026-04-19** — Q&A round 14: Scenario events / cinematics locked as a thin section. **Key insight: scenarios are NOT a new primitive — they're abstract sim entities (§1) with ability components (§6).** Scenario logic composes from existing primitives: passive tick-polling abilities + response abilities activated via `SeinActivateAbility` by external code. Thin utility layer adds: `bIsAbstract` flag on `USeinArchetypeDefinition` (ActorBridge hides + skips cosmetic routing); entity lookup via framework-level `USeinEntityLookupBPFL` (promoted below); `USeinScenarioBPFL` with `SeinSetSimPaused` + `SeinPlayPreRenderedCinematic` + `SeinEndCinematic`; `PlayPreRenderedCinematic`/`EndCinematic` visual events; `ESeinCinematicSkipMode` enum (Individual/VoteToSkip/HostOnly/NoSkip); vote-to-skip forward-references §17 voting. Multiple scenarios composable. Save/resume via command-stream replay; no explicit scenario state. No objective primitive — too varied across games. Editor factory split: rename `SeinActorFactory` → `SeinEntityFactory` (minimal); add `SeinUnitFactory` (starter unit kit). Retracted: `USeinScenario` UObject; `TriggerEventTags` on abilities. Starter example scenario under `SeinARTS.Starter.*`.
-- **2026-04-19** — **Entity lookup promoted to framework-DNA level.** What started as a scenario convenience BPFL was elevated to a cross-cutting framework primitive after recognizing it's useful everywhere ("find all Riflemen", "find the HQ", "find entities with tag X in radius Y"). `USeinWorldSubsystem` now maintains two global indices: `EntityTagIndex: TMap<FGameplayTag, TArray<FSeinEntityHandle>>` (auto-indexed by the §2 tag-refcount system on every grant/ungrant) and `NamedEntityRegistry: TMap<FName, FSeinEntityHandle>` (singleton lookup). Added as cross-cutting invariant #10 in the preamble. `USeinEntityLookupBPFL` exposes: named register/lookup/unregister, tag-based set/first/count/has queries, tag-based queries filtered by spatial radius or player ownership, hierarchical tag-query matching for parent-tag matching. Memory overhead: 4 KB – 400 KB trivial at RTS scale; CPU is O(1) amortized for grant/lookup, O(entities_with_tag) for ungrant (acceptable; can swap to TSet if hot). §2 Tags updated with the global-index decision; §16 Scenario references the shared lookup infrastructure instead of shipping a scenario-only registry.
-- **2026-04-19** — Q&A round 15 (final): Match Settings & match flow locked as §17. Captures everything that's "not a sim primitive but affects how a match plays out." Storage: `FSeinMatchSettings` USTRUCT (framework-shipped fields) + `USeinMatchSettings` UObject asset (lobby presets) + `FInstancedStruct CustomSettings` (designer extensions). Immutable after match start — snapshot into `USeinWorldSubsystem` at sim-start, read via BPFL. Match flow state machine: `Lobby → Starting → Playing → Paused → Ending → Ended`, command-driven transitions, visual events for scenario/UI subscription. Pre-match countdown + minimum match duration as match settings. Pause modes: `Tactical` (commands accumulate during pause, default) vs `Hard` (commands rejected); per-call override possible. Voting primitive locked as first-class sim state with `FSeinVoteState`, `StartVote`/`CastVote` commands, `OnVoteStarted`/`OnVoteProgress`/`OnVoteResolved` visual events, resolution modes (Majority/Unanimous/HostDecides/Plurality), auto-expiration. Victory is scenario-driven via `SeinEndMatch(winner, reason)` — framework provides zero prescribed victory enum. Spectator support via `bIsSpectator` flag + command filter. Host migration via `ESeinHostDropAction` enum (EndMatch/PauseUntilNewHost/AutoMigrate/AITakeover). Diplomacy primitive: `ESeinPlayerRelation { Enemy, Neutral, Allied }` with get/set BPFL + `bAllowMidMatchAllies` gate + `OnPlayerRelationChanged` event. Replay header: `FSeinReplayHeader` with framework version, map, seed, settings snapshot, player registrations, tick range. Framework's philosophy captured explicitly: enforces invariants at choke points (sim/render boundary, command validation, tag refcount, entity lifecycle, effect/ability lifecycle, component storage); composition above stays designer-freestyle. Game modes, victory conditions, objectives, lobby UI all live in designer code. `AGameModeBase`-compatible integration point. Flagged as future enhancements: sim-speed multipliers for skirmish, stateful AI hand-off on host migration, custom paint tool in editor.
-- **2026-04-19** — Diplomacy redesigned: the initial `ESeinPlayerRelation { Enemy, Neutral, Allied }` enum was too restrictive for richer grand-strategy / 4X diplomacy models (cold war, non-aggression pacts, defensive alliances, trade agreements, vassalage, etc.). Replaced with a **directional per-pair `FGameplayTagContainer`** — same composability as §2 entity tags. Framework ships baseline vocabulary (`SeinARTS.Diplomacy.State.*` + `SeinARTS.Diplomacy.Permission.*`) used by core systems (§4 broker owner-scope, §10 friendly-fire filter, §11 vision sharing). Designers extend with arbitrary tags (`MyGame.Diplomacy.Treaty.NonAggressionPact`, etc.) without framework changes. Mutation via `FSeinCommand::ModifyDiplomacy` (command-driven, replay-deterministic). `OnDiplomacyChanged` visual event for subscribers. Parallel `DiplomacyTagIndex` for O(1) tag-based pair queries. `bAllowMidMatchDiplomacy` match-setting gate (rename from `bAllowMidMatchAllies`). Convenience BPFL wrappers (`SeinDeclareWar`, `SeinDeclarePeace`, `SeinProposeTruce`) for baseline transitions; full richness via `SeinModifyDiplomacy`.
-- **2026-04-19** — **All 17 sections locked.** Design pass complete. Next phase: implementation passes batched against accumulated deltas + ongoing IP-safety scrub of source comments + docs site before ship.
+- **2026-04-19** — Q&A round 13: AI locked, thin section. **Key reframe: strategic AI sits ABOVE the sim layer, like a human. It does NOT need to be deterministic** (runs on one designated host; emitted commands are what crosses the lockstep boundary). Unit-level micro-AI is just passive abilities (§7) — not a separate system. Framework provides thin `USeinAIController` base class with tick + sim-state query BPFLs (both all-entities for cheating AI and visible-per-player for fog-respecting AI) + command-emit BPFL. No prescribed architecture (designer picks BT / FSM / utility / GOAP / custom). No difficulty primitive. Host runs AI; on host migration or dropped-player takeover, new host spins up AI controllers from current sim state (stateful hand-off deferred). Debug logging to regular output log (never command txn log). Framework ships one starter `USeinAIController_Starter` BP under starter content as a playable example — not a blessed pattern. Replay just replays command stream; AI doesn't re-run.
+- **2026-04-19** — Q&A round 14: Scenario events / cinematics locked as a thin section. **Key insight: scenarios are NOT a new primitive — they're abstract sim entities (§1) with ability components (§7).** Scenario logic composes from existing primitives: passive tick-polling abilities + response abilities activated via `SeinActivateAbility` by external code. Thin utility layer adds: `bIsAbstract` flag on `USeinArchetypeDefinition` (ActorBridge hides + skips cosmetic routing); entity lookup via framework-level `USeinEntityLookupBPFL` (promoted below); `USeinScenarioBPFL` with `SeinSetSimPaused` + `SeinPlayPreRenderedCinematic` + `SeinEndCinematic`; `PlayPreRenderedCinematic`/`EndCinematic` visual events; `ESeinCinematicSkipMode` enum (Individual/VoteToSkip/HostOnly/NoSkip); vote-to-skip forward-references §18 voting. Multiple scenarios composable. Save/resume via command-stream replay; no explicit scenario state. No objective primitive — too varied across games. Editor factory split: rename `SeinActorFactory` → `SeinEntityFactory` (minimal); add `SeinUnitFactory` (starter unit kit). Retracted: `USeinScenario` UObject; `TriggerEventTags` on abilities. Starter example scenario under `SeinARTS.Starter.*`.
+- **2026-04-19** — **Entity lookup promoted to framework-DNA level.** What started as a scenario convenience BPFL was elevated to a cross-cutting framework primitive after recognizing it's useful everywhere ("find all Riflemen", "find the HQ", "find entities with tag X in radius Y"). `USeinWorldSubsystem` now maintains two global indices: `EntityTagIndex: TMap<FGameplayTag, TArray<FSeinEntityHandle>>` (auto-indexed by the §3 tag-refcount system on every grant/ungrant) and `NamedEntityRegistry: TMap<FName, FSeinEntityHandle>` (singleton lookup). Added as cross-cutting invariant #10 in the preamble. `USeinEntityLookupBPFL` exposes: named register/lookup/unregister, tag-based set/first/count/has queries, tag-based queries filtered by spatial radius or player ownership, hierarchical tag-query matching for parent-tag matching. Memory overhead: 4 KB – 400 KB trivial at RTS scale; CPU is O(1) amortized for grant/lookup, O(entities_with_tag) for ungrant (acceptable; can swap to TSet if hot). §3 Tags updated with the global-index decision; §17 Scenario references the shared lookup infrastructure instead of shipping a scenario-only registry.
+- **2026-04-19** — Q&A round 15 (final): Match Settings & match flow locked as §18. Captures everything that's "not a sim primitive but affects how a match plays out." Storage: `FSeinMatchSettings` USTRUCT (framework-shipped fields) + `USeinMatchSettings` UObject asset (lobby presets) + `FInstancedStruct CustomSettings` (designer extensions). Immutable after match start — snapshot into `USeinWorldSubsystem` at sim-start, read via BPFL. Match flow state machine: `Lobby → Starting → Playing → Paused → Ending → Ended`, command-driven transitions, visual events for scenario/UI subscription. Pre-match countdown + minimum match duration as match settings. Pause modes: `Tactical` (commands accumulate during pause, default) vs `Hard` (commands rejected); per-call override possible. Voting primitive locked as first-class sim state with `FSeinVoteState`, `StartVote`/`CastVote` commands, `OnVoteStarted`/`OnVoteProgress`/`OnVoteResolved` visual events, resolution modes (Majority/Unanimous/HostDecides/Plurality), auto-expiration. Victory is scenario-driven via `SeinEndMatch(winner, reason)` — framework provides zero prescribed victory enum. Spectator support via `bIsSpectator` flag + command filter. Host migration via `ESeinHostDropAction` enum (EndMatch/PauseUntilNewHost/AutoMigrate/AITakeover). Diplomacy primitive: `ESeinPlayerRelation { Enemy, Neutral, Allied }` with get/set BPFL + `bAllowMidMatchAllies` gate + `OnPlayerRelationChanged` event. Replay header: `FSeinReplayHeader` with framework version, map, seed, settings snapshot, player registrations, tick range. Framework's philosophy captured explicitly: enforces invariants at choke points (sim/render boundary, command validation, tag refcount, entity lifecycle, effect/ability lifecycle, component storage); composition above stays designer-freestyle. Game modes, victory conditions, objectives, lobby UI all live in designer code. `AGameModeBase`-compatible integration point. Flagged as future enhancements: sim-speed multipliers for skirmish, stateful AI hand-off on host migration, custom paint tool in editor.
+- **2026-04-19** — Diplomacy redesigned: the initial `ESeinPlayerRelation { Enemy, Neutral, Allied }` enum was too restrictive for richer grand-strategy / 4X diplomacy models (cold war, non-aggression pacts, defensive alliances, trade agreements, vassalage, etc.). Replaced with a **directional per-pair `FGameplayTagContainer`** — same composability as §3 entity tags. Framework ships baseline vocabulary (`SeinARTS.Diplomacy.State.*` + `SeinARTS.Diplomacy.Permission.*`) used by core systems (§5 broker owner-scope, §11 friendly-fire filter, §12 vision sharing). Designers extend with arbitrary tags (`MyGame.Diplomacy.Treaty.NonAggressionPact`, etc.) without framework changes. Mutation via `FSeinCommand::ModifyDiplomacy` (command-driven, replay-deterministic). `OnDiplomacyChanged` visual event for subscribers. Parallel `DiplomacyTagIndex` for O(1) tag-based pair queries. `bAllowMidMatchDiplomacy` match-setting gate (rename from `bAllowMidMatchAllies`). Convenience BPFL wrappers (`SeinDeclareWar`, `SeinDeclarePeace`, `SeinProposeTruce`) for baseline transitions; full richness via `SeinModifyDiplomacy`.
+- **2026-04-19** — **All 18 sections locked.** Design pass complete. Next phase: implementation passes batched against accumulated deltas + ongoing IP-safety scrub of source comments + docs site before ship.

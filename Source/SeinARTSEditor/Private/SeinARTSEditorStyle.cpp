@@ -61,13 +61,11 @@ void FSeinARTSEditorStyle::Initialize()
 
 	// ==================== Component ====================
 
-	// Three lookup paths converge on this icon pair, so we register under all three keys:
-	//   1. "SeinComponent"          — USeinComponentFactory::GetNewAssetIconOverride
-	//                                 (right-click Content Browser menu + temp authoring thumbnail)
-	//   2. "SeinComponentBlueprint" — USeinComponentBlueprint asset-class lookup
-	//   3. "SeinActorComponent"     — base parent class; UE walks the parent chain for
-	//                                 the small corner badge, so this catches any
-	//                                 USeinDynamicComponent / typed-wrapper subclass.
+	// Per §2, "components" split into two tracks: (a) the UDS factory's
+	// authoring thumbnail (`SeinSimComponent` — used by USeinSimComponentFactory's
+	// GetNewAssetThumbnailOverride), and (b) the base AC class icon
+	// (`SeinActorComponent` — UE walks the parent chain for the corner badge,
+	// so this catches typed wrappers AND USeinStructComponent instances).
 	auto RegisterComponentIcon = [&](const FName& Key)
 	{
 		StyleSet->Set(
@@ -83,13 +81,20 @@ void FSeinARTSEditorStyle::Initialize()
 		);
 	};
 
-	RegisterComponentIcon(TEXT("ClassIcon.SeinComponent"));
-	RegisterComponentIcon(TEXT("ClassIcon.SeinComponentBlueprint"));
+	RegisterComponentIcon(TEXT("ClassIcon.SeinSimComponent"));
 	RegisterComponentIcon(TEXT("ClassIcon.SeinActorComponent"));
+	// Direct UActorComponent subclasses in the SeinARTS ClassGroup — UE
+	// looks up icons by exact class name, so these need their own entries
+	// (the SeinActorComponent parent-chain lookup doesn't catch them).
+	RegisterComponentIcon(TEXT("ClassIcon.SeinActorBridge"));
+	RegisterComponentIcon(TEXT("ClassIcon.SeinArchetypeDefinition"));
+	RegisterComponentIcon(TEXT("ClassIcon.SeinSelectionComponent"));
 
-	RegisterComponentThumb(TEXT("ClassThumbnail.SeinComponent"));
-	RegisterComponentThumb(TEXT("ClassThumbnail.SeinComponentBlueprint"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinSimComponent"));
 	RegisterComponentThumb(TEXT("ClassThumbnail.SeinActorComponent"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinActorBridge"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinArchetypeDefinition"));
+	RegisterComponentThumb(TEXT("ClassThumbnail.SeinSelectionComponent"));
 
 	// ==================== Widget ====================
 

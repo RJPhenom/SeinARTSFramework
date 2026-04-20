@@ -1,7 +1,9 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinTagBPFL.cpp
- * @brief   Implementation of gameplay tag Blueprint nodes.
+ * @brief   Implementation of gameplay tag Blueprint nodes. All mutations
+ *          route through USeinWorldSubsystem so refcounts and the global
+ *          EntityTagIndex stay consistent.
  */
 
 #include "Lib/SeinTagBPFL.h"
@@ -42,28 +44,38 @@ bool USeinTagBPFL::SeinHasAllTags(const UObject* WorldContextObject, FSeinEntity
 	return TagComp ? TagComp->HasAllTags(Tags) : false;
 }
 
-void USeinTagBPFL::SeinAddTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
+bool USeinTagBPFL::SeinAddBaseTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
-	if (!Subsystem) return;
+	return Subsystem ? Subsystem->AddBaseTag(EntityHandle, Tag) : false;
+}
 
-	FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
-	if (TagComp)
+bool USeinTagBPFL::SeinRemoveBaseTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	return Subsystem ? Subsystem->RemoveBaseTag(EntityHandle, Tag) : false;
+}
+
+void USeinTagBPFL::SeinReplaceBaseTags(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTagContainer NewBaseTags)
+{
+	if (USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject))
 	{
-		TagComp->BaseTags.AddTag(Tag);
-		TagComp->RebuildCombinedTags();
+		Subsystem->ReplaceBaseTags(EntityHandle, NewBaseTags);
 	}
 }
 
-void USeinTagBPFL::SeinRemoveTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
+void USeinTagBPFL::SeinGrantTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
 {
-	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
-	if (!Subsystem) return;
-
-	FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
-	if (TagComp)
+	if (USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject))
 	{
-		TagComp->BaseTags.RemoveTag(Tag);
-		TagComp->RebuildCombinedTags();
+		Subsystem->GrantTag(EntityHandle, Tag);
+	}
+}
+
+void USeinTagBPFL::SeinUngrantTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag)
+{
+	if (USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject))
+	{
+		Subsystem->UngrantTag(EntityHandle, Tag);
 	}
 }

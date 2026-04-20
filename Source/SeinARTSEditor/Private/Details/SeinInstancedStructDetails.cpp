@@ -28,6 +28,7 @@
 #include "StructViewerFilter.h"
 #include "SInstancedStructPicker.h"   // FInstancedStructFilter
 #include "InstancedStructDetails.h"   // FInstancedStructDataDetails
+#include "Factories/SeinSimComponentFactory.h"
 
 #define LOCTEXT_NAMESPACE "SeinInstancedStructDetails"
 
@@ -45,14 +46,17 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinEditorPicker, Log, All);
 //
 // We work around both issues by discriminating by asset kind:
 //   - Native UScriptStruct: use IsChildOf(BaseStruct) like UE does
-//   - UUserDefinedStruct:   accept if it carries the "SeinARTSComponent"
-//                           metadata tag (set by USeinComponentFactory).
+//   - UUserDefinedStruct:   accept all (see fallback note below).
 //
 class FSeinInstancedStructFilter : public IStructViewerFilter
 {
 public:
 	TWeakObjectPtr<const UScriptStruct> BaseStruct = nullptr;
 	bool bAllowBaseStruct = false;
+	/** When true, only SeinDeterministic-marked structs are accepted (both
+	 *  native USTRUCTs with the meta and UDSes tagged by USeinSimComponentFactory).
+	 *  Set via `meta = (SeinDeterministicOnly)` on the FInstancedStruct property. */
+	bool bRestrictToSeinDeterministic = false;
 
 	virtual bool IsStructAllowed(
 		const FStructViewerInitializationOptions& /*InInitOptions*/,
@@ -64,11 +68,15 @@ public:
 			return false;
 		}
 
+		// Sein-restricted path: gate by the SeinDeterministic UField meta.
+		// Covers both native USTRUCTs marked via `USTRUCT(meta = (SeinDeterministic))`
+		// and UDSes tagged by USeinSimComponentFactory on creation.
+		if (bRestrictToSeinDeterministic)
+		{
+			return USeinSimComponentFactory::IsSeinDeterministicStruct(InStruct);
+		}
+
 		// Blueprint-authored struct path: accept all UserDefinedStructs.
-		// Ideally we'd filter to only structs created by USeinComponentFactory
-		// (tagged with "SeinARTSComponent" metadata), but UDS metadata doesn't
-		// survive reliably across UDS recompiles — the tag check rejected every
-		// SC_* asset in practice. Showing all UDS is the user-approved fallback.
 		// C++ structs still go through the BaseStruct filter below.
 		if (InStruct->IsA<UUserDefinedStruct>())
 		{
@@ -240,19 +248,24 @@ const FSlateBrush* FSeinInstancedStructDetails::GetDisplayValueIcon() const
 TSharedRef<SWidget> FSeinInstancedStructDetails::GenerateStructPicker()
 {
 	static const FName NAME_ExcludeBaseStruct("ExcludeBaseStruct");
+	static const FName NAME_SeinDeterministicOnly("SeinDeterministicOnly");
 	const bool bExcludeBaseStruct =
 		StructProperty.IsValid() && StructProperty->HasMetaData(NAME_ExcludeBaseStruct);
+	const bool bRestrictToSeinDeterministic =
+		StructProperty.IsValid() && StructProperty->HasMetaData(NAME_SeinDeterministicOnly);
 
 	const UScriptStruct* BaseStruct = GetBaseStructFromMeta();
 
 	UE_LOG(LogSeinEditorPicker, Warning,
-		TEXT("GenerateStructPicker: BaseStruct=%s  ExcludeBaseStruct=%d"),
+		TEXT("GenerateStructPicker: BaseStruct=%s  ExcludeBaseStruct=%d  SeinDeterministicOnly=%d"),
 		BaseStruct ? *BaseStruct->GetName() : TEXT("<null>"),
-		bExcludeBaseStruct ? 1 : 0);
+		bExcludeBaseStruct ? 1 : 0,
+		bRestrictToSeinDeterministic ? 1 : 0);
 
 	TSharedRef<FSeinInstancedStructFilter> Filter = MakeShared<FSeinInstancedStructFilter>();
 	Filter->BaseStruct = BaseStruct;
 	Filter->bAllowBaseStruct = !bExcludeBaseStruct;
+	Filter->bRestrictToSeinDeterministic = bRestrictToSeinDeterministic;
 
 	FStructViewerInitializationOptions Options;
 	Options.bShowNoneOption = true;

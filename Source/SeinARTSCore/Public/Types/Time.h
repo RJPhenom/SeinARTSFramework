@@ -20,7 +20,7 @@
  * Uses integer tick counts instead of floating-point time for perfect determinism.
  * Time is derived from ticks * (1 / tick_rate).
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedTime
 {
 	GENERATED_BODY()

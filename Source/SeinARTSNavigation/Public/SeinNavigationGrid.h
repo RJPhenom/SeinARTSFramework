@@ -19,19 +19,19 @@ class SEINARTSNAVIGATION_API USeinNavigationGrid : public UObject
 
 public:
 	/** Number of cells along the X axis. */
-	UPROPERTY(BlueprintReadOnly, Category = "Grid")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Grid")
 	int32 GridWidth = 0;
 
 	/** Number of cells along the Y axis. */
-	UPROPERTY(BlueprintReadOnly, Category = "Grid")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Grid")
 	int32 GridHeight = 0;
 
 	/** World units per cell edge. */
-	UPROPERTY(BlueprintReadOnly, Category = "Grid")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Grid")
 	FFixedPoint CellSize;
 
 	/** World-space origin (bottom-left corner of grid). */
-	UPROPERTY(BlueprintReadOnly, Category = "Grid")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Grid")
 	FFixedVector GridOrigin;
 
 	/** Per-cell walkability / movement cost. 0 = blocked, 1-255 = walkable with cost. */
@@ -57,15 +57,15 @@ public:
 	// -------------------------------------------------------------------
 
 	/** Convert a world-space position to a grid cell coordinate. */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	FIntPoint WorldToGrid(const FFixedVector& WorldPos) const;
 
 	/** Convert a grid cell to its world-space origin (bottom-left corner). */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	FFixedVector GridToWorld(FIntPoint GridPos) const;
 
 	/** Convert a grid cell to the world-space center of that cell. */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	FFixedVector GridToWorldCenter(FIntPoint GridPos) const;
 
 	// -------------------------------------------------------------------
@@ -73,19 +73,19 @@ public:
 	// -------------------------------------------------------------------
 
 	/** True if the grid coordinate is within bounds. */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	bool IsValidCell(FIntPoint GridPos) const;
 
 	/** True if the cell is walkable (static cost > 0 AND not dynamically blocked). */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	bool IsWalkable(FIntPoint GridPos) const;
 
 	/** Return the static movement cost for a cell. 0 means blocked. */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	uint8 GetMovementCost(FIntPoint GridPos) const;
 
 	/** Return the terrain type tag for a cell. */
-	UFUNCTION(BlueprintPure, Category = "Grid")
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation|Grid")
 	FGameplayTag GetTerrainType(FIntPoint GridPos) const;
 
 	// -------------------------------------------------------------------

@@ -28,15 +28,15 @@ struct SEINARTSCORE_API FSeinEntity
 	GENERATED_BODY()
 
 	/** Unique identifier for this entity */
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	FSeinID ID;
 
 	/** Current transform in simulation space (fixed-point) */
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	FFixedTransform Transform;
 
 	/** Entity state flags (sim-side only — selection is render-side) */
-	UPROPERTY(BlueprintReadOnly, Category = "Entity")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	int32 Flags;
 
 	// State flag bits

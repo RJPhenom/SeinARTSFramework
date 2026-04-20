@@ -33,7 +33,7 @@ enum class ESeinModifierScope : uint8
  * A single attribute modifier. Targets a specific FFixedPoint field on a
  * component struct identified by UScriptStruct* and FName.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinModifier
 {
 	GENERATED_BODY()
@@ -41,27 +41,27 @@ struct SEINARTSCOREENTITY_API FSeinModifier
 	// --- Target ---
 
 	/** The component struct type that contains the field to modify. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Ability|Target")
 	TObjectPtr<UScriptStruct> TargetComponentType;
 
 	/** The FFixedPoint field name within the target component. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Ability|Target")
 	FName TargetFieldName;
 
 	// --- Modifier ---
 
 	/** How the value is applied (Add, Multiply, Override). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifier")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Modifier")
 	ESeinModifierOp Operation = ESeinModifierOp::Add;
 
 	/** The modifier value. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifier")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Modifier")
 	FFixedPoint Value;
 
 	// --- Scope ---
 
 	/** Whether this targets a single entity or an archetype. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifier")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Modifier")
 	ESeinModifierScope Scope = ESeinModifierScope::Instance;
 
 	// --- Source Tracking ---
@@ -77,7 +77,7 @@ struct SEINARTSCOREENTITY_API FSeinModifier
 	// --- Archetype Targeting ---
 
 	/** For archetype-scope modifiers: gameplay tag identifying the target archetype. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Target", meta = (EditCondition = "Scope == ESeinModifierScope::Archetype"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Ability|Target", meta = (EditCondition = "Scope == ESeinModifierScope::Archetype"))
 	FGameplayTag TargetArchetypeTag;
 
 	FSeinModifier() = default;

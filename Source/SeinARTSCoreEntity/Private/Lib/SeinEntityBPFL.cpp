@@ -7,12 +7,52 @@
 #include "Lib/SeinEntityBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
+#include "Data/SeinArchetypeDefinition.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
 
 USeinWorldSubsystem* USeinEntityBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject) return nullptr;
 	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull);
 	return World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+}
+
+namespace
+{
+	USeinArchetypeDefinition* ResolveArchetype(USeinWorldSubsystem* Subsystem, FSeinEntityHandle Handle)
+	{
+		if (!Subsystem) return nullptr;
+		TSubclassOf<ASeinActor> ActorClass = Subsystem->GetEntityActorClass(Handle);
+		if (!ActorClass) return nullptr;
+		const ASeinActor* CDO = GetDefault<ASeinActor>(ActorClass);
+		return CDO ? CDO->ArchetypeDefinition : nullptr;
+	}
+}
+
+USeinArchetypeDefinition* USeinEntityBPFL::SeinGetArchetypeDefinition(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	USeinArchetypeDefinition* Def = ResolveArchetype(Subsystem, EntityHandle);
+	if (!Def)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetArchetypeDefinition: entity %s invalid or has no archetype"), *EntityHandle.ToString());
+	}
+	return Def;
+}
+
+TArray<USeinArchetypeDefinition*> USeinEntityBPFL::SeinGetArchetypeDefinitionMany(const UObject* WorldContextObject, const TArray<FSeinEntityHandle>& EntityHandles)
+{
+	TArray<USeinArchetypeDefinition*> Result;
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	Result.Reserve(EntityHandles.Num());
+	for (const FSeinEntityHandle& Handle : EntityHandles)
+	{
+		USeinArchetypeDefinition* Def = ResolveArchetype(Subsystem, Handle);
+		if (!Def) { UE_LOG(LogSeinBPFL, Warning, TEXT("GetArchetypeDefinition (batch): null for entity %s"), *Handle.ToString()); }
+		Result.Add(Def);
+	}
+	return Result;
 }
 
 FSeinEntityHandle USeinEntityBPFL::SeinSpawnEntity(const UObject* WorldContextObject, TSubclassOf<ASeinActor> ActorClass, const FFixedTransform& SpawnTransform, FSeinPlayerID OwnerPlayerID)

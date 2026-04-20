@@ -28,15 +28,15 @@ class SEINARTSCOREENTITY_API USeinAttributeBPFL : public UBlueprintFunctionLibra
 public:
 
 	/** Resolve an attribute value (base + all active modifiers) for a given entity, component type, and field name */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Resolve Attribute"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Resolve Attribute"))
 	static FFixedPoint SeinResolveAttribute(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, UScriptStruct* ComponentType, FName FieldName);
 
 	/** Get the base value of an attribute (before modifiers) */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Get Base Attribute"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Base Attribute"))
 	static FFixedPoint SeinGetBaseAttribute(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, UScriptStruct* ComponentType, FName FieldName);
 
 	/** Set the base value of an attribute directly */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Set Base Attribute"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Attributes", meta = (WorldContext = "WorldContextObject", DisplayName = "Set Base Attribute"))
 	static void SeinSetBaseAttribute(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, UScriptStruct* ComponentType, FName FieldName, FFixedPoint Value);
 
 private:

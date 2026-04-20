@@ -11,7 +11,7 @@
 #include "SeinARTSEditorModule.h"
 #include "Actor/SeinActorBlueprint.h"
 #include "Abilities/SeinAbilityBlueprint.h"
-#include "Components/ActorComponents/SeinComponentBlueprint.h"
+#include "Effects/SeinEffectBlueprint.h"
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
@@ -49,19 +49,19 @@ uint32 FAssetTypeActions_SeinAbilityBlueprint::GetCategories()
 	return EAssetTypeCategories::Basic | FSeinARTSEditorModule::GetAssetCategoryBit();
 }
 
-// ==================== Component (SeinComponentBlueprint) ====================
+// ==================== Effect (SeinEffectBlueprint) ====================
 
-FText FAssetTypeActions_SeinComponentBlueprint::GetName() const
+FText FAssetTypeActions_SeinEffectBlueprint::GetName() const
 {
-	return LOCTEXT("SeinComponentBlueprintName", "SeinARTS Component");
+	return LOCTEXT("SeinEffectBlueprintName", "SeinARTS Effect");
 }
 
-UClass* FAssetTypeActions_SeinComponentBlueprint::GetSupportedClass() const
+UClass* FAssetTypeActions_SeinEffectBlueprint::GetSupportedClass() const
 {
-	return USeinComponentBlueprint::StaticClass();
+	return USeinEffectBlueprint::StaticClass();
 }
 
-uint32 FAssetTypeActions_SeinComponentBlueprint::GetCategories()
+uint32 FAssetTypeActions_SeinEffectBlueprint::GetCategories()
 {
 	return EAssetTypeCategories::Basic | FSeinARTSEditorModule::GetAssetCategoryBit();
 }

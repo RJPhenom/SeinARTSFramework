@@ -13,13 +13,13 @@
 #include "Components/SeinTagData.h"
 #include "SeinTagsComponent.generated.h"
 
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Sein Tags Component"))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Tags Component"))
 class SEINARTSCOREENTITY_API USeinTagsComponent : public USeinActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS", meta = (ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Tags", meta = (ShowOnlyInnerProperties))
 	FSeinTagData Data;
 
 	virtual FInstancedStruct GetSimComponent() const override

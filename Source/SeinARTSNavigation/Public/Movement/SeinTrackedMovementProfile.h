@@ -16,7 +16,7 @@ class SEINARTSNAVIGATION_API USeinTrackedMovementProfile : public USeinMovementP
 
 public:
 	/** Dot product threshold above which the vehicle accelerates forward instead of braking to pivot. */
-	UPROPERTY(EditAnywhere, Category = "Tracked")
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Movement|Tracked")
 	FFixedPoint AlignmentForwardThreshold = FFixedPoint::FromFloat(0.95f);
 
 	virtual bool AdvanceAlongPath(

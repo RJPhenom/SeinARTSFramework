@@ -35,52 +35,52 @@ enum class ESeinEffectStacking : uint8
  * Immutable definition of an effect. Designed to be authored in data assets
  * or Blueprints and shared across many active effect instances.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinEffectDefinition
 {
 	GENERATED_BODY()
 
 	/** Human-readable name. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect")
 	FName EffectName;
 
 	/** Gameplay tag that uniquely identifies this effect type. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Effect")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect")
 	FGameplayTag EffectTag;
 
 	/** Duration behaviour. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Duration")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Duration")
 	ESeinEffectDuration DurationType = ESeinEffectDuration::Instant;
 
 	/** Duration in simulation seconds (only used when DurationType == Timed). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Duration", meta = (EditCondition = "DurationType == ESeinEffectDuration::Timed"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Duration", meta = (EditCondition = "DurationType == ESeinEffectDuration::Timed"))
 	FFixedPoint Duration;
 
 	/** Modifiers applied while this effect is active. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Modifiers")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Modifier")
 	TArray<FSeinModifier> Modifiers;
 
 	/** Stacking policy when the same effect is applied again. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stacking")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Stacking")
 	ESeinEffectStacking StackingPolicy = ESeinEffectStacking::None;
 
 	/** Maximum number of stacks (only for StackCount / UniqueSource). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stacking", meta = (ClampMin = "1"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Stacking", meta = (ClampMin = "1"))
 	int32 MaxStacks = 1;
 
 	/** Whether this effect ticks periodically (e.g. damage-over-time). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Periodic")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Periodic")
 	bool bPeriodic = false;
 
 	/** Seconds between periodic ticks (only when bPeriodic is true). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Periodic", meta = (EditCondition = "bPeriodic"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect|Periodic", meta = (EditCondition = "bPeriodic"))
 	FFixedPoint Period;
 
 	/** Tags granted to the target entity while this effect is active. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tags")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Tags")
 	FGameplayTagContainer GrantedTags;
 
 	/** When this effect is applied, remove any active effects whose EffectTag matches these. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tags")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Tags")
 	FGameplayTagContainer RemoveEffectsWithTags;
 };

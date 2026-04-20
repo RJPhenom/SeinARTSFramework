@@ -9,11 +9,52 @@
 #include "Components/SeinAbilityData.h"
 #include "Abilities/SeinAbility.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
+
 USeinWorldSubsystem* USeinAbilityBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject) return nullptr;
 	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull);
 	return World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+}
+
+bool USeinAbilityBPFL::SeinGetAbilityData(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FSeinAbilityData& OutData)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetAbilityData: no SeinWorldSubsystem in this world context"));
+		return false;
+	}
+	const FSeinAbilityData* Data = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
+	if (!Data)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetAbilityData: entity %s invalid or has no FSeinAbilityData"), *EntityHandle.ToString());
+		return false;
+	}
+	OutData = *Data;
+	return true;
+}
+
+TArray<FSeinAbilityData> USeinAbilityBPFL::SeinGetAbilityDataMany(const UObject* WorldContextObject, const TArray<FSeinEntityHandle>& EntityHandles)
+{
+	TArray<FSeinAbilityData> Result;
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) return Result;
+
+	Result.Reserve(EntityHandles.Num());
+	for (const FSeinEntityHandle& Handle : EntityHandles)
+	{
+		if (const FSeinAbilityData* Data = Subsystem->GetComponent<FSeinAbilityData>(Handle))
+		{
+			Result.Add(*Data);
+		}
+		else
+		{
+			UE_LOG(LogSeinBPFL, Warning, TEXT("GetAbilityData (batch): skipping entity %s (invalid or no FSeinAbilityData)"), *Handle.ToString());
+		}
+	}
+	return Result;
 }
 
 void USeinAbilityBPFL::SeinActivateAbility(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag, FSeinEntityHandle TargetEntity, FFixedVector TargetLocation)

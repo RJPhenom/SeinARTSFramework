@@ -19,7 +19,7 @@
  * This component lives entirely in the render layer. The simulation
  * does not know about selection.
  */
-UCLASS(Blueprintable, ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent))
+UCLASS(Blueprintable, ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Selection Component"))
 class SEINARTSFRAMEWORK_API USeinSelectionComponent : public UActorComponent
 {
 	GENERATED_BODY()

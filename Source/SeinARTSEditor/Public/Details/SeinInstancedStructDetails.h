@@ -2,8 +2,7 @@
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinInstancedStructDetails.h
  * @brief   Custom property-type customization for FInstancedStruct that allows
- *          Blueprint-authored UserDefinedStructs to appear in pickers filtered
- *          by BaseStruct metadata.
+ *          UserDefinedStructs to appear in pickers filtered by BaseStruct metadata.
  *
  *          UE's default FInstancedStructDetails uses SInstancedStructPicker,
  *          which hardcodes `bAllowUserDefinedStructs = (BaseStruct == null)`.
@@ -12,9 +11,9 @@
  *
  *          This subclass keeps UE's child-row rendering intact and only
  *          replaces the header's picker with one that always sets
- *          `bAllowUserDefinedStructs = true`. BP-made Sein components (with
- *          FSeinComponent as their super via USeinComponentFactory) then appear
- *          alongside the native C++ components in the picker.
+ *          `bAllowUserDefinedStructs = true` so designer-authored UDSes
+ *          (including Sein UDS components created by USeinSimComponentFactory)
+ *          appear alongside the native C++ structs in the picker.
  */
 
 #pragma once

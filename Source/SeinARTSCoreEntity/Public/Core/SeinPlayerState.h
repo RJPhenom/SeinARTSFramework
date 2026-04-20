@@ -25,40 +25,40 @@ struct SEINARTSCOREENTITY_API FSeinPlayerState
 	GENERATED_BODY()
 
 	/** Unique player identifier */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	FSeinPlayerID PlayerID;
 
 	/** Faction this player is playing as */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	FSeinFactionID FactionID;
 
 	/** Team index for alliance grouping (0 = no team / FFA) */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	uint8 TeamID = 0;
 
 	/**
 	 * Named resources (designer-defined: "Manpower", "Fuel", etc.).
 	 * Keys are resource names, values are fixed-point amounts.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Economy")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy")
 	TMap<FName, FFixedPoint> Resources;
 
 	/** Whether this player has been eliminated from the match */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	bool bEliminated = false;
 
 	/** Whether this player has signalled ready (pre-game) */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	bool bReady = false;
 
 	// --- Tech / Research ---
 
 	/** Tech tags this player has unlocked through research. */
-	UPROPERTY(BlueprintReadOnly, Category = "Tech")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Tech")
 	FGameplayTagContainer UnlockedTechTags;
 
 	/** Per-archetype modifiers granted by completed research (e.g., "-10% cost for Infantry"). */
-	UPROPERTY(BlueprintReadOnly, Category = "Tech")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Tech")
 	TArray<FSeinModifier> ArchetypeModifiers;
 
 	FSeinPlayerState() = default;

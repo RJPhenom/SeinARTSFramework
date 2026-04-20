@@ -41,7 +41,7 @@ public:
 	/** Move the ability's owning entity to Destination using its movement profile. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Ability|Movement",
 	          meta = (BlueprintInternalUseOnly = "true", DefaultToSelf = "Ability",
-	                  DisplayName = "Sein Move To"))
+	                  DisplayName = "Move To"))
 	static USeinMoveToProxy* SeinMoveTo(
 		USeinAbility* Ability,
 		FFixedVector Destination,

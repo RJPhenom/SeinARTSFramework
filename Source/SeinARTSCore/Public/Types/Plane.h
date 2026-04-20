@@ -22,7 +22,7 @@
  * Defined by a point on the plane and a normal vector.
  * Plane equation: Dot(Normal, Point) = D
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedPlane
 {
 	GENERATED_BODY()

@@ -35,7 +35,7 @@ public:
 	 * Higher tick rates = smoother simulation but higher CPU cost.
 	 * Default: 30 ticks per second.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Simulation", meta = (ClampMin = "1", ClampMax = "120", UIMin = "10", UIMax = "60"))
+	UPROPERTY(Config, EditAnywhere, Category = "SeinARTS|Simulation", meta = (ClampMin = "1", ClampMax = "120", UIMin = "10", UIMax = "60"))
 	int32 SimulationTickRate;
 
 	/**
@@ -43,7 +43,7 @@ public:
 	 * Prevents "spiral of death" when frame rate drops below tick rate.
 	 * Default: 5 ticks per frame maximum.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Simulation", meta = (ClampMin = "1", ClampMax = "30", UIMin = "1", UIMax = "10"))
+	UPROPERTY(Config, EditAnywhere, Category = "SeinARTS|Simulation", meta = (ClampMin = "1", ClampMax = "30", UIMin = "1", UIMax = "10"))
 	int32 MaxTicksPerFrame;
 
 	// Editor Settings — Content Browser Factory Visibility
@@ -61,6 +61,10 @@ public:
 	/** If true, the Component factory appears in the default (Basic) Content Browser category. */
 	UPROPERTY(Config, EditAnywhere, Category = "Content Browser|Factory Visibility")
 	bool bShowComponentInBasicCategory;
+
+	/** If true, the Effect factory appears in the default (Basic) Content Browser category. */
+	UPROPERTY(Config, EditAnywhere, Category = "Content Browser|Factory Visibility")
+	bool bShowEffectInBasicCategory;
 
 	/** If true, the Widget factory appears in the default (Basic) Content Browser category. */
 	UPROPERTY(Config, EditAnywhere, Category = "Content Browser|Factory Visibility")

@@ -34,34 +34,34 @@ public:
 	// ====================================================================================================
 
 	/** Move an entity one tick in a direction at a given speed */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Move In Direction"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Move In Direction"))
 	static void SeinMoveInDirection(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FFixedVector Direction, FFixedPoint Speed, FFixedPoint DeltaTime);
 
 	/** Rotate an entity toward a target direction at a given turn rate. Returns true when facing target. */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Rotate Toward"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Rotate Toward"))
 	static bool SeinRotateToward(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FFixedVector TargetDirection, FFixedPoint TurnRate, FFixedPoint DeltaTime);
 
 	/** Teleport an entity to a new location instantly */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Teleport Entity"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Steering", meta = (WorldContext = "WorldContextObject", DisplayName = "Teleport Entity"))
 	static void SeinTeleportEntity(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FFixedVector NewLocation);
 
 	/** Apply turn rate limiting to a direction change (for wheeled vehicles) */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Sein Apply Turn Rate Limit"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Apply Turn Rate Limit"))
 	static FFixedVector SeinApplyTurnRateLimit(FFixedVector CurrentDirection, FFixedVector DesiredDirection, FFixedPoint TurnRate, FFixedPoint DeltaTime);
 
 	// Flocking Forces
 	// ====================================================================================================
 
 	/** Calculate separation force to avoid overlapping nearby entities */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Sein Get Separation Force"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Get Separation Force"))
 	static FFixedVector SeinGetSeparationForce(FFixedVector MyPosition, const TArray<FFixedVector>& NearbyPositions, FFixedPoint Radius);
 
 	/** Calculate cohesion force to stay near a group center */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Sein Get Cohesion Force"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Get Cohesion Force"))
 	static FFixedVector SeinGetCohesionForce(FFixedVector MyPosition, const TArray<FFixedVector>& GroupPositions);
 
 	/** Calculate alignment force to match average heading of nearby entities */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Sein Get Alignment Force"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Steering", meta = (DisplayName = "Get Alignment Force"))
 	static FFixedVector SeinGetAlignmentForce(FFixedVector MyHeading, const TArray<FFixedVector>& NearbyHeadings);
 
 private:

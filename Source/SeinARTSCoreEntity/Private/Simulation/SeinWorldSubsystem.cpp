@@ -88,6 +88,8 @@ void USeinWorldSubsystem::Deinitialize()
 	Systems.Empty();
 	PendingCommands.Clear();
 	PendingDestroy.Empty();
+	EntityTagIndex.Empty();
+	NamedEntityRegistry.Empty();
 
 	Super::Deinitialize();
 
@@ -475,7 +477,7 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	// Walk the Blueprint CDO's USeinActorComponent subobjects and inject each
 	// one's sim payload into deterministic storage. Designers author sim data
 	// via typed wrapper ACs (USeinAbilitiesComponent, USeinMovementComponent,
-	// ...) or USeinDynamicComponent BP subclasses.
+	// ...) or via USeinStructComponent + a designer-authored UDS (§2).
 	//
 	// NB: AActor::GetComponents() on a CDO only sees native CreateDefaultSubobject
 	// components — BP-editor-added components live on the SCS. The helper below
@@ -500,14 +502,14 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	InitializeEntityAbilities(Handle);
 
 	// Auto-tag entity with its archetype tag (for archetype-scope modifier matching)
-	if (ArchetypeDef->ArchetypeTag.IsValid())
+	// then seed refcounts + the global tag index from the full BaseTags set.
+	if (FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle))
 	{
-		FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
-		if (TagComp)
+		if (ArchetypeDef->ArchetypeTag.IsValid())
 		{
 			TagComp->BaseTags.AddTag(ArchetypeDef->ArchetypeTag);
-			TagComp->RebuildCombinedTags();
 		}
+		SeedEntityTagsFromBase(Handle);
 	}
 
 	// Fire spawn visual event
@@ -546,6 +548,11 @@ void USeinWorldSubsystem::ProcessDeferredDestroys()
 		{
 			LatentActionManager->CancelActionsForEntity(Handle);
 		}
+
+		// Clear the entity from the global tag index and the named registry
+		// before component storages are freed (UnindexEntityTags reads FSeinTagData).
+		UnindexEntityTags(Handle);
+		UnregisterHandleFromNames(Handle);
 
 		// Remove all components
 		for (auto& Pair : ComponentStorages)
@@ -650,6 +657,130 @@ void USeinWorldSubsystem::RegisterFaction(USeinFaction* Faction)
 	if (!Faction) return;
 	Factions.Add(Faction->FactionID, Faction);
 	UE_LOG(LogSeinSim, Log, TEXT("Registered faction: %s"), *Faction->FactionName.ToString());
+}
+
+// ==================== Tags ====================
+
+void USeinWorldSubsystem::GrantTag(FSeinEntityHandle Handle, FGameplayTag Tag)
+{
+	if (!Tag.IsValid()) return;
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return;
+
+	if (TagComp->GrantTagInternal(Tag))
+	{
+		EntityTagIndex.FindOrAdd(Tag).Add(Handle);
+	}
+}
+
+void USeinWorldSubsystem::UngrantTag(FSeinEntityHandle Handle, FGameplayTag Tag)
+{
+	if (!Tag.IsValid()) return;
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return;
+
+	if (TagComp->UngrantTagInternal(Tag))
+	{
+		if (TArray<FSeinEntityHandle>* Bucket = EntityTagIndex.Find(Tag))
+		{
+			Bucket->RemoveSingle(Handle);
+			if (Bucket->Num() == 0)
+			{
+				EntityTagIndex.Remove(Tag);
+			}
+		}
+	}
+}
+
+bool USeinWorldSubsystem::AddBaseTag(FSeinEntityHandle Handle, FGameplayTag Tag)
+{
+	if (!Tag.IsValid()) return false;
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return false;
+	if (TagComp->BaseTags.HasTagExact(Tag)) return false;
+
+	TagComp->BaseTags.AddTag(Tag);
+	GrantTag(Handle, Tag);
+	return true;
+}
+
+bool USeinWorldSubsystem::RemoveBaseTag(FSeinEntityHandle Handle, FGameplayTag Tag)
+{
+	if (!Tag.IsValid()) return false;
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return false;
+	if (!TagComp->BaseTags.HasTagExact(Tag)) return false;
+
+	TagComp->BaseTags.RemoveTag(Tag);
+	UngrantTag(Handle, Tag);
+	return true;
+}
+
+void USeinWorldSubsystem::ReplaceBaseTags(FSeinEntityHandle Handle, const FGameplayTagContainer& NewBaseTags)
+{
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return;
+
+	// Diff old vs new. Touch refcounts only for tags that actually changed
+	// membership in BaseTags — tags that persist keep their existing refcount.
+	FGameplayTagContainer ToUngrant;
+	for (const FGameplayTag& Existing : TagComp->BaseTags)
+	{
+		if (!NewBaseTags.HasTagExact(Existing))
+		{
+			ToUngrant.AddTag(Existing);
+		}
+	}
+	FGameplayTagContainer ToGrant;
+	for (const FGameplayTag& Incoming : NewBaseTags)
+	{
+		if (!TagComp->BaseTags.HasTagExact(Incoming))
+		{
+			ToGrant.AddTag(Incoming);
+		}
+	}
+
+	TagComp->BaseTags = NewBaseTags;
+	for (const FGameplayTag& Tag : ToUngrant) UngrantTag(Handle, Tag);
+	for (const FGameplayTag& Tag : ToGrant)   GrantTag(Handle, Tag);
+}
+
+TArray<FSeinEntityHandle> USeinWorldSubsystem::GetEntitiesWithTag(FGameplayTag Tag) const
+{
+	if (const TArray<FSeinEntityHandle>* Bucket = EntityTagIndex.Find(Tag))
+	{
+		return *Bucket;
+	}
+	return {};
+}
+
+const TArray<FSeinEntityHandle>* USeinWorldSubsystem::FindEntitiesWithTag(FGameplayTag Tag) const
+{
+	return EntityTagIndex.Find(Tag);
+}
+
+// ==================== Named Entity Registry ====================
+
+void USeinWorldSubsystem::RegisterNamedEntity(FName Name, FSeinEntityHandle Handle)
+{
+	if (Name.IsNone()) return;
+	if (!EntityPool.IsValid(Handle)) return;
+	NamedEntityRegistry.Add(Name, Handle);
+}
+
+FSeinEntityHandle USeinWorldSubsystem::LookupNamedEntity(FName Name) const
+{
+	if (Name.IsNone()) return FSeinEntityHandle::Invalid();
+	if (const FSeinEntityHandle* Found = NamedEntityRegistry.Find(Name))
+	{
+		return *Found;
+	}
+	return FSeinEntityHandle::Invalid();
+}
+
+void USeinWorldSubsystem::UnregisterNamedEntity(FName Name)
+{
+	NamedEntityRegistry.Remove(Name);
 }
 
 // ==================== Attribute Resolution ====================
@@ -850,6 +981,53 @@ void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 		{
 			AbilityInstance->ActivateAbility(Handle, FFixedVector::ZeroVector);
 			AbilityComp->ActivePassives.Add(AbilityInstance);
+		}
+	}
+}
+
+// ==================== Tag seeding / unindexing ====================
+
+void USeinWorldSubsystem::SeedEntityTagsFromBase(FSeinEntityHandle Handle)
+{
+	FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return;
+
+	// Snapshot first — GrantTag doesn't touch BaseTags, but a stable iteration
+	// source is cheap and makes the intent obvious.
+	TArray<FGameplayTag> SeedTags;
+	TagComp->BaseTags.GetGameplayTagArray(SeedTags);
+	for (const FGameplayTag& Tag : SeedTags)
+	{
+		GrantTag(Handle, Tag);
+	}
+}
+
+void USeinWorldSubsystem::UnindexEntityTags(FSeinEntityHandle Handle)
+{
+	const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle);
+	if (!TagComp) return;
+
+	for (const TPair<FGameplayTag, int32>& Pair : TagComp->TagRefCounts)
+	{
+		if (Pair.Value <= 0) continue;
+		if (TArray<FSeinEntityHandle>* Bucket = EntityTagIndex.Find(Pair.Key))
+		{
+			Bucket->RemoveSingle(Handle);
+			if (Bucket->Num() == 0)
+			{
+				EntityTagIndex.Remove(Pair.Key);
+			}
+		}
+	}
+}
+
+void USeinWorldSubsystem::UnregisterHandleFromNames(FSeinEntityHandle Handle)
+{
+	for (auto It = NamedEntityRegistry.CreateIterator(); It; ++It)
+	{
+		if (It.Value() == Handle)
+		{
+			It.RemoveCurrent();
 		}
 	}
 }

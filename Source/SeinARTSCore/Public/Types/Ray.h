@@ -22,7 +22,7 @@
  * Represents a ray defined by an origin point and a direction vector.
  * Parametric form: Point(t) = Origin + Direction * t, where t >= 0
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedRay
 {
 	GENERATED_BODY()

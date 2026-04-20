@@ -18,6 +18,7 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	, bShowUnitInBasicCategory(true)
 	, bShowAbilityInBasicCategory(true)
 	, bShowComponentInBasicCategory(false)
+	, bShowEffectInBasicCategory(true)
 	, bShowWidgetInBasicCategory(false)
 #endif
 {

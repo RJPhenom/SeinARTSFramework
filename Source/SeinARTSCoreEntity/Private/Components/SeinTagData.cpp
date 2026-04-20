@@ -1,8 +1,7 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinTagData.cpp
- * @brief   FSeinTagData sim-payload implementation — combined-tag rebuild and
- *          granted-tag mutation helpers.
+ * @brief   Refcount-based tag presence tracking for FSeinTagData.
  */
 
 #include "Components/SeinTagData.h"
@@ -10,8 +9,13 @@
 void FSeinTagData::RebuildCombinedTags()
 {
 	CombinedTags.Reset();
-	CombinedTags.AppendTags(BaseTags);
-	CombinedTags.AppendTags(GrantedTags);
+	for (const TPair<FGameplayTag, int32>& Pair : TagRefCounts)
+	{
+		if (Pair.Value > 0)
+		{
+			CombinedTags.AddTag(Pair.Key);
+		}
+	}
 }
 
 bool FSeinTagData::HasTag(const FGameplayTag& Tag) const
@@ -29,20 +33,42 @@ bool FSeinTagData::HasAllTags(const FGameplayTagContainer& Tags) const
 	return CombinedTags.HasAll(Tags);
 }
 
-void FSeinTagData::AddGrantedTag(const FGameplayTag& Tag)
+bool FSeinTagData::GrantTagInternal(const FGameplayTag& Tag)
 {
-	if (Tag.IsValid())
+	if (!Tag.IsValid())
 	{
-		GrantedTags.AddTag(Tag);
-		RebuildCombinedTags();
+		return false;
 	}
+
+	int32& RefCount = TagRefCounts.FindOrAdd(Tag, 0);
+	++RefCount;
+	if (RefCount == 1)
+	{
+		CombinedTags.AddTag(Tag);
+		return true;
+	}
+	return false;
 }
 
-void FSeinTagData::RemoveGrantedTag(const FGameplayTag& Tag)
+bool FSeinTagData::UngrantTagInternal(const FGameplayTag& Tag)
 {
-	if (Tag.IsValid())
+	if (!Tag.IsValid())
 	{
-		GrantedTags.RemoveTag(Tag);
-		RebuildCombinedTags();
+		return false;
 	}
+
+	int32* RefCount = TagRefCounts.Find(Tag);
+	if (!RefCount || *RefCount <= 0)
+	{
+		return false;
+	}
+
+	--(*RefCount);
+	if (*RefCount == 0)
+	{
+		TagRefCounts.Remove(Tag);
+		CombinedTags.RemoveTag(Tag);
+		return true;
+	}
+	return false;
 }

@@ -17,6 +17,7 @@
 #include "Core/SeinEntityHandle.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
+#include "Components/SeinAbilityData.h"
 #include "SeinAbilityBPFL.generated.h"
 
 class USeinWorldSubsystem;
@@ -28,24 +29,40 @@ class SEINARTSCOREENTITY_API USeinAbilityBPFL : public UBlueprintFunctionLibrary
 
 public:
 
+	// Read Component Data
+	// ====================================================================================================
+
+	/** Read FSeinAbilityData for an entity. Returns false and logs a warning if the handle
+	 *  is invalid or the entity lacks the component; OutData is untouched on failure. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Ability Data"))
+	static bool SeinGetAbilityData(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FSeinAbilityData& OutData);
+
+	/** Batch read FSeinAbilityData. Invalid/missing entities are skipped (warning logged); the
+	 *  returned array may be shorter than the input. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Ability Data"))
+	static TArray<FSeinAbilityData> SeinGetAbilityDataMany(const UObject* WorldContextObject, const TArray<FSeinEntityHandle>& EntityHandles);
+
+	// Command
+	// ====================================================================================================
+
 	/** Activate an ability on an entity by tag, with optional target entity and location */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Abilities", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Activate Ability"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Activate Ability"))
 	static void SeinActivateAbility(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag, FSeinEntityHandle TargetEntity, FFixedVector TargetLocation);
 
 	/** Cancel the currently active ability on an entity */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Abilities", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Cancel Ability"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Cancel Ability"))
 	static void SeinCancelAbility(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle);
 
 	/** Check whether a specific ability is on cooldown */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Abilities", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Is Ability On Cooldown"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Is Ability On Cooldown"))
 	static bool SeinIsAbilityOnCooldown(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag);
 
 	/** Get the remaining cooldown time for a specific ability */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Abilities", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Get Cooldown Remaining"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Cooldown Remaining"))
 	static FFixedPoint SeinGetCooldownRemaining(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag);
 
 	/** Check whether an entity has an ability with the given tag */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Abilities", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Has Ability"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Has Ability"))
 	static bool SeinHasAbility(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag);
 
 private:

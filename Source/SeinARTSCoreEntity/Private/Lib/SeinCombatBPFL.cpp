@@ -11,11 +11,52 @@
 #include "Events/SeinVisualEvent.h"
 #include "Math/MathLib.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
+
 USeinWorldSubsystem* USeinCombatBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject) return nullptr;
 	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull);
 	return World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+}
+
+bool USeinCombatBPFL::SeinGetCombatData(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FSeinCombatData& OutData)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetCombatData: no SeinWorldSubsystem in this world context"));
+		return false;
+	}
+	const FSeinCombatData* Data = Subsystem->GetComponent<FSeinCombatData>(EntityHandle);
+	if (!Data)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetCombatData: entity %s invalid or has no FSeinCombatData"), *EntityHandle.ToString());
+		return false;
+	}
+	OutData = *Data;
+	return true;
+}
+
+TArray<FSeinCombatData> USeinCombatBPFL::SeinGetCombatDataMany(const UObject* WorldContextObject, const TArray<FSeinEntityHandle>& EntityHandles)
+{
+	TArray<FSeinCombatData> Result;
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) return Result;
+
+	Result.Reserve(EntityHandles.Num());
+	for (const FSeinEntityHandle& Handle : EntityHandles)
+	{
+		if (const FSeinCombatData* Data = Subsystem->GetComponent<FSeinCombatData>(Handle))
+		{
+			Result.Add(*Data);
+		}
+		else
+		{
+			UE_LOG(LogSeinBPFL, Warning, TEXT("GetCombatData (batch): skipping entity %s (invalid or no FSeinCombatData)"), *Handle.ToString());
+		}
+	}
+	return Result;
 }
 
 void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FFixedPoint Damage, FSeinEntityHandle SourceHandle, FGameplayTag DamageTag)

@@ -12,13 +12,13 @@
 #include "Components/SeinActiveEffectsData.h"
 #include "SeinActiveEffectsComponent.generated.h"
 
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Sein Active Effects Component"))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Active Effects Component"))
 class SEINARTSCOREENTITY_API USeinActiveEffectsComponent : public USeinActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS", meta = (ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Effect", meta = (ShowOnlyInnerProperties))
 	FSeinActiveEffectsData Data;
 
 	virtual FInstancedStruct GetSimComponent() const override

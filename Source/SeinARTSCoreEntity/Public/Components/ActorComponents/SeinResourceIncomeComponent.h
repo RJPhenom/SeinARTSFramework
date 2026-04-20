@@ -12,13 +12,13 @@
 #include "Components/SeinResourceIncomeData.h"
 #include "SeinResourceIncomeComponent.generated.h"
 
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Sein Resource Income Component"))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Resource Income Component"))
 class SEINARTSCOREENTITY_API USeinResourceIncomeComponent : public USeinActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS", meta = (ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy", meta = (ShowOnlyInnerProperties))
 	FSeinResourceIncomeData Data;
 
 	virtual FInstancedStruct GetSimComponent() const override

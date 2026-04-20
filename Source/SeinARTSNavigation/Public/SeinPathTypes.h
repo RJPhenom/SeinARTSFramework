@@ -16,23 +16,23 @@ struct SEINARTSNAVIGATION_API FSeinPathRequest
 	GENERATED_BODY()
 
 	/** World-space start position. */
-	UPROPERTY(BlueprintReadWrite, Category = "Path")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	FFixedVector Start;
 
 	/** World-space destination position. */
-	UPROPERTY(BlueprintReadWrite, Category = "Path")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	FFixedVector End;
 
 	/** Entity that requested this path. */
-	UPROPERTY(BlueprintReadWrite, Category = "Path")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	FSeinEntityHandle Requester;
 
 	/** Maximum walkability cost this unit can traverse (1-255). */
-	UPROPERTY(BlueprintReadWrite, Category = "Path")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	uint8 MaxMovementCost = 255;
 
 	/** Terrain tags that this unit treats as impassable. */
-	UPROPERTY(BlueprintReadWrite, Category = "Path")
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	FGameplayTagContainer BlockedTerrainTags;
 };
 
@@ -45,19 +45,19 @@ struct SEINARTSNAVIGATION_API FSeinPath
 	GENERATED_BODY()
 
 	/** Ordered list of world-space waypoints from start to end. */
-	UPROPERTY(BlueprintReadOnly, Category = "Path")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Path")
 	TArray<FFixedVector> Waypoints;
 
 	/** Accumulated movement cost along the path (integer-scaled). */
-	UPROPERTY(BlueprintReadOnly, Category = "Path")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Path")
 	FFixedPoint TotalCost;
 
 	/** True if a valid path was found. */
-	UPROPERTY(BlueprintReadOnly, Category = "Path")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Path")
 	bool bIsValid = false;
 
 	/** True if the path does not reach the exact destination (partial path). */
-	UPROPERTY(BlueprintReadOnly, Category = "Path")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Navigation|Path")
 	bool bIsPartial = false;
 
 	/** Remove all waypoints and reset state. */

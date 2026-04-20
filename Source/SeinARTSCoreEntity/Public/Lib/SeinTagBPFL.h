@@ -1,11 +1,13 @@
 /**
- * SeinARTS Framework 
+ * SeinARTS Framework
  * Copyright (c) 2026 Phenom Studios, Inc.
  *
  * @file:		SeinTagBPFL.h
  * @date:		3/27/2026
  * @author:		RJ Macklem
- * @brief:		Blueprint Function Library for gameplay tag queries on entities.
+ * @brief:		Blueprint Function Library for gameplay tag queries and mutation
+ *              on entities. All mutations route through USeinWorldSubsystem so
+ *              refcounts and the global EntityTagIndex stay consistent.
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
@@ -26,25 +28,42 @@ class SEINARTSCOREENTITY_API USeinTagBPFL : public UBlueprintFunctionLibrary
 
 public:
 
-	/** Check whether an entity has a specific gameplay tag */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Has Tag"))
+	// ─── Queries (read CombinedTags — refcount > 0 projection) ───
+
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Has Tag"))
 	static bool SeinHasTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
 
-	/** Check whether an entity has any of the specified tags */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Has Any Tag"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Has Any Tag"))
 	static bool SeinHasAnyTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTagContainer Tags);
 
-	/** Check whether an entity has all of the specified tags */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Has All Tags"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Has All Tags"))
 	static bool SeinHasAllTags(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTagContainer Tags);
 
-	/** Add a tag to an entity's base tags */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Add Tag"))
-	static void SeinAddTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
+	// ─── BaseTags mutations (persistent authoring surface) ───
+	//
+	// BaseTags is runtime-mutable per DESIGN.md §2. Adding to BaseTags both
+	// records the tag on the archetype-authoring container AND grants a refcount
+	// so the tag enters CombinedTags / EntityTagIndex.
 
-	/** Remove a tag from an entity's base tags */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Remove Tag"))
-	static void SeinRemoveTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Add Base Tag"))
+	static bool SeinAddBaseTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
+
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Remove Base Tag"))
+	static bool SeinRemoveBaseTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
+
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Replace Base Tags"))
+	static void SeinReplaceBaseTags(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTagContainer NewBaseTags);
+
+	// ─── Transient grants (refcount-only, no BaseTags mutation) ───
+	//
+	// Use these for ability-, effect-, or component-granted tags that should
+	// not persist on the archetype-authoring BaseTags container.
+
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Grant Tag"))
+	static void SeinGrantTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
+
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags", meta = (WorldContext = "WorldContextObject", DisplayName = "Ungrant Tag"))
+	static void SeinUngrantTag(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag Tag);
 
 private:
 	static USeinWorldSubsystem* GetWorldSubsystem(const UObject* WorldContextObject);

@@ -8,8 +8,8 @@
  *           injects the returned FInstancedStruct into deterministic sim storage.
  *
  *           Typed wrappers (USeinMovementComponent, etc.) hold their sim
- *           payload as an inline USTRUCT. USeinDynamicComponent lets
- *           designers define new component types purely in Blueprints.
+ *           payload as an inline USTRUCT. USeinStructComponent hosts
+ *           designer-authored UDS payloads via the asset broker (see §2).
  */
 
 #pragma once

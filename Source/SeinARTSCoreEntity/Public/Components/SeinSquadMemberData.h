@@ -17,21 +17,21 @@
  * Placed on each individual entity that belongs to a squad.
  * Links back to the owning squad entity and stores formation data.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinSquadMemberData : public FSeinComponent
 {
 	GENERATED_BODY()
 
 	/** Handle to the squad entity this member belongs to */
-	UPROPERTY(BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Squad")
 	FSeinEntityHandle SquadEntity;
 
 	/** Whether this member is the current leader of the squad */
-	UPROPERTY(BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Squad")
 	bool bIsLeader = false;
 
 	/** Offset from the squad center for formation positioning */
-	UPROPERTY(BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Squad")
 	FFixedVector FormationOffset;
 };
 

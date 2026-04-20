@@ -28,23 +28,23 @@ class SEINARTSCOREENTITY_API USeinEffectBPFL : public UBlueprintFunctionLibrary
 public:
 
 	/** Apply an effect to a target entity. Returns the effect instance ID for later removal. */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effects", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Apply Effect"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effect", meta = (WorldContext = "WorldContextObject", DisplayName = "Apply Effect"))
 	static int32 SeinApplyEffect(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, const FSeinEffectDefinition& EffectDefinition, FSeinEntityHandle SourceHandle);
 
 	/** Remove a specific effect instance by its ID */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effects", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Remove Effect"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effect", meta = (WorldContext = "WorldContextObject", DisplayName = "Remove Effect"))
 	static void SeinRemoveEffect(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, int32 EffectInstanceID);
 
 	/** Remove all effects on an entity that match a given tag */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effects", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Remove Effects With Tag"))
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Effect", meta = (WorldContext = "WorldContextObject", DisplayName = "Remove Effects With Tag"))
 	static void SeinRemoveEffectsWithTag(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FGameplayTag Tag);
 
 	/** Check whether an entity has any active effect with a given tag */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Effects", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Has Effect With Tag"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Effect", meta = (WorldContext = "WorldContextObject", DisplayName = "Has Effect With Tag"))
 	static bool SeinHasEffectWithTag(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FGameplayTag Tag);
 
 	/** Get the current stack count of a named effect on an entity */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Effects", meta = (WorldContext = "WorldContextObject", DisplayName = "Sein Get Effect Stacks"))
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Effect", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Effect Stacks"))
 	static int32 SeinGetEffectStacks(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FName EffectName);
 
 private:

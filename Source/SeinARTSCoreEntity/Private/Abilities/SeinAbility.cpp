@@ -1,7 +1,7 @@
 /**
- * SeinARTS Framework 
+ * SeinARTS Framework
  * Copyright (c) 2026 Phenom Studios, Inc.
- * 
+ *
  * @file:		SeinAbility.cpp
  * @date:		4/3/2026
  * @author:		RJ Macklem
@@ -12,7 +12,6 @@
 #include "Abilities/SeinAbility.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Abilities/SeinLatentActionManager.h"
-#include "Components/SeinTagData.h"
 
 void USeinAbility::InitializeAbility(FSeinEntityHandle Owner, USeinWorldSubsystem* Subsystem)
 {
@@ -20,7 +19,6 @@ void USeinAbility::InitializeAbility(FSeinEntityHandle Owner, USeinWorldSubsyste
 	WorldSubsystem = Subsystem;
 	CooldownRemaining = FFixedPoint::Zero;
 	bIsActive = false;
-	AppliedOwnedTags.Reset();
 }
 
 void USeinAbility::ActivateAbility(FSeinEntityHandle Target, FFixedVector Location)
@@ -30,27 +28,14 @@ void USeinAbility::ActivateAbility(FSeinEntityHandle Target, FFixedVector Locati
 	bIsActive = true;
 	CooldownRemaining = Cooldown;
 
-	// Apply OwnedTags to the entity's runtime tag set, but only the ones not
-	// already present — we record the diff so deactivate strips only what we
-	// actually added. Anything already granted by the archetype or another
-	// source is left untouched.
-	AppliedOwnedTags.Reset();
-	if (WorldSubsystem && !OwnedTags.IsEmpty())
+	// Grant each OwnedTag. Refcounting (DESIGN.md §2) means overlapping grants
+	// from BaseTags, other abilities, or effects stay present — DeactivateAbility
+	// just releases our refcount.
+	if (WorldSubsystem)
 	{
-		if (FSeinTagData* TagComp = WorldSubsystem->GetComponent<FSeinTagData>(OwnerEntity))
+		for (const FGameplayTag& Tag : OwnedTags)
 		{
-			for (const FGameplayTag& Tag : OwnedTags)
-			{
-				if (Tag.IsValid() && !TagComp->CombinedTags.HasTag(Tag))
-				{
-					AppliedOwnedTags.AddTag(Tag);
-					TagComp->GrantedTags.AddTag(Tag);
-				}
-			}
-			if (!AppliedOwnedTags.IsEmpty())
-			{
-				TagComp->RebuildCombinedTags();
-			}
+			WorldSubsystem->GrantTag(OwnerEntity, Tag);
 		}
 	}
 
@@ -82,19 +67,12 @@ void USeinAbility::DeactivateAbility(bool bCancelled)
 		WorldSubsystem->LatentActionManager->CancelActionsForAbility(this);
 	}
 
-	// Strip only the OwnedTags we actually granted on activate — preserves
-	// tags that were already present (archetype-granted, other ability, etc.).
-	if (WorldSubsystem && !AppliedOwnedTags.IsEmpty())
+	if (WorldSubsystem)
 	{
-		if (FSeinTagData* TagComp = WorldSubsystem->GetComponent<FSeinTagData>(OwnerEntity))
+		for (const FGameplayTag& Tag : OwnedTags)
 		{
-			for (const FGameplayTag& Tag : AppliedOwnedTags)
-			{
-				TagComp->GrantedTags.RemoveTag(Tag);
-			}
-			TagComp->RebuildCombinedTags();
+			WorldSubsystem->UngrantTag(OwnerEntity, Tag);
 		}
-		AppliedOwnedTags.Reset();
 	}
 
 	OnEnd(bCancelled);

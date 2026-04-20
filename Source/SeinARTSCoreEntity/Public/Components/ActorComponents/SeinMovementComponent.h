@@ -12,13 +12,13 @@
 #include "Components/SeinMovementData.h"
 #include "SeinMovementComponent.generated.h"
 
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Sein Movement Component"))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Movement Component"))
 class SEINARTSCOREENTITY_API USeinMovementComponent : public USeinActorComponent
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS", meta = (ShowOnlyInnerProperties))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement", meta = (ShowOnlyInnerProperties))
 	FSeinMovementData Data;
 
 	virtual FInstancedStruct GetSimComponent() const override

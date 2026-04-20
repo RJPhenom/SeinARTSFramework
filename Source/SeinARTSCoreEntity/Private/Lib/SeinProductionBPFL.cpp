@@ -12,11 +12,52 @@
 #include "Core/SeinPlayerState.h"
 #include "Engine/World.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
+
 USeinWorldSubsystem* USeinProductionBPFL::GetWorldSubsystem(const UObject* WorldContextObject)
 {
 	if (!WorldContextObject) return nullptr;
 	UWorld* World = WorldContextObject->GetWorld();
 	return World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+}
+
+bool USeinProductionBPFL::SeinGetProductionData(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FSeinProductionData& OutData)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetProductionData: no SeinWorldSubsystem"));
+		return false;
+	}
+	const FSeinProductionData* Data = Subsystem->GetComponent<FSeinProductionData>(EntityHandle);
+	if (!Data)
+	{
+		UE_LOG(LogSeinBPFL, Warning, TEXT("GetProductionData: entity %s invalid or has no FSeinProductionData"), *EntityHandle.ToString());
+		return false;
+	}
+	OutData = *Data;
+	return true;
+}
+
+TArray<FSeinProductionData> USeinProductionBPFL::SeinGetProductionDataMany(const UObject* WorldContextObject, const TArray<FSeinEntityHandle>& EntityHandles)
+{
+	TArray<FSeinProductionData> Result;
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) return Result;
+
+	Result.Reserve(EntityHandles.Num());
+	for (const FSeinEntityHandle& Handle : EntityHandles)
+	{
+		if (const FSeinProductionData* Data = Subsystem->GetComponent<FSeinProductionData>(Handle))
+		{
+			Result.Add(*Data);
+		}
+		else
+		{
+			UE_LOG(LogSeinBPFL, Warning, TEXT("GetProductionData (batch): skipping entity %s"), *Handle.ToString());
+		}
+	}
+	return Result;
 }
 
 TArray<FSeinProductionAvailability> USeinProductionBPFL::SeinGetProductionAvailability(

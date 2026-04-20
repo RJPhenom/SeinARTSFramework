@@ -20,19 +20,19 @@ class SEINARTSNAVIGATION_API USeinWheeledMovementProfile : public USeinMovementP
 
 public:
 	/** Dot above which vehicle applies full throttle. */
-	UPROPERTY(EditAnywhere, Category = "Wheeled")
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Movement|Wheeled")
 	FFixedPoint AlignmentFullThrottle = FFixedPoint::FromFloat(0.9f);
 
 	/** Dot above which vehicle applies partial throttle (arcing turn). */
-	UPROPERTY(EditAnywhere, Category = "Wheeled")
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Movement|Wheeled")
 	FFixedPoint AlignmentPartialThrottle = FFixedPoint::FromFloat(0.3f);
 
 	/** Target-speed fraction during partial throttle turn. */
-	UPROPERTY(EditAnywhere, Category = "Wheeled")
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Movement|Wheeled")
 	FFixedPoint PartialThrottleSpeedFraction = FFixedPoint::FromFloat(0.5f);
 
 	/** Target-speed fraction (negative) during reverse-maneuver. */
-	UPROPERTY(EditAnywhere, Category = "Wheeled")
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Movement|Wheeled")
 	FFixedPoint ReverseSpeedFraction = FFixedPoint::FromFloat(0.3f);
 
 	virtual bool AdvanceAlongPath(

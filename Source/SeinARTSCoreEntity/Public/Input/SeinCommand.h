@@ -43,67 +43,67 @@ enum class ESeinCommandType : uint8
  * A single deterministic command from a player or AI to an entity.
  * Fully value-typed and serializable for lockstep networking.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinCommand
 {
 	GENERATED_BODY()
 
 	/** Player who issued the command */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FSeinPlayerID PlayerID;
 
 	/** Entity this command targets */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FSeinEntityHandle EntityHandle;
 
 	/** What kind of command this is */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	ESeinCommandType CommandType = ESeinCommandType::ActivateAbility;
 
 	/** Gameplay tag identifying the ability or archetype */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FGameplayTag AbilityTag;
 
 	/** Optional target entity (e.g., attack target) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FSeinEntityHandle TargetEntity;
 
 	/** Optional target location (e.g., move destination, rally point) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FFixedVector TargetLocation;
 
 	/** Sim tick this command is intended for */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	int32 Tick = 0;
 
 	/** Index into the production queue (for CancelProduction) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	int32 QueueIndex = -1;
 
 	/** Whether to queue (append) rather than replace the current ability */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	bool bQueueCommand = false;
 
 	/** Auxiliary world location (e.g., formation endpoint for drag orders) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FFixedVector AuxLocation;
 
 	// --- Observer data (used by CameraUpdate / SelectionChanged, ignored by sim) ---
 
 	/** Auxiliary fixed-point value A (camera yaw for CameraUpdate) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command|Observer")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command|Observer")
 	FFixedPoint AuxA;
 
 	/** Auxiliary fixed-point value B (camera zoom distance for CameraUpdate) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command|Observer")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command|Observer")
 	FFixedPoint AuxB;
 
 	/** Entity list (selected entities for SelectionChanged) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command|Observer")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command|Observer")
 	TArray<FSeinEntityHandle> EntityList;
 
 	/** Active focus index within selection (-1 = all, 0+ = index into EntityList) */
-	UPROPERTY(BlueprintReadOnly, Category = "Command|Observer")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command|Observer")
 	int32 ActiveFocusIndex = -1;
 
 	// --- Helpers ---
@@ -174,7 +174,7 @@ struct SEINARTSCOREENTITY_API FSeinCommand
  * Collects commands for a single sim tick. Consumed and cleared each frame
  * during the CommandProcessing phase.
  */
-USTRUCT()
+USTRUCT(meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinCommandBuffer
 {
 	GENERATED_BODY()

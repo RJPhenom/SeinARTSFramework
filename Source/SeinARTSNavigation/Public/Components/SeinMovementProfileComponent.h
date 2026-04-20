@@ -28,7 +28,7 @@ struct SEINARTSNAVIGATION_API FSeinMovementProfileComponent : public FSeinCompon
 	 * If null, USeinMoveToAction falls back to infantry-style behavior.
 	 * Assign Infantry / Tracked / Wheeled profiles for different kinematics.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement")
 	TSubclassOf<USeinMovementProfile> Profile;
 };
 

@@ -15,7 +15,7 @@
  * 
  * Valid faction IDs start from 1.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinFactionID
 {
 	GENERATED_BODY()
@@ -25,7 +25,7 @@ struct SEINARTSCOREENTITY_API FSeinFactionID
 	 * 
 	 * Valid faction IDs start from 1.
 	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Faction")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Faction")
 	uint8 Value;
 
 	FSeinFactionID() : Value(0) {}

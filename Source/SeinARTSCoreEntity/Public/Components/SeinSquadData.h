@@ -18,33 +18,33 @@
  * Squad component placed on the abstract squad entity.
  * Tracks squad members, leadership, and reinforcement parameters.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinSquadData : public FSeinComponent
 {
 	GENERATED_BODY()
 
 	/** Handles to all living squad member entities */
-	UPROPERTY(BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Squad")
 	TArray<FSeinEntityHandle> Members;
 
 	/** Handle to the current squad leader */
-	UPROPERTY(BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Squad")
 	FSeinEntityHandle Leader;
 
 	/** Maximum number of members allowed in this squad */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Squad")
 	int32 MaxSquadSize = 6;
 
 	/** Blueprint class used when reinforcing this squad */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Squad")
 	TSubclassOf<ASeinActor> MemberActorClass;
 
 	/** Resource cost to reinforce one member */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Squad")
 	TMap<FName, FFixedPoint> ReinforceCost;
 
 	/** Max distance members can be from the squad center before losing coherency */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Squad")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Squad")
 	FFixedPoint CoherencyRadius;
 
 	/** Returns current member count. External systems must validate entity liveness. */

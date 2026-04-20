@@ -28,7 +28,7 @@ struct FSeinVisualEvent;
  * transform snapshots for smooth rendering, and forwards visual events
  * from the simulation to the owning actor.
  */
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Actor Bridge"))
 class SEINARTSCOREENTITY_API USeinActorBridge : public UActorComponent
 {
 	GENERATED_BODY()

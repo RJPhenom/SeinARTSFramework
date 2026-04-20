@@ -21,7 +21,7 @@
  * Sphere using fixed-point arithmetic.
  * Represents a sphere defined by center and radius.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCORE_API FFixedSphere
 {
 	GENERATED_BODY()

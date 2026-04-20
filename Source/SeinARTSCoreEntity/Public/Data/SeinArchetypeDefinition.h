@@ -33,7 +33,7 @@
  *   Priority  50: {RightClick, Target.Enemy}                      → Ability.Attack
  *   Priority   0: {RightClick, Target.Ground}                     → Ability.Movement
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinCommandMapping
 {
 	GENERATED_BODY()
@@ -56,7 +56,7 @@ struct SEINARTSCOREENTITY_API FSeinCommandMapping
  * Used by USeinActorComponent::TableOverride to A/B-tune component values
  * across many archetypes via a spreadsheet without leaving the per-component UX.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinComponentTableRef
 {
 	GENERATED_BODY()
@@ -81,7 +81,7 @@ struct SEINARTSCOREENTITY_API FSeinComponentTableRef
  * The simulation reads from the Blueprint CDO's instance of this component
  * at spawn time, then never references it again.
  */
-UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (SeinARTS), meta = (BlueprintSpawnableComponent, DisplayName = "Archetype Definition"))
 class SEINARTSCOREENTITY_API USeinArchetypeDefinition : public UActorComponent
 {
 	GENERATED_BODY()

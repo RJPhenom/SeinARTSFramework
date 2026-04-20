@@ -61,12 +61,12 @@ public:
 	bool HasValidEntity() const;
 
 	/** Archetype definition: sim components, display info, icons. Edit on BP defaults. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS|Entity")
 	TObjectPtr<USeinArchetypeDefinition> ArchetypeDefinition;
 
 protected:
 	/** Bridge component linking this actor to its simulation entity. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS|Entity")
 	TObjectPtr<USeinActorBridge> ActorBridge;
 
 public:

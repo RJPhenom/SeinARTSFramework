@@ -22,6 +22,7 @@
 #include "FixedPoint.generated.h"
 
 USTRUCT(BlueprintType, meta = (
+	SeinDeterministic,
 	HasNativeMake  = "/Script/SeinARTSCoreEntity.MathBPFL.MakeFixedPointFromParts",
 	HasNativeBreak = "/Script/SeinARTSCoreEntity.MathBPFL.BreakFixedPointToParts"))
 struct SEINARTSCORE_API FFixedPoint

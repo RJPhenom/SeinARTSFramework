@@ -15,7 +15,7 @@
  * 
  * Valid player IDs start from 1.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinPlayerID
 {
 	GENERATED_BODY()
@@ -25,7 +25,7 @@ struct SEINARTSCOREENTITY_API FSeinPlayerID
 	 * 
 	 * Valid player IDs start from 1.
 	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Player")
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	uint8 Value;
 
 	FSeinPlayerID() : Value(0) {}

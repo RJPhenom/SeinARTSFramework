@@ -19,7 +19,7 @@
  * Provides methods for adding, removing, querying, and collecting modifiers
  * from all currently active effects.
  */
-USTRUCT(BlueprintType)
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinActiveEffectsData : public FSeinComponent
 {
 	GENERATED_BODY()
