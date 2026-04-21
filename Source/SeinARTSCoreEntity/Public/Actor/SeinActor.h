@@ -84,13 +84,17 @@ public:
 	// These are fired by USeinActorBridge::HandleVisualEvent and are
 	// BlueprintImplementableEvent so designers can react in BP subclasses.
 
-	/** Called when this entity takes damage */
-	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Damage Taken"))
-	void ReceiveDamageTaken(FFixedPoint Amount, FSeinEntityHandle Source);
+	/** Called when this entity takes damage (DESIGN §11 DamageApplied event). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Damage Applied"))
+	void ReceiveDamageApplied(FFixedPoint Amount, FSeinEntityHandle Source, FGameplayTag DamageType);
 
-	/** Called when this entity is healed */
-	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Healed"))
-	void ReceiveHealed(FFixedPoint Amount, FSeinEntityHandle Source);
+	/** Called when this entity is healed (DESIGN §11 HealApplied event). */
+	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Heal Applied"))
+	void ReceiveHealApplied(FFixedPoint Amount, FSeinEntityHandle Source, FGameplayTag HealType);
+
+	/** Called when this entity lands a kill on another. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Kill"))
+	void ReceiveKill(FSeinEntityHandle Killed);
 
 	/** Called when an ability is activated on this entity */
 	UFUNCTION(BlueprintImplementableEvent, Category = "SeinARTS|Events", meta = (DisplayName = "On Ability Activated"))

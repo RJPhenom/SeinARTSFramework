@@ -10,6 +10,7 @@
 #include "Actor/SeinActor.h"
 #include "Actor/SeinActorBridge.h"
 #include "Components/ActorComponents/SeinActorComponent.h"
+#include "Data/SeinArchetypeDefinition.h"
 #include "Events/SeinVisualEvent.h"
 #include "Types/FixedPoint.h"
 #include "Engine/World.h"
@@ -180,6 +181,16 @@ void USeinActorBridgeSubsystem::SpawnActorForEntity(FSeinEntityHandle Handle, co
 	if (!ActorClass)
 	{
 		UE_LOG(LogSeinBridge, Error, TEXT("No actor class stored for entity %s"), *Handle.ToString());
+		return;
+	}
+
+	// Abstract entities skip actor spawn entirely (per §1 bIsAbstract). Downstream
+	// visual events find no actor in EntityActorMap and no-op gracefully.
+	const ASeinActor* CDO = GetDefault<ASeinActor>(ActorClass);
+	if (CDO && CDO->ArchetypeDefinition && CDO->ArchetypeDefinition->bIsAbstract)
+	{
+		UE_LOG(LogSeinBridge, Verbose, TEXT("Entity %s is abstract (class %s); skipping actor spawn"),
+			*Handle.ToString(), *ActorClass->GetName());
 		return;
 	}
 

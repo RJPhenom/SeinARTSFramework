@@ -15,8 +15,10 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "GameplayTagContainer.h"
 #include "Core/SeinEntityHandle.h"
+#include "Core/SeinPlayerID.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
+#include "Abilities/SeinAbilityTypes.h"
 #include "Components/SeinAbilityData.h"
 #include "SeinAbilityBPFL.generated.h"
 
@@ -64,6 +66,22 @@ public:
 	/** Check whether an entity has an ability with the given tag */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Has Ability"))
 	static bool SeinHasAbility(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FGameplayTag AbilityTag);
+
+	// Availability
+	// ====================================================================================================
+
+	/** Aggregate availability snapshot for one ability on one entity. Matches the
+	 *  shape of USeinProductionBPFL::SeinGetProductionAvailability for uniform UI
+	 *  handling. Walks the same gates as ProcessCommands::ActivateAbility (cooldown
+	 *  → blocked-tags → range / valid-target / LOS → CanActivate → affordability)
+	 *  and reports the first failing gate in the Reason field. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Ability", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Ability Availability"))
+	static FSeinAbilityAvailability SeinGetAbilityAvailability(
+		const UObject* WorldContextObject,
+		FSeinEntityHandle EntityHandle,
+		FGameplayTag AbilityTag,
+		FSeinEntityHandle OptionalTargetEntity,
+		FFixedVector OptionalTargetLocation);
 
 private:
 	static USeinWorldSubsystem* GetWorldSubsystem(const UObject* WorldContextObject);

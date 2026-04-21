@@ -34,6 +34,7 @@ public class SeinARTSEditor : ModuleRules
             "GameplayTags",
             "SeinARTSCore",
             "SeinARTSCoreEntity",
+            "SeinARTSNavigation",
             "SeinARTSUIToolkit"
         });
     }

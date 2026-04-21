@@ -8,6 +8,7 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinProductionData.h"
 #include "Data/SeinArchetypeDefinition.h"
+#include "Effects/SeinEffect.h"
 #include "Actor/SeinActor.h"
 #include "Core/SeinPlayerState.h"
 #include "Engine/World.h"
@@ -95,14 +96,21 @@ TArray<FSeinProductionAvailability> USeinProductionBPFL::SeinGetProductionAvaila
 		Avail.BuildTime = Archetype->BuildTime;
 		Avail.ArchetypeTag = Archetype->ArchetypeTag;
 		Avail.bIsResearch = Archetype->bIsResearch;
-		Avail.bPrerequisitesMet = PlayerState->HasAllTechTags(Archetype->PrerequisiteTags);
+		Avail.bPrerequisitesMet = PlayerState->HasAllPlayerTags(Archetype->PrerequisiteTags);
 		Avail.bCanAfford = PlayerState->CanAfford(Archetype->ProductionCost);
 		Avail.bQueueFull = bQueueFull;
 
-		// Check if research was already completed
-		if (Archetype->bIsResearch && Archetype->GrantedTechTag.IsValid())
+		// Already-researched check: inspect the granted effect's CDO EffectTag
+		// against the player's refcounted tag set (DESIGN §10 unification).
+		if (Archetype->bIsResearch && Archetype->GrantedTechEffect)
 		{
-			Avail.bAlreadyResearched = PlayerState->UnlockedTechTags.HasTag(Archetype->GrantedTechTag);
+			if (const USeinEffect* EffectDef = GetDefault<USeinEffect>(Archetype->GrantedTechEffect))
+			{
+				if (EffectDef->EffectTag.IsValid())
+				{
+					Avail.bAlreadyResearched = PlayerState->HasPlayerTag(EffectDef->EffectTag);
+				}
+			}
 		}
 
 		Result.Add(MoveTemp(Avail));
@@ -128,13 +136,19 @@ bool USeinProductionBPFL::SeinCanPlayerProduce(
 	const FSeinPlayerState* PlayerState = Subsystem->GetPlayerState(PlayerID);
 	if (!PlayerState) return false;
 
-	if (!PlayerState->HasAllTechTags(Archetype->PrerequisiteTags)) return false;
+	if (!PlayerState->HasAllPlayerTags(Archetype->PrerequisiteTags)) return false;
 	if (!PlayerState->CanAfford(Archetype->ProductionCost)) return false;
 
-	// If research, check not already completed
-	if (Archetype->bIsResearch && Archetype->GrantedTechTag.IsValid())
+	// If research, check not already completed — via the granted effect's EffectTag.
+	if (Archetype->bIsResearch && Archetype->GrantedTechEffect)
 	{
-		if (PlayerState->UnlockedTechTags.HasTag(Archetype->GrantedTechTag)) return false;
+		if (const USeinEffect* EffectDef = GetDefault<USeinEffect>(Archetype->GrantedTechEffect))
+		{
+			if (EffectDef->EffectTag.IsValid() && PlayerState->HasPlayerTag(EffectDef->EffectTag))
+			{
+				return false;
+			}
+		}
 	}
 
 	return true;
@@ -149,7 +163,7 @@ bool USeinProductionBPFL::SeinPlayerHasTechTag(
 	if (!Subsystem) return false;
 
 	const FSeinPlayerState* PlayerState = Subsystem->GetPlayerState(PlayerID);
-	return PlayerState && PlayerState->UnlockedTechTags.HasTag(TechTag);
+	return PlayerState && PlayerState->HasPlayerTag(TechTag);
 }
 
 FGameplayTagContainer USeinProductionBPFL::SeinGetPlayerTechTags(
@@ -160,5 +174,5 @@ FGameplayTagContainer USeinProductionBPFL::SeinGetPlayerTechTags(
 	if (!Subsystem) return FGameplayTagContainer();
 
 	const FSeinPlayerState* PlayerState = Subsystem->GetPlayerState(PlayerID);
-	return PlayerState ? PlayerState->UnlockedTechTags : FGameplayTagContainer();
+	return PlayerState ? PlayerState->PlayerTags : FGameplayTagContainer();
 }

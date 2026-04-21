@@ -15,6 +15,7 @@
 #include "Types/FixedPoint.h"
 #include "GameplayTagContainer.h"
 #include "Components/SeinProductionData.h"
+#include "Data/SeinResourceTypes.h"
 #include "SeinProductionBPFL.generated.h"
 
 class ASeinActor;
@@ -42,9 +43,9 @@ struct SEINARTSCOREENTITY_API FSeinProductionAvailability
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Production")
 	TObjectPtr<UTexture2D> Icon;
 
-	/** Resource cost to produce */
+	/** Resource cost to produce. Snapshot of the archetype's ProductionCost at query time. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Production")
-	TMap<FName, FFixedPoint> Cost;
+	FSeinResourceCost Cost;
 
 	/** Build time in sim-seconds */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Production")

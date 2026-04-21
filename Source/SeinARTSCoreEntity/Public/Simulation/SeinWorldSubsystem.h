@@ -11,6 +11,7 @@
 #include "Types/Entity.h"
 #include "Types/EntityID.h"
 #include "Types/FixedPoint.h"
+#include "Types/Random.h"
 #include "Core/SeinEntityHandle.h"
 #include "Core/SeinEntityPool.h"
 #include "Core/SeinPlayerID.h"
@@ -26,14 +27,51 @@ class ASeinActor;
 class USeinArchetypeDefinition;
 class USeinFaction;
 class USeinAbility;
+class USeinEffect;
 class USeinLatentActionManager;
 struct FSeinModifier;
+
+/**
+ * Scratch record for an effect apply queued during a tick hook. Drained at the
+ * next PreTick via `ProcessPendingEffectApplies` — prevents infinite cascades
+ * from `OnApply` / `OnTick` hooks per DESIGN §8 Q9c.
+ */
+struct FSeinPendingEffectApply
+{
+	FSeinEntityHandle Target;
+	TSubclassOf<USeinEffect> EffectClass;
+	FSeinEntityHandle Source;
+};
 
 /** Broadcast after each sim tick completes (for actor bridge, replay, etc.). */
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnSimTickCompleted, int32 /*Tick*/);
 
 /** Broadcast just before commands are processed each tick (for debug logging). */
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnCommandsProcessing, int32 /*Tick*/, const TArray<FSeinCommand>& /*Commands*/);
+
+/**
+ * Delegate sim uses to ask "is this target nav-reachable for a Move-like ability?"
+ * Registered by USeinNavigationSubsystem (SeinARTSNavigation module) at OnWorldBeginPlay
+ * so SeinARTSCoreEntity code can consult it without a circular dependency.
+ *
+ *   From:      entity's current world position (FVector world units, fixed-point-convertible)
+ *   To:        target world position the command asked to activate against
+ *   AgentTags: owning entity's tag container (for navlink eligibility filtering)
+ *
+ * Return true = target is reachable. False = pre-reject with PathUnreachable.
+ * Sim skips the gate if no resolver is registered (tests, nav-less games).
+ */
+DECLARE_DELEGATE_RetVal_ThreeParams(bool, FSeinPathableTargetResolver,
+	const FVector& /*FromWorld*/, const FVector& /*ToWorld*/, const FGameplayTagContainer& /*AgentTags*/);
+
+/**
+ * Delegate sim uses to ask "is this target visible for the owner's VisionGroup?"
+ * Registered by USeinVisionSubsystem (SeinARTSNavigation) at OnWorldBeginPlay so
+ * SeinARTSCoreEntity code can consult it without a circular dependency.
+ * Returns true = target is visible. False = reject with NoLineOfSight.
+ */
+DECLARE_DELEGATE_RetVal_TwoParams(bool, FSeinLineOfSightResolver,
+	FSeinPlayerID /*ObserverPlayer*/, const FVector& /*TargetWorld*/);
 
 /**
  * World subsystem that owns and ticks the deterministic simulation.
@@ -78,6 +116,14 @@ public:
 
 	/** Broadcast just before ProcessCommands runs, with the pending command buffer. For debug tooling. */
 	FOnCommandsProcessing OnCommandsProcessing;
+
+	/** Cross-module resolver for USeinAbility::bRequiresPathableTarget. Registered
+	 *  by USeinNavigationSubsystem at OnWorldBeginPlay. */
+	FSeinPathableTargetResolver PathableTargetResolver;
+
+	/** Cross-module resolver for USeinAbility::bRequiresLineOfSight (§12). Registered
+	 *  by USeinVisionSubsystem at OnWorldBeginPlay. If unbound, LOS checks permit. */
+	FSeinLineOfSightResolver LineOfSightResolver;
 
 	// ========== Entity Management ==========
 
@@ -169,6 +215,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Player", meta = (DisplayName = "Get Player State"))
 	bool GetPlayerStateCopy(FSeinPlayerID PlayerID, FSeinPlayerState& OutState) const;
 
+	/** Iterate every registered player state (mutable). Used by the effect tick
+	 *  system to walk per-player effect lists. C++ only. */
+	template<typename Func>
+	void ForEachPlayerStateMutable(Func&& Callback)
+	{
+		for (auto& Pair : PlayerStates)
+		{
+			Callback(Pair.Key, Pair.Value);
+		}
+	}
+
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player")
 	void RegisterFaction(USeinFaction* Faction);
 
@@ -229,12 +286,65 @@ public:
 	// ========== Attribute Resolution ==========
 
 	/**
-	 * Resolve an attribute value with all active modifiers applied.
-	 * Reads the base value from the entity's component, applies archetype-level
-	 * modifiers from the owner's player state, then instance-level modifiers
-	 * from the entity's active effects.
+	 * Resolve an entity attribute with all active Instance + Archetype-scope
+	 * modifiers applied. Instance modifiers come from the entity's
+	 * `FSeinActiveEffectsData`; Archetype modifiers come from the owner's
+	 * `FSeinPlayerState::ArchetypeEffects` (filtered by `TargetArchetypeTag`).
+	 * Tech-granted modifiers flow through the same effect pipeline since
+	 * Session 2.4 unified tech with effects (DESIGN §10).
 	 */
 	FFixedPoint ResolveAttribute(FSeinEntityHandle Handle, UScriptStruct* ComponentType, FName FieldName);
+
+	/**
+	 * Resolve a player-state attribute with all active Player-scope modifiers
+	 * applied. Targets fields on `FSeinPlayerState` or designer-authored sub-structs.
+	 */
+	FFixedPoint ResolvePlayerAttribute(FSeinPlayerID PlayerID, UScriptStruct* StructType, FName FieldName) const;
+
+	// ========== Effects (DESIGN §8) ==========
+
+	/**
+	 * Apply an effect to a target entity. If called during a sim tick (from
+	 * OnApply/OnTick/OnExpire/OnRemoved), the apply is queued and drained at
+	 * the next PreTick. If called outside a sim tick (render-layer authored
+	 * ability, test harness), the apply runs immediately.
+	 *
+	 * Scope from the effect CDO determines where the instance lands:
+	 *   Instance → target's FSeinActiveEffectsData
+	 *   Archetype → target owner's FSeinPlayerState::ArchetypeEffects
+	 *   Player → target owner's FSeinPlayerState::PlayerEffects
+	 *
+	 * Returns the assigned effect instance ID (0 if the apply failed or was
+	 * deferred — deferred applies don't return a usable ID to the caller).
+	 */
+	uint32 ApplyEffect(FSeinEntityHandle Target, TSubclassOf<USeinEffect> EffectClass, FSeinEntityHandle Source);
+
+	/** Drain the pending-apply queue. Called at PreTick by FSeinEffectTickSystem. */
+	void ProcessPendingEffectApplies();
+
+	/** Remove an Instance-scope effect by instance ID. Returns true if removed. */
+	bool RemoveInstanceEffect(FSeinEntityHandle Target, uint32 EffectInstanceID, bool bByExpiration);
+
+	/** Remove all Instance-scope effects matching a tag. */
+	void RemoveInstanceEffectsWithTag(FSeinEntityHandle Target, FGameplayTag Tag);
+
+	/** Strip every active effect whose `Source == DeadHandle` and whose CDO declares
+	 *  `bRemoveOnSourceDeath = true`. Walks all three scope storages (Instance on
+	 *  every entity, Archetype/Player on every player state). Called by
+	 *  ProcessDeferredDestroys before the pool releases the handle. */
+	void RemoveEffectsFromDeadSource(FSeinEntityHandle DeadHandle);
+
+	// ========== Player Tags (refcounted, DESIGN §10) ==========
+
+	/** Grant a tag to a player (refcount++). Adds to `FSeinPlayerState::PlayerTags`
+	 *  on the 0→1 edge. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	void GrantPlayerTag(FSeinPlayerID PlayerID, FGameplayTag Tag);
+
+	/** Ungrant a tag from a player (refcount--). Removes from `PlayerTags` on the
+	 *  1→0 edge. Safe to call on tags the player never received (no-op). */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
+	void UngrantPlayerTag(FSeinPlayerID PlayerID, FGameplayTag Tag);
 
 	// ========== Command System ==========
 
@@ -266,6 +376,15 @@ public:
 
 	UPROPERTY()
 	TObjectPtr<USeinLatentActionManager> LatentActionManager;
+
+	// ========== Sim PRNG ==========
+	//
+	// Framework-owned deterministic RNG used by SeinRollAccuracy and any other
+	// sim-side roll that must be replay-identical. Designers who want their own
+	// PRNG stream (e.g., per-weapon) make an FFixedRandom of their own; this
+	// one is shared-framework scratch.
+
+	FFixedRandom SimRandom;
 
 	// ========== State Hashing ==========
 
@@ -309,6 +428,13 @@ private:
 
 	// Named entity registry (designer-addressable aliases).
 	TMap<FName, FSeinEntityHandle> NamedEntityRegistry;
+
+	// Pending-apply queue for effects applied during tick hooks. Drained at PreTick.
+	TArray<FSeinPendingEffectApply> PendingEffectApplies;
+
+	// Commit an apply synchronously (used by ApplyEffect when not in a tick, and
+	// by ProcessPendingEffectApplies when draining). Returns instance ID or 0.
+	uint32 ApplyEffectInternal(FSeinEntityHandle Target, TSubclassOf<USeinEffect> EffectClass, FSeinEntityHandle Source);
 
 	// Simulation state
 	bool bIsRunning = false;

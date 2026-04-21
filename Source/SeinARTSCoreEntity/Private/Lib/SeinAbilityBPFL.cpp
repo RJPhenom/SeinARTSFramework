@@ -7,7 +7,10 @@
 #include "Lib/SeinAbilityBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinAbilityData.h"
+#include "Components/SeinTagData.h"
 #include "Abilities/SeinAbility.h"
+#include "Abilities/SeinAbilityValidation.h"
+#include "Lib/SeinResourceBPFL.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
 
@@ -131,4 +134,77 @@ bool USeinAbilityBPFL::SeinHasAbility(const UObject* WorldContextObject, FSeinEn
 	if (!AbilityComp) return false;
 
 	return AbilityComp->HasAbilityWithTag(AbilityTag);
+}
+
+FSeinAbilityAvailability USeinAbilityBPFL::SeinGetAbilityAvailability(
+	const UObject* WorldContextObject,
+	FSeinEntityHandle EntityHandle,
+	FGameplayTag AbilityTag,
+	FSeinEntityHandle OptionalTargetEntity,
+	FFixedVector OptionalTargetLocation)
+{
+	FSeinAbilityAvailability Out;
+	Out.AbilityTag = AbilityTag;
+
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) { Out.Reason = ESeinAbilityUnavailableReason::UnknownAbility; return Out; }
+
+	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
+	if (!AbilityComp) { Out.Reason = ESeinAbilityUnavailableReason::UnknownAbility; return Out; }
+
+	USeinAbility* Ability = AbilityComp->FindAbilityByTag(AbilityTag);
+	if (!Ability) { Out.Reason = ESeinAbilityUnavailableReason::UnknownAbility; return Out; }
+
+	Out.CooldownRemaining = Ability->CooldownRemaining;
+	Out.bIsActive = Ability->bIsActive;
+
+	const FSeinPlayerID Owner = Subsystem->GetEntityOwner(EntityHandle);
+	Out.bCanAfford = USeinResourceBPFL::SeinCanAfford(WorldContextObject, Owner, Ability->ResourceCost);
+
+	// Walk the same gate order as ProcessCommands::ActivateAbility and report
+	// the first failing gate.
+	if (Ability->IsOnCooldown())
+	{
+		Out.Reason = ESeinAbilityUnavailableReason::OnCooldown;
+		return Out;
+	}
+
+	if (!Ability->ActivationBlockedTags.IsEmpty())
+	{
+		const FSeinTagData* TagComp = Subsystem->GetComponent<FSeinTagData>(EntityHandle);
+		if (TagComp && TagComp->CombinedTags.HasAny(Ability->ActivationBlockedTags))
+		{
+			Out.Reason = ESeinAbilityUnavailableReason::BlockedByTag;
+			return Out;
+		}
+	}
+
+	const ESeinAbilityTargetValidationResult Validation = FSeinAbilityValidation::ValidateTarget(
+		*Ability, EntityHandle, OptionalTargetEntity, OptionalTargetLocation, *Subsystem);
+	switch (Validation)
+	{
+		case ESeinAbilityTargetValidationResult::OutOfRange:
+			Out.Reason = ESeinAbilityUnavailableReason::OutOfRange; return Out;
+		case ESeinAbilityTargetValidationResult::InvalidTarget:
+			Out.Reason = ESeinAbilityUnavailableReason::InvalidTarget; return Out;
+		case ESeinAbilityTargetValidationResult::NoLineOfSight:
+			Out.Reason = ESeinAbilityUnavailableReason::NoLineOfSight; return Out;
+		default: break;
+	}
+
+	if (!Ability->CanActivate())
+	{
+		Out.Reason = ESeinAbilityUnavailableReason::CanActivateFailed;
+		return Out;
+	}
+
+	if (!Out.bCanAfford)
+	{
+		Out.Reason = ESeinAbilityUnavailableReason::Unaffordable;
+		return Out;
+	}
+
+	Out.bAvailable = true;
+	Out.Reason = ESeinAbilityUnavailableReason::None;
+	return Out;
 }

@@ -124,7 +124,7 @@ FVector USeinUIBPFL::SeinFixedVectorToVector(const FFixedVector& Value)
 	return Value.ToVector();
 }
 
-FText USeinUIBPFL::SeinFormatResourceCost(const TMap<FName, float>& Cost)
+FText USeinUIBPFL::SeinFormatResourceCost(const TMap<FGameplayTag, float>& Cost)
 {
 	if (Cost.IsEmpty())
 	{
@@ -140,7 +140,13 @@ FText USeinUIBPFL::SeinFormatResourceCost(const TMap<FName, float>& Cost)
 		{
 			Result += TEXT(", ");
 		}
-		Result += FString::Printf(TEXT("%d %s"), FMath::RoundToInt(Pair.Value), *Pair.Key.ToString());
+		// Use the tag's leaf name for display (e.g. "SeinARTS.Resource.Manpower" → "Manpower")
+		FString TagString = Pair.Key.ToString();
+		int32 LastDot = INDEX_NONE;
+		TagString.FindLastChar(TEXT('.'), LastDot);
+		const FString Label = (LastDot != INDEX_NONE) ? TagString.RightChop(LastDot + 1) : TagString;
+
+		Result += FString::Printf(TEXT("%d %s"), FMath::RoundToInt(Pair.Value), *Label);
 		bFirst = false;
 	}
 
@@ -288,8 +294,8 @@ FSeinActionSlotData USeinUIBPFL::SeinBuildAbilitySlotData(const UObject* WorldCo
 	Data.Name = Ability->AbilityName;
 	Data.ActionTag = Ability->AbilityTag;
 
-	// Convert resource cost to float
-	for (const auto& Pair : Ability->ResourceCost)
+	// Convert tag-keyed resource cost to float for display
+	for (const auto& Pair : Ability->ResourceCost.Amounts)
 	{
 		Data.ResourceCost.Add(Pair.Key, Pair.Value.ToFloat());
 	}
@@ -378,14 +384,14 @@ TArray<FSeinActionSlotData> USeinUIBPFL::SeinBuildProductionSlotData(const UObje
 				Data.Icon = Archetype->Icon;
 				Data.ActionTag = Archetype->ArchetypeTag;
 
-				// Convert cost to float
-				for (const auto& Pair : Archetype->ProductionCost)
+				// Convert tag-keyed production cost to float for display
+				for (const auto& Pair : Archetype->ProductionCost.Amounts)
 				{
 					Data.ResourceCost.Add(Pair.Key, Pair.Value.ToFloat());
 				}
 
 				// Determine state
-				bool bPrereqsMet = !PlayerState || PlayerState->HasAllTechTags(Archetype->PrerequisiteTags);
+				bool bPrereqsMet = !PlayerState || PlayerState->HasAllPlayerTags(Archetype->PrerequisiteTags);
 				bool bCanAfford = !PlayerState || PlayerState->CanAfford(Archetype->ProductionCost);
 				bool bQueueFull = !ProdComp->CanQueueMore();
 

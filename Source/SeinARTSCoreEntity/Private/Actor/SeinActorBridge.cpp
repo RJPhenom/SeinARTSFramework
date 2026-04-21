@@ -122,12 +122,16 @@ void USeinActorBridge::HandleVisualEvent(const FSeinVisualEvent& Event)
 
 	switch (Event.Type)
 	{
-	case ESeinVisualEventType::DamageTaken:
-		SeinActor->ReceiveDamageTaken(Event.Value, Event.SecondaryEntity);
+	case ESeinVisualEventType::DamageApplied:
+		SeinActor->ReceiveDamageApplied(Event.Value, Event.SecondaryEntity, Event.Tag);
 		break;
 
-	case ESeinVisualEventType::Healed:
-		SeinActor->ReceiveHealed(Event.Value, Event.SecondaryEntity);
+	case ESeinVisualEventType::HealApplied:
+		SeinActor->ReceiveHealApplied(Event.Value, Event.SecondaryEntity, Event.Tag);
+		break;
+
+	case ESeinVisualEventType::Kill:
+		SeinActor->ReceiveKill(Event.SecondaryEntity);
 		break;
 
 	case ESeinVisualEventType::AbilityActivated:
@@ -146,8 +150,14 @@ void USeinActorBridge::HandleVisualEvent(const FSeinVisualEvent& Event)
 		SeinActor->ReceiveEffectRemoved(Event.Tag);
 		break;
 
-	case ESeinVisualEventType::EntityDestroyed:
+	case ESeinVisualEventType::Death:
+		// Sim-side death — route to the actor's ReceiveDeath for death FX / animation.
+		// The entity is destroyed in the same tick; ReceiveEntityDestroyed fires on
+		// the EntityDestroyed event below.
 		SeinActor->ReceiveDeath();
+		break;
+
+	case ESeinVisualEventType::EntityDestroyed:
 		SeinActor->ReceiveEntityDestroyed();
 		break;
 

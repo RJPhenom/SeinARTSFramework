@@ -74,7 +74,7 @@ bool USeinAbilityFactory::ConfigureProperties()
 
 FText USeinAbilityFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinAbilityFactoryDisplayName", "Ability");
+	return LOCTEXT("SeinAbilityFactoryDisplayName", "SeinARTS Ability");
 }
 
 uint32 USeinAbilityFactory::GetMenuCategories() const

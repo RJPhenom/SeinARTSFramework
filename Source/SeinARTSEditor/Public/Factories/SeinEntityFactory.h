@@ -1,33 +1,29 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  *
- * @file:		SeinActorFactory.h
- * @date:		3/27/2026
- * @author:		RJ Macklem
- * @brief:		Factory for creating SeinActor Blueprint classes via Content Browser.
+ * @file:		SeinEntityFactory.h
+ * @brief:		Factory for creating SeinActor Blueprint classes — the bare
+ *				entity template (Archetype Definition + Actor Bridge). Designers
+ *				compose additional sim components (Abilities, Movement, Combat
+ *				replacement, etc.) via the Components panel. Combat in particular
+ *				is intentionally designer-overridden per DESIGN §11, so no
+ *				pre-seeded starter kit is shipped.
  */
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Factories/BlueprintFactory.h"
-#include "SeinActorFactory.generated.h"
+#include "SeinEntityFactory.generated.h"
 
-/**
- * Factory that creates Blueprint classes derived from ASeinActor.
- * Appears in Content Browser under the "SeinARTS" category.
- * Opens a class picker dialog so designers can choose a parent class
- * (ASeinActor, or any C++/BP subclass they've created).
- */
 UCLASS()
-class USeinActorFactory : public UBlueprintFactory
+class USeinEntityFactory : public UBlueprintFactory
 {
 	GENERATED_BODY()
 
 public:
-	USeinActorFactory();
+	USeinEntityFactory();
 
-	// UFactory interface
 	virtual UObject* FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext) override;
 	virtual bool ConfigureProperties() override;
 	virtual FText GetDisplayName() const override;

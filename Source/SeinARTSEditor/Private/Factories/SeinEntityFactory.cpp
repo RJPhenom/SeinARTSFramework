@@ -1,13 +1,9 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- *
- * @file:		SeinActorFactory.cpp
- * @date:		3/27/2026
- * @author:		RJ Macklem
- * @brief:		Implementation of SeinActor Blueprint factory.
+ * @file    SeinEntityFactory.cpp
  */
 
-#include "Factories/SeinActorFactory.h"
+#include "Factories/SeinEntityFactory.h"
 #include "SeinARTSEditorModule.h"
 #include "Settings/PluginSettings.h"
 #include "Dialogs/SSeinClassPickerDialog.h"
@@ -17,7 +13,7 @@
 
 #define LOCTEXT_NAMESPACE "SeinARTSEditor"
 
-USeinActorFactory::USeinActorFactory()
+USeinEntityFactory::USeinEntityFactory()
 {
 	bCreateNew = true;
 	bEditAfterNew = true;
@@ -26,7 +22,7 @@ USeinActorFactory::USeinActorFactory()
 	BlueprintType = BPTYPE_Normal;
 }
 
-UObject* USeinActorFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext)
+UObject* USeinEntityFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn, FName CallingContext)
 {
 	return FKismetEditorUtilities::CreateBlueprint(
 		ParentClass, InParent, Name, BlueprintType,
@@ -36,33 +32,29 @@ UObject* USeinActorFactory::FactoryCreateNew(UClass* Class, UObject* InParent, F
 	);
 }
 
-bool USeinActorFactory::ConfigureProperties()
+bool USeinEntityFactory::ConfigureProperties()
 {
 	UClass* ChosenClass = SSeinClassPickerDialog::OpenDialog(
-		LOCTEXT("PickParentClass", "Pick Parent Class for Unit"),
+		LOCTEXT("PickEntityParentClass", "Pick Parent Class for Entity"),
 		ASeinActor::StaticClass(),
-		LOCTEXT("GenericUnit", "Generic Unit"),
-		LOCTEXT("GenericUnitTip", "Create a Blueprint based on ASeinActor")
+		LOCTEXT("GenericEntity", "Generic Entity"),
+		LOCTEXT("GenericEntityTip", "Create a bare Blueprint subclass of ASeinActor. Archetype Definition + Actor Bridge are auto-attached by the parent class.")
 	);
 
-	if (!ChosenClass)
-	{
-		return false;
-	}
-
+	if (!ChosenClass) return false;
 	ParentClass = ChosenClass;
 	return true;
 }
 
-FText USeinActorFactory::GetDisplayName() const
+FText USeinEntityFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinActorFactoryDisplayName", "Unit");
+	return LOCTEXT("SeinEntityFactoryDisplayName", "SeinARTS Entity Actor");
 }
 
-uint32 USeinActorFactory::GetMenuCategories() const
+uint32 USeinEntityFactory::GetMenuCategories() const
 {
 	uint32 Categories = FSeinARTSEditorModule::GetAssetCategoryBit();
-	if (GetDefault<USeinARTSCoreSettings>()->bShowUnitInBasicCategory)
+	if (GetDefault<USeinARTSCoreSettings>()->bShowEntityInBasicCategory)
 	{
 		Categories |= EAssetTypeCategories::Basic;
 	}

@@ -42,21 +42,22 @@ public:
 
 	// ========== Resource Access ==========
 
-	/** Get the current amount of a named resource. Returns 0 if the resource doesn't exist. */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Player")
-	float GetResource(FName ResourceName) const;
+	/** Get the current amount of a resource by tag. Returns 0 if the resource isn't present. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Player", meta = (Categories = "SeinARTS.Resource"))
+	float GetResource(FGameplayTag ResourceTag) const;
 
-	/** Get all resources as a name→float map. */
+	/** Get all resources as a tag→float map. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|UI|Player")
-	TMap<FName, float> GetAllResources() const;
+	TMap<FGameplayTag, float> GetAllResources() const;
 
-	/** Get the names of all resources this player has. */
+	/** Get the tags of all resources this player has. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|UI|Player")
-	TArray<FName> GetResourceNames() const;
+	TArray<FGameplayTag> GetResourceTags() const;
 
-	/** Check if the player can afford a set of costs (float values). */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Player")
-	bool CanAfford(const TMap<FName, float>& Cost) const;
+	/** Check if the player can afford a set of costs (float values). Plain balance comparison —
+	 *  does not consult catalog CostDirection; use USeinResourceBPFL::SeinCanAfford for that. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Player", meta = (Categories = "SeinARTS.Resource"))
+	bool CanAfford(const TMap<FGameplayTag, float>& Cost) const;
 
 	// ========== Tech Access ==========
 
@@ -86,7 +87,7 @@ private:
 	TWeakObjectPtr<USeinWorldSubsystem> WorldSubsystem;
 
 	/** Cached resource values (float for display). Updated on Refresh(). */
-	TMap<FName, float> CachedResources;
+	TMap<FGameplayTag, float> CachedResources;
 
 	/** Cached tech tags. Updated on Refresh(). */
 	FGameplayTagContainer CachedTechTags;

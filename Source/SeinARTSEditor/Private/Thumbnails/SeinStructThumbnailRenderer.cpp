@@ -62,6 +62,18 @@ void USeinStructThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint3
 		Canvas->DrawItem(IconItem);
 	}
 
-	// Color bar handled by the Content Browser's asset-tile decoration via
-	// asset-type-actions — we don't paint it here.
+	// ---- Color bar (#00FFFF — component identity) ----
+	// UDS assets don't use IAssetTypeActions::GetTypeColor the way BPs do, so we
+	// paint the identity bar ourselves along the bottom edge of the thumbnail.
+	{
+		const float BarHeight = FMath::Max(2.0f, Height * 0.04f);
+		FCanvasTileItem BarItem(
+			FVector2D(X, Y + Height - BarHeight),
+			GWhiteTexture,
+			FVector2D(Width, BarHeight),
+			FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("00FFFF")))
+		);
+		BarItem.BlendMode = SE_BLEND_Opaque;
+		Canvas->DrawItem(BarItem);
+	}
 }

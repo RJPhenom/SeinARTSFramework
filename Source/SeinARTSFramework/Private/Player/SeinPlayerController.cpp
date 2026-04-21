@@ -11,6 +11,7 @@
 #include "Actor/SeinActor.h"
 #include "Actor/SeinActorBridge.h"
 #include "Data/SeinArchetypeDefinition.h"
+#include "Components/SeinAbilityData.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Input/SeinCommand.h"
 #include "Tags/SeinARTSGameplayTags.h"
@@ -861,12 +862,12 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 	FGameplayTagContainer Context;
 
 	// Base context
-	Context.AddTag(SeinARTSTags::CommandContext_RightClick);
+	Context.AddTag(SeinARTSTags::Command_Context_RightClick);
 
 	if (!HitActor || !HitActor->HasValidEntity())
 	{
 		// Ground click
-		Context.AddTag(SeinARTSTags::CommandContext_Target_Ground);
+		Context.AddTag(SeinARTSTags::Command_Context_Target_Ground);
 		return Context;
 	}
 
@@ -874,7 +875,7 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
 	if (!Subsystem)
 	{
-		Context.AddTag(SeinARTSTags::CommandContext_Target_Ground);
+		Context.AddTag(SeinARTSTags::Command_Context_Target_Ground);
 		return Context;
 	}
 
@@ -882,20 +883,20 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 
 	if (TargetOwner == SeinPlayerID)
 	{
-		Context.AddTag(SeinARTSTags::CommandContext_Target_Friendly);
+		Context.AddTag(SeinARTSTags::Command_Context_Target_Friendly);
 	}
 	else if (TargetOwner.IsNeutral())
 	{
 		// Neutral entities (resources, capture points)
-		Context.AddTag(SeinARTSTags::CommandContext_Target_Neutral);
+		Context.AddTag(SeinARTSTags::Command_Context_Target_Neutral);
 	}
 	else
 	{
-		Context.AddTag(SeinARTSTags::CommandContext_Target_Enemy);
+		Context.AddTag(SeinARTSTags::Command_Context_Target_Enemy);
 	}
 
 	// Add entity-specific context tags by checking the target's gameplay tags
-	// (e.g., if the target has Unit.Building, add CommandContext.Target.Building)
+	// (e.g., if the target has Unit.Building, add Command.Context.Target.Building)
 	// This is extensible — designers can add custom tags via the tag component.
 
 	return Context;
@@ -945,13 +946,21 @@ void ASeinPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASei
 	// Convert world location to fixed-point
 	const FFixedVector FixedLocation = FFixedVector::FromVector(WorldLocation);
 
+	// Command resolution now lives on FSeinAbilityData (DESIGN §7 Q9) — read via
+	// the world subsystem, not the archetype component.
+	auto ResolveForActor = [&](ASeinActor* Actor) -> const FSeinAbilityData*
+	{
+		if (!Actor || !Actor->HasValidEntity()) return nullptr;
+		return Subsystem->GetComponent<FSeinAbilityData>(Actor->GetEntityHandle());
+	};
+
 	// Resolve the leader's ability tag (for LeaderDriven mode)
 	FGameplayTag LeaderAbilityTag;
 	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() > 0)
 	{
-		if (const USeinArchetypeDefinition* LeaderArchetype = CommandTargets[0]->ArchetypeDefinition)
+		if (const FSeinAbilityData* LeaderAbilities = ResolveForActor(CommandTargets[0]))
 		{
-			LeaderAbilityTag = LeaderArchetype->ResolveCommandContext(Context);
+			LeaderAbilityTag = LeaderAbilities->ResolveCommandContext(Context);
 		}
 	}
 
@@ -965,41 +974,28 @@ void ASeinPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASei
 		}
 
 		FGameplayTag AbilityTag;
+		const FSeinAbilityData* AbilityData = ResolveForActor(Actor);
 
 		if (DispatchMode == ESeinCommandDispatchMode::PerEntity)
 		{
-			// Each entity resolves its own command
-			if (const USeinArchetypeDefinition* Archetype = Actor->ArchetypeDefinition)
+			if (AbilityData)
 			{
-				AbilityTag = Archetype->ResolveCommandContext(Context);
+				AbilityTag = AbilityData->ResolveCommandContext(Context);
 			}
 		}
 		else // LeaderDriven
 		{
 			if (Actor == CommandTargets[0])
 			{
-				// Leader uses its own resolved tag
 				AbilityTag = LeaderAbilityTag;
 			}
-			else
+			else if (AbilityData)
 			{
-				// Followers: try to use the leader's ability tag.
-				// Check if this entity has that ability — if not, fall back.
-				if (const USeinArchetypeDefinition* Archetype = Actor->ArchetypeDefinition)
-				{
-					// Check if this entity can execute the leader's ability
-					// by seeing if any of its mappings produce the same tag
-					const FGameplayTag OwnTag = Archetype->ResolveCommandContext(Context);
-					if (OwnTag == LeaderAbilityTag)
-					{
-						AbilityTag = LeaderAbilityTag;
-					}
-					else
-					{
-						// Can't do the same thing — fall back to this entity's fallback (usually Move)
-						AbilityTag = Archetype->FallbackAbilityTag;
-					}
-				}
+				// Followers: try to use the leader's ability tag. If the follower's
+				// mappings would resolve to something else, fall back to the follower's
+				// own FallbackAbilityTag (usually Move).
+				const FGameplayTag OwnTag = AbilityData->ResolveCommandContext(Context);
+				AbilityTag = (OwnTag == LeaderAbilityTag) ? LeaderAbilityTag : AbilityData->FallbackAbilityTag;
 			}
 		}
 
@@ -1072,13 +1068,19 @@ void ASeinPlayerController::IssueSmartCommandEx(
 		? FFixedVector()
 		: FFixedVector::FromVector(FormationEnd);
 
-	// Resolve leader tag for LeaderDriven mode
+	// Command resolution now lives on FSeinAbilityData (DESIGN §7 Q9).
+	auto ResolveForActorEx = [&](ASeinActor* Actor) -> const FSeinAbilityData*
+	{
+		if (!Actor || !Actor->HasValidEntity()) return nullptr;
+		return Subsystem->GetComponent<FSeinAbilityData>(Actor->GetEntityHandle());
+	};
+
 	FGameplayTag LeaderAbilityTag;
 	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() > 0)
 	{
-		if (const USeinArchetypeDefinition* LeaderArchetype = CommandTargets[0]->ArchetypeDefinition)
+		if (const FSeinAbilityData* LeaderAbilities = ResolveForActorEx(CommandTargets[0]))
 		{
-			LeaderAbilityTag = LeaderArchetype->ResolveCommandContext(Context);
+			LeaderAbilityTag = LeaderAbilities->ResolveCommandContext(Context);
 		}
 	}
 
@@ -1092,12 +1094,13 @@ void ASeinPlayerController::IssueSmartCommandEx(
 		}
 
 		FGameplayTag AbilityTag;
+		const FSeinAbilityData* AbilityData = ResolveForActorEx(Actor);
 
 		if (DispatchMode == ESeinCommandDispatchMode::PerEntity)
 		{
-			if (const USeinArchetypeDefinition* Archetype = Actor->ArchetypeDefinition)
+			if (AbilityData)
 			{
-				AbilityTag = Archetype->ResolveCommandContext(Context);
+				AbilityTag = AbilityData->ResolveCommandContext(Context);
 			}
 		}
 		else // LeaderDriven
@@ -1106,20 +1109,10 @@ void ASeinPlayerController::IssueSmartCommandEx(
 			{
 				AbilityTag = LeaderAbilityTag;
 			}
-			else
+			else if (AbilityData)
 			{
-				if (const USeinArchetypeDefinition* Archetype = Actor->ArchetypeDefinition)
-				{
-					const FGameplayTag OwnTag = Archetype->ResolveCommandContext(Context);
-					if (OwnTag == LeaderAbilityTag)
-					{
-						AbilityTag = LeaderAbilityTag;
-					}
-					else
-					{
-						AbilityTag = Archetype->FallbackAbilityTag;
-					}
-				}
+				const FGameplayTag OwnTag = AbilityData->ResolveCommandContext(Context);
+				AbilityTag = (OwnTag == LeaderAbilityTag) ? LeaderAbilityTag : AbilityData->FallbackAbilityTag;
 			}
 		}
 

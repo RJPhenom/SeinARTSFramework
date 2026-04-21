@@ -34,7 +34,7 @@ public:
 	virtual bool CanVisualizeAsset(UObject* Object) override;
 
 private:
-	enum class ESeinAssetType : uint8 { None, Unit, Ability, Widget };
+	enum class ESeinAssetType : uint8 { None, Unit, Ability, Effect, Widget };
 	static ESeinAssetType ClassifyBlueprint(UObject* Object);
 	static FLinearColor GetBarColor(ESeinAssetType Type);
 

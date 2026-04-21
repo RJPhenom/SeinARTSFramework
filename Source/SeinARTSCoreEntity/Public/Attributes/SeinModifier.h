@@ -21,12 +21,20 @@ enum class ESeinModifierOp : uint8
 	Override    // Final = Value (last override wins)
 };
 
-/** Whether the modifier targets a single entity or all entities of an archetype. */
+/** What pool of entities (or player-state fields) the modifier influences.
+ *  Determined by the containing effect's scope (DESIGN §8). */
 UENUM(BlueprintType)
 enum class ESeinModifierScope : uint8
 {
-	Instance,   // Affects one entity
-	Archetype   // Affects all entities of an archetype owned by a player
+	/** Affects a single entity — modifier lives on the entity's FSeinActiveEffectsData. */
+	Instance,
+	/** Affects every entity owned by a player whose tags include TargetArchetypeTag —
+	 *  modifier lives on the player state's ArchetypeEffects list. */
+	Archetype,
+	/** Affects the player state itself (resource rates, caps, pop cap, upkeep) —
+	 *  modifier lives on the player state's PlayerEffects list. TargetComponentType
+	 *  points at FSeinPlayerState or a designer-authored sub-struct on it. */
+	Player
 };
 
 /**

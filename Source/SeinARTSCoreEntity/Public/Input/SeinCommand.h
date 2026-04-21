@@ -3,6 +3,8 @@
  * @file    SeinCommand.h
  * @brief   Deterministic command system. Commands are issued by players/AI
  *          and processed during the CommandProcessing tick phase.
+ *          CommandType is a gameplay tag under SeinARTS.Command.Type.* —
+ *          designer-extensible, version-stable for replays.
  */
 
 #pragma once
@@ -12,36 +14,21 @@
 #include "Core/SeinEntityHandle.h"
 #include "Types/Vector.h"
 #include "GameplayTagContainer.h"
+#include "StructUtils/InstancedStruct.h"
 #include "SeinCommand.generated.h"
-
-/** Types of commands that can be issued to entities. */
-UENUM(BlueprintType)
-enum class ESeinCommandType : uint8
-{
-	/** Activate an ability identified by gameplay tag */
-	ActivateAbility,
-	/** Cancel the currently active ability */
-	CancelAbility,
-	/** Queue a unit or research in a production building */
-	QueueProduction,
-	/** Cancel a specific item in the production queue */
-	CancelProduction,
-	/** Set a building's rally point */
-	SetRallyPoint,
-	/** Ping a location (processed by sim, emits visual event so all players see it) */
-	Ping,
-
-	// --- Observer commands (logged for replays, skipped by sim) ---
-
-	/** Periodic camera position snapshot for replay reconstruction */
-	CameraUpdate,
-	/** Player changed their selection and/or active focus */
-	SelectionChanged,
-};
 
 /**
  * A single deterministic command from a player or AI to an entity.
  * Fully value-typed and serializable for lockstep networking.
+ *
+ * CommandType is a gameplay tag. Framework-shipped types live under
+ * SeinARTS.Command.Type.* (see SeinARTSGameplayTags.h); observer-only
+ * types (logged for replay reconstruction but not processed by the sim)
+ * live under SeinARTS.Command.Type.Observer.*.
+ *
+ * Commands carry a fixed set of common fields plus an optional
+ * FInstancedStruct Payload for type-specific data (shift-queue info,
+ * broker orders, etc.). Simple commands leave Payload empty.
  */
 USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinCommand
@@ -56,9 +43,9 @@ struct SEINARTSCOREENTITY_API FSeinCommand
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
 	FSeinEntityHandle EntityHandle;
 
-	/** What kind of command this is */
+	/** What kind of command this is — a tag under SeinARTS.Command.Type.*  */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
-	ESeinCommandType CommandType = ESeinCommandType::ActivateAbility;
+	FGameplayTag CommandType;
 
 	/** Gameplay tag identifying the ability or archetype */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
@@ -106,9 +93,16 @@ struct SEINARTSCOREENTITY_API FSeinCommand
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command|Observer")
 	int32 ActiveFocusIndex = -1;
 
+	/** Optional typed payload for command types that need more than the common fields.
+	 *  Payload types are named USTRUCTs (FSeinShiftQueuePayload, FSeinBrokerOrderPayload, ...).
+	 *  Simple commands leave Payload empty. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Command")
+	FInstancedStruct Payload;
+
 	// --- Helpers ---
 
-	/** Returns true if this is an observer command (CameraUpdate, SelectionChanged) that the sim should skip. */
+	/** Returns true iff CommandType is a descendant of SeinARTS.Command.Type.Observer
+	 *  (logged for replay but skipped by the sim tick). */
 	bool IsObserverCommand() const;
 
 	// --- Factory methods ---

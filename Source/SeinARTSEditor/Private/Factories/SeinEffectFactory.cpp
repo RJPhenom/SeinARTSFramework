@@ -73,7 +73,7 @@ bool USeinEffectFactory::ConfigureProperties()
 
 FText USeinEffectFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinEffectFactoryDisplayName", "Effect");
+	return LOCTEXT("SeinEffectFactoryDisplayName", "SeinARTS Effect");
 }
 
 uint32 USeinEffectFactory::GetMenuCategories() const

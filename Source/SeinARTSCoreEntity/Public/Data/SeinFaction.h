@@ -1,8 +1,8 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinFaction.h
- * @brief   UDataAsset defining a playable faction: its identity, starting
- *          resources, available archetypes, and starting entities.
+ * @brief   UDataAsset defining a playable faction: its identity, resource kit,
+ *          available archetypes, and starting entities.
  */
 
 #pragma once
@@ -12,6 +12,7 @@
 #include "Core/SeinFactionID.h"
 #include "Types/FixedPoint.h"
 #include "Actor/SeinActor.h"
+#include "Data/SeinResourceTypes.h"
 #include "SeinFaction.generated.h"
 
 /**
@@ -36,9 +37,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")
 	TArray<TSubclassOf<ASeinActor>> AvailableUnitClasses;
 
-	/** Starting resources granted to players of this faction */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Economy")
-	TMap<FName, FFixedPoint> StartingResources;
+	/**
+	 * This faction's resource kit — which catalog resources are available to
+	 * players of this faction, plus optional per-faction overrides (starting
+	 * value, cap). Only catalog entries referenced here are usable by this
+	 * faction; unreferenced resources are ignored.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Economy",
+		meta = (TitleProperty = "ResourceTag"))
+	TArray<FSeinFactionResourceEntry> ResourceKit;
 
 	/** Entity classes to spawn on game start (e.g., HQ building) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Faction")

@@ -1,15 +1,21 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinCombatBPFL.cpp
- * @brief   Implementation of combat and spatial query Blueprint nodes.
+ * @brief   Thin combat BPFL — writes Health delta, fires visual events, bumps
+ *          attribution stats, triggers the death-handler flow. All damage math
+ *          (armor, types, accuracy) is the caller's job per DESIGN §11.
  */
 
 #include "Lib/SeinCombatBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Core/SeinEntityPool.h"
+#include "Components/SeinAbilityData.h"
 #include "Components/SeinTagData.h"
+#include "Abilities/SeinAbility.h"
+#include "Attributes/SeinAttributeResolver.h"
 #include "Events/SeinVisualEvent.h"
-#include "Math/MathLib.h"
+#include "Lib/SeinStatsBPFL.h"
+#include "Tags/SeinARTSGameplayTags.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinBPFL, Log, All);
 
@@ -19,6 +25,10 @@ USeinWorldSubsystem* USeinCombatBPFL::GetWorldSubsystem(const UObject* WorldCont
 	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull);
 	return World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
 }
+
+// =====================================================================
+// Reads
+// =====================================================================
 
 bool USeinCombatBPFL::SeinGetCombatData(const UObject* WorldContextObject, FSeinEntityHandle EntityHandle, FSeinCombatData& OutData)
 {
@@ -59,7 +69,11 @@ TArray<FSeinCombatData> USeinCombatBPFL::SeinGetCombatDataMany(const UObject* Wo
 	return Result;
 }
 
-void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FFixedPoint Damage, FSeinEntityHandle SourceHandle, FGameplayTag DamageTag)
+// =====================================================================
+// Damage / Heal
+// =====================================================================
+
+void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FFixedPoint Amount, FGameplayTag DamageType, FSeinEntityHandle SourceHandle)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
@@ -67,10 +81,73 @@ void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEn
 	FSeinEntity* Target = Subsystem->GetEntity(TargetHandle);
 	if (!Target || !Target->IsAlive()) return;
 
-	Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeDamageEvent(TargetHandle, SourceHandle, Damage));
+	FSeinCombatData* Combat = Subsystem->GetComponent<FSeinCombatData>(TargetHandle);
+	if (!Combat) return;
+
+	// Clamp damage to non-negative so "negative damage" (which would heal) must go
+	// through SeinApplyHeal instead.
+	if (Amount < FFixedPoint::Zero) Amount = FFixedPoint::Zero;
+
+	const FFixedPoint PrevHealth = Combat->Health;
+	Combat->Health = Combat->Health - Amount;
+	if (Combat->Health < FFixedPoint::Zero) Combat->Health = FFixedPoint::Zero;
+	const FFixedPoint ActualDelta = PrevHealth - Combat->Health;
+
+	// Visual event + attribution.
+	Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeDamageAppliedEvent(TargetHandle, SourceHandle, ActualDelta, DamageType));
+
+	const FSeinPlayerID TargetPlayer = Subsystem->GetEntityOwner(TargetHandle);
+	const FSeinPlayerID SourcePlayer = Subsystem->GetEntityOwner(SourceHandle);
+	if (SourcePlayer.IsValid())
+	{
+		USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourcePlayer, SeinARTSTags::Stat_TotalDamageDealt, ActualDelta);
+	}
+	if (TargetPlayer.IsValid())
+	{
+		USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_TotalDamageReceived, ActualDelta);
+	}
+
+	// Death flow — Health hit zero this call.
+	if (Combat->Health <= FFixedPoint::Zero && PrevHealth > FFixedPoint::Zero)
+	{
+		// Fan out kill + death attribution before any ability fires so stat bumps
+		// are guaranteed even if the death-handler destroys state we'd read.
+		if (TargetPlayer.IsValid())
+		{
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_UnitDeathCount, FFixedPoint::One);
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_UnitsLost, FFixedPoint::One);
+		}
+		if (SourcePlayer.IsValid() && SourcePlayer != TargetPlayer)
+		{
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourcePlayer, SeinARTSTags::Stat_UnitKillCount, FFixedPoint::One);
+			Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeKillEvent(SourceHandle, TargetHandle, SourcePlayer));
+		}
+
+		Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeDeathEvent(TargetHandle, SourceHandle));
+
+		// Optional death-handler ability: first ability on the entity carrying
+		// the `SeinARTS.DeathHandler` tag in its QueryTags gets activated.
+		// Ability then drives its own lifecycle via latent actions / OnEnd; the
+		// entity is queued for destruction immediately regardless (the
+		// handler's job is to express the death's gameplay consequences, not
+		// to stall cleanup).
+		if (FSeinAbilityData* Abilities = Subsystem->GetComponent<FSeinAbilityData>(TargetHandle))
+		{
+			for (USeinAbility* Ability : Abilities->AbilityInstances)
+			{
+				if (Ability && Ability->QueryTags.HasTagExact(SeinARTSTags::DeathHandler))
+				{
+					Ability->ActivateAbility(SourceHandle, Target->Transform.GetLocation());
+					break;
+				}
+			}
+		}
+
+		Subsystem->DestroyEntity(TargetHandle);
+	}
 }
 
-void USeinCombatBPFL::SeinApplyHealing(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FFixedPoint Amount, FSeinEntityHandle SourceHandle)
+void USeinCombatBPFL::SeinApplyHeal(const UObject* WorldContextObject, FSeinEntityHandle TargetHandle, FFixedPoint Amount, FGameplayTag HealType, FSeinEntityHandle SourceHandle)
 {
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return;
@@ -78,13 +155,108 @@ void USeinCombatBPFL::SeinApplyHealing(const UObject* WorldContextObject, FSeinE
 	FSeinEntity* Target = Subsystem->GetEntity(TargetHandle);
 	if (!Target || !Target->IsAlive()) return;
 
-	FSeinVisualEvent Event;
-	Event.Type = ESeinVisualEventType::Healed;
-	Event.PrimaryEntity = TargetHandle;
-	Event.SecondaryEntity = SourceHandle;
-	Event.Value = Amount;
-	Subsystem->EnqueueVisualEvent(Event);
+	FSeinCombatData* Combat = Subsystem->GetComponent<FSeinCombatData>(TargetHandle);
+	if (!Combat) return;
+
+	if (Amount < FFixedPoint::Zero) Amount = FFixedPoint::Zero;
+
+	// Resolve MaxHealth with active modifiers applied so tech / effect buffs to
+	// max-hp are respected; resolver is a no-op if no modifiers match.
+	const FFixedPoint ResolvedMax = Subsystem->ResolveAttribute(TargetHandle, FSeinCombatData::StaticStruct(), TEXT("MaxHealth"));
+	const FFixedPoint EffectiveMax = ResolvedMax > FFixedPoint::Zero ? ResolvedMax : Combat->MaxHealth;
+
+	const FFixedPoint PrevHealth = Combat->Health;
+	Combat->Health = Combat->Health + Amount;
+	if (Combat->Health > EffectiveMax) Combat->Health = EffectiveMax;
+	const FFixedPoint ActualDelta = Combat->Health - PrevHealth;
+
+	Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeHealAppliedEvent(TargetHandle, SourceHandle, ActualDelta, HealType));
+
+	const FSeinPlayerID SourcePlayer = Subsystem->GetEntityOwner(SourceHandle);
+	if (SourcePlayer.IsValid())
+	{
+		USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourcePlayer, SeinARTSTags::Stat_TotalHealsDealt, ActualDelta);
+	}
 }
+
+void USeinCombatBPFL::SeinApplySplashDamage(const UObject* WorldContextObject, FFixedVector Center, FFixedPoint Radius, FFixedPoint Amount, FFixedPoint Falloff, FGameplayTag DamageType, FSeinEntityHandle SourceHandle)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem || Radius <= FFixedPoint::Zero) return;
+
+	const FFixedPoint RadiusSq = Radius * Radius;
+	const FSeinEntityPool& Pool = Subsystem->GetEntityPool();
+
+	// Clamp falloff into [0, 1] so designers get sensible behavior from out-of-range inputs.
+	if (Falloff < FFixedPoint::Zero) Falloff = FFixedPoint::Zero;
+	if (Falloff > FFixedPoint::One) Falloff = FFixedPoint::One;
+
+	TArray<TPair<FSeinEntityHandle, FFixedPoint>> Hits;
+	Pool.ForEachEntity([&](FSeinEntityHandle Handle, const FSeinEntity& Entity)
+	{
+		const FFixedVector Delta = Entity.Transform.GetLocation() - Center;
+		const FFixedPoint DistSq = FFixedVector::DotProduct(Delta, Delta);
+		if (DistSq > RadiusSq) return;
+
+		// Linear falloff: at center = Amount, at edge = Amount * (1 - Falloff).
+		// Distance uses Size() (sqrt) for the falloff math — sim-cheap enough at
+		// typical splash counts; callers worried about perf can implement their
+		// own distance-squared curve and skip this helper.
+		const FFixedPoint Dist = Delta.Size();
+		const FFixedPoint DistRatio = Radius > FFixedPoint::Zero ? (Dist / Radius) : FFixedPoint::Zero;
+		const FFixedPoint Mul = FFixedPoint::One - (Falloff * DistRatio);
+		const FFixedPoint HitAmount = Amount * Mul;
+		if (HitAmount > FFixedPoint::Zero)
+		{
+			Hits.Add({ Handle, HitAmount });
+		}
+	});
+
+	for (const TPair<FSeinEntityHandle, FFixedPoint>& Hit : Hits)
+	{
+		SeinApplyDamage(WorldContextObject, Hit.Key, Hit.Value, DamageType, SourceHandle);
+	}
+}
+
+// =====================================================================
+// Generic mutation escape hatch
+// =====================================================================
+
+bool USeinCombatBPFL::SeinMutateAttribute(const UObject* WorldContextObject, FSeinEntityHandle Target, UScriptStruct* ComponentStruct, FName FieldName, FFixedPoint Delta)
+{
+	if (!ComponentStruct) return false;
+
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) return false;
+
+	ISeinComponentStorage* Storage = Subsystem->GetComponentStorageRaw(ComponentStruct);
+	if (!Storage) return false;
+
+	void* CompData = Storage->GetComponentRaw(Target);
+	if (!CompData) return false;
+
+	const FFixedPoint Current = FSeinAttributeResolver::ReadFixedPointField(CompData, ComponentStruct, FieldName);
+	FSeinAttributeResolver::WriteFixedPointField(CompData, ComponentStruct, FieldName, Current + Delta);
+	return true;
+}
+
+// =====================================================================
+// PRNG
+// =====================================================================
+
+bool USeinCombatBPFL::SeinRollAccuracy(const UObject* WorldContextObject, FFixedPoint BaseAccuracy)
+{
+	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
+	if (!Subsystem) return false;
+
+	if (BaseAccuracy <= FFixedPoint::Zero) return false;
+	if (BaseAccuracy >= FFixedPoint::One) return true;
+	return Subsystem->SimRandom.Bool(BaseAccuracy);
+}
+
+// =====================================================================
+// Spatial / distance helpers (unchanged)
+// =====================================================================
 
 TArray<FSeinEntityHandle> USeinCombatBPFL::SeinGetEntitiesInRange(const UObject* WorldContextObject, FFixedVector Origin, FFixedPoint Radius, FGameplayTagContainer FilterTags)
 {

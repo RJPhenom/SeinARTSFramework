@@ -16,40 +16,11 @@
 #include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
-#include "Attributes/SeinModifier.h"
+#include "Data/SeinResourceTypes.h"
+#include "Components/SeinProductionData.h"
 #include "SeinArchetypeDefinition.generated.h"
 
-/**
- * A single mapping from a command context (set of gameplay tags describing the
- * click/input context) to the ability that should be activated.
- *
- * Designers populate an array of these on USeinArchetypeDefinition. When the
- * player right-clicks, the controller builds a context tag set and finds the
- * highest-priority mapping whose RequiredContext is a subset of the actual context.
- *
- * Example for a Medic:
- *   Priority 100: {RightClick, Target.Friendly, Target.Transport} → Ability.Embark
- *   Priority  50: {RightClick, Target.Friendly}                   → Ability.Heal
- *   Priority  50: {RightClick, Target.Enemy}                      → Ability.Attack
- *   Priority   0: {RightClick, Target.Ground}                     → Ability.Movement
- */
-USTRUCT(BlueprintType, meta = (SeinDeterministic))
-struct SEINARTSCOREENTITY_API FSeinCommandMapping
-{
-	GENERATED_BODY()
-
-	/** Context tags that must ALL be present for this mapping to match. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Command")
-	FGameplayTagContainer RequiredContext;
-
-	/** Ability tag to activate when this mapping matches. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Command")
-	FGameplayTag AbilityTag;
-
-	/** Higher priority mappings are checked first. Most specific mapping should have highest priority. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Command")
-	int32 Priority = 0;
-};
+class USeinEffect;
 
 /**
  * Reference to a row in a DataTable that holds component default data.
@@ -111,11 +82,20 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FGameplayTag ArchetypeTag;
 
+	/** If true, this entity has no visible actor representation. The actor bridge
+	 *  skips spawning a UE actor for it; visual events targeting this entity no-op.
+	 *  Use for scenario owners, squad containers, command brokers, and other
+	 *  abstract sim-only entities that need storage but no render presence. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
+	bool bIsAbstract = false;
+
 	// ========== Production ==========
 
-	/** Resource cost to produce this entity. Keys are resource names (e.g., "Manpower", "Fuel"). */
+	/** Resource cost to produce this entity. Keyed by SeinARTS.Resource.* tags.
+	 *  Cost entries split into AtEnqueue / AtCompletion buckets at queue time based
+	 *  on each resource's `ProductionDeductionTiming` in the catalog (§6 + §9). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
-	TMap<FName, FFixedPoint> ProductionCost;
+	FSeinResourceCost ProductionCost;
 
 	/** Time in sim-seconds to produce this entity. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
@@ -125,46 +105,27 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	FGameplayTagContainer PrerequisiteTags;
 
-	// ========== Research ==========
+	/** Refund policy applied when this entry is cancelled mid-build. DESIGN §9 Q2 —
+	 *  default progress-proportional refund of the AtEnqueue bucket (AtCompletion
+	 *  resources were never deducted and don't refund). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
+	FSeinProductionRefundPolicy RefundPolicy;
 
-	/** If true, completing production grants a tech tag instead of spawning a unit. */
+	// ========== Research (DESIGN §10 — tech is an effect) ==========
+
+	/** If true, completing production applies `GrantedTechEffect` to the owning
+	 *  player instead of spawning a unit. DESIGN §10 unifies tech with effects. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
 	bool bIsResearch = false;
 
-	/** Tech tag granted to the player when research completes. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (EditCondition = "bIsResearch"))
-	FGameplayTag GrantedTechTag;
+	/** USeinEffect class applied on research completion. The effect's scope
+	 *  (Instance / Archetype / Player) determines where modifiers land; its
+	 *  `EffectTag` + `GrantedTags` become player tags (refcounted) per §10. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype",
+		meta = (EditCondition = "bIsResearch"))
+	TSubclassOf<USeinEffect> GrantedTechEffect;
 
-	/** Archetype modifiers granted to the player when research completes (e.g., stat bonuses). */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype", meta = (EditCondition = "bIsResearch"))
-	TArray<FSeinModifier> GrantedModifiers;
-
-	// ========== Command Resolution ==========
-
-	/**
-	 * Default command mappings for this entity type.
-	 * Maps input contexts (tag sets) to ability tags. Used by the player controller
-	 * to resolve "right-click on X" into the correct ability activation.
-	 * Sorted by priority at resolve time — highest priority match wins.
-	 *
-	 * See FSeinCommandMapping for detailed usage examples.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
-	TArray<FSeinCommandMapping> DefaultCommands;
-
-	/**
-	 * Fallback ability tag when no command mapping matches.
-	 * Typically set to Ability.Movement so unmapped contexts default to move.
-	 * If empty, no command is issued for unmatched contexts.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype")
-	FGameplayTag FallbackAbilityTag;
-
-	/**
-	 * Resolve a command context to an ability tag using this archetype's mappings.
-	 * @param Context - Tags describing the input context (e.g., RightClick + Target.Enemy)
-	 * @return The best-matching ability tag, or FallbackAbilityTag if no mapping matches.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Archetype")
-	FGameplayTag ResolveCommandContext(const FGameplayTagContainer& Context) const;
+	// Command-context resolution moved to FSeinAbilityData per DESIGN §7 Q9.
+	// Designers author DefaultCommands + FallbackAbilityTag on the abilities
+	// component; the archetype no longer carries input-mapping concerns.
 };

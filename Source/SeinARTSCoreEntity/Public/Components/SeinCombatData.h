@@ -2,9 +2,9 @@
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  *
  * @file:    SeinCombatData.h
- * @brief:   Sim-side combat component data. Deterministic, stored in ECS
- *           storage; the USeinCombatComponent UActorComponent carries this
- *           struct as its sim payload.
+ * @brief:   Minimal combat state per DESIGN §11. The framework only owns
+ *           Health + MaxHealth; damage types, armor, accuracy, weapons are
+ *           designer-authored via extension components and ability scripts.
  */
 
 #pragma once
@@ -13,7 +13,6 @@
 #include "Engine/DataTable.h"
 #include "Components/SeinComponent.h"
 #include "Types/FixedPoint.h"
-#include "Types/EntityID.h"
 #include "SeinCombatData.generated.h"
 
 USTRUCT(BlueprintType, meta = (SeinDeterministic))
@@ -21,41 +20,25 @@ struct SEINARTSCOREENTITY_API FSeinCombatData : public FSeinComponent
 {
 	GENERATED_BODY()
 
-	/** Damage dealt per attack */
+	/** Maximum health. Designers author via the archetype; runtime modifiers come
+	 *  through the attribute resolver. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
-	FFixedPoint AttackDamage;
+	FFixedPoint MaxHealth;
 
-	/** Attack range */
+	/** Current health. Reaches zero → death flow in USeinCombatBPFL::SeinApplyDamage
+	 *  activates any ability tagged `SeinARTS.DeathHandler` then destroys the entity. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
-	FFixedPoint AttackRange;
-
-	/** Time between attacks (seconds) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Combat")
-	FFixedPoint AttackCooldown;
-
-	/** Current cooldown remaining */
-	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Combat")
-	FFixedPoint CurrentCooldown;
-
-	/** Current attack target (if any) */
-	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Combat")
-	FSeinID TargetEntity;
+	FFixedPoint Health;
 
 	FSeinCombatData()
-		: AttackDamage(FFixedPoint::FromInt(10))
-		, AttackRange(FFixedPoint::FromInt(2))
-		, AttackCooldown(FFixedPoint::FromFloat(1.0f))
-		, CurrentCooldown(FFixedPoint::Zero)
-		, TargetEntity(FSeinID::Invalid())
+		: MaxHealth(FFixedPoint::FromInt(100))
+		, Health(FFixedPoint::FromInt(100))
 	{}
 };
 
 FORCEINLINE uint32 GetTypeHash(const FSeinCombatData& Component)
 {
-	uint32 Hash = GetTypeHash(Component.AttackDamage);
-	Hash = HashCombine(Hash, GetTypeHash(Component.AttackRange));
-	Hash = HashCombine(Hash, GetTypeHash(Component.AttackCooldown));
-	Hash = HashCombine(Hash, GetTypeHash(Component.CurrentCooldown));
-	Hash = HashCombine(Hash, GetTypeHash(Component.TargetEntity));
+	uint32 Hash = GetTypeHash(Component.MaxHealth);
+	Hash = HashCombine(Hash, GetTypeHash(Component.Health));
 	return Hash;
 }

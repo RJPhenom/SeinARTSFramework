@@ -4,6 +4,7 @@
 #include "Abilities/SeinLatentAction.h"
 #include "SeinPathTypes.h"
 #include "Movement/SeinMovementKinematicState.h"
+#include "Grid/SeinFlowFieldPlan.h"
 #include "SeinMoveToAction.generated.h"
 
 class USeinPathfinder;
@@ -46,12 +47,21 @@ public:
 	UPROPERTY()
 	FSeinPath Path;
 
-	bool IsPathValid() const { return Path.bIsValid; }
+	/** Flow-field plan for the move. Built on first tick; cached by PlanID. */
+	UPROPERTY()
+	FSeinFlowFieldPlan FlowPlan;
+
+	bool IsPathValid() const { return Path.bIsValid || FlowPlan.bValid; }
 
 private:
 	FFixedVector Destination;
 	FFixedPoint AcceptanceRadiusSq;
+
+	/** Legacy A*-path waypoint cursor (only used when FlowPlan.bValid == false). */
 	int32 CurrentWaypointIndex = 0;
+
+	/** Flow-plan step cursor (the step the entity is currently traversing). */
+	int32 CurrentStepIndex = 0;
 
 	UPROPERTY()
 	TObjectPtr<USeinPathfinder> Pathfinder;

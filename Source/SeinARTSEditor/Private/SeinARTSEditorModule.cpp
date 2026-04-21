@@ -29,6 +29,8 @@
 #include "PropertyEditorModule.h"
 #include "Details/SeinFixedPointDetails.h"
 #include "Details/SeinInstancedStructDetails.h"
+#include "Details/SeinNavVolumeDetails.h"
+#include "Volumes/SeinNavVolume.h"
 #include "Brokers/SeinStructAssetBroker.h"
 #include "ComponentAssetBroker.h"
 #include "Components/ActorComponents/SeinStructComponent.h"
@@ -118,6 +120,10 @@ void FSeinARTSEditorModule::StartupModule()
 			TEXT("InstancedStruct"),
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinInstancedStructDetails::MakeInstance));
 
+		PropertyModule.RegisterCustomClassLayout(
+			ASeinNavVolume::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinNavVolumeDetails::MakeInstance));
+
 		PropertyModule.NotifyCustomizationModuleChanged();
 	}
 }
@@ -129,6 +135,7 @@ void FSeinARTSEditorModule::ShutdownModule()
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("FixedPoint"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("InstancedStruct"));
+		PropertyModule.UnregisterCustomClassLayout(ASeinNavVolume::StaticClass()->GetFName());
 	}
 
 	if (SeinPinFactory.IsValid())

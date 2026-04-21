@@ -17,10 +17,13 @@
 #include "SeinMovementProfile.generated.h"
 
 class USeinPathfinder;
+class USeinNavigationGrid;
 struct FSeinEntity;
 struct FSeinMovementData;
 struct FSeinPath;
 struct FSeinPathRequest;
+struct FSeinFlowFieldPlan;
+struct FSeinClusterFlowField;
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
 class SEINARTSNAVIGATION_API USeinMovementProfile : public UObject
@@ -54,4 +57,32 @@ public:
 		FFixedPoint DeltaTime,
 		FSeinMovementKinematicState& KinState,
 		int32& OutWaypointReached) const PURE_VIRTUAL(USeinMovementProfile::AdvanceAlongPath, return true;);
+
+	/**
+	 * Flow-field-based advancement (DESIGN §13). Consumes the current step's
+	 * cluster flow field + the step's goal cell, produces motion respecting
+	 * physical constraints. Returns true when the entity has reached its step
+	 * goal (caller advances the plan cursor). The base implementation does
+	 * straight-line seek — subclasses override for turn-rate / acceleration
+	 * curves / formation offsets.
+	 *
+	 * @param Grid              Navigation grid (for coord conversions).
+	 * @param Entity            Sim entity being moved.
+	 * @param MoveComp          Movement component (speed/accel/turn).
+	 * @param Field             Current cluster's flow field.
+	 * @param StepGoalWorld     World-space goal cell center for this step.
+	 * @param AcceptanceRadiusSq Squared arrival tolerance for step completion.
+	 * @param DeltaTime         Sim tick delta.
+	 * @param KinState          (in-out) transient kinematic state.
+	 * @return true when the entity has reached this step's goal cell.
+	 */
+	virtual bool AdvanceViaFlowField(
+		const USeinNavigationGrid* Grid,
+		FSeinEntity& Entity,
+		const FSeinMovementData& MoveComp,
+		const FSeinClusterFlowField& Field,
+		const FFixedVector& StepGoalWorld,
+		FFixedPoint AcceptanceRadiusSq,
+		FFixedPoint DeltaTime,
+		FSeinMovementKinematicState& KinState) const;
 };

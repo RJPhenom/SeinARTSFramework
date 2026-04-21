@@ -308,8 +308,8 @@ FSeinAbilityInfo USeinEntityViewModel::BuildAbilityInfo(const USeinAbility* Abil
 	Info.bIsOnCooldown = Ability->IsOnCooldown();
 	Info.QueryTags = Ability->QueryTags;
 
-	// Convert resource cost from FFixedPoint to float
-	for (const auto& Pair : Ability->ResourceCost)
+	// Convert tag-keyed resource cost from FFixedPoint to float for display
+	for (const auto& Pair : Ability->ResourceCost.Amounts)
 	{
 		Info.ResourceCost.Add(Pair.Key, Pair.Value.ToFloat());
 	}

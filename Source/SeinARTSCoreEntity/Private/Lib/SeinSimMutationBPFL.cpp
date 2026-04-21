@@ -139,7 +139,9 @@ bool USeinSimMutationBPFL::SeinSetRallyPoint(const UObject* WCO, FSeinEntityHand
 	if (!S) return false;
 	FSeinProductionData* D = S->GetComponent<FSeinProductionData>(H);
 	if (!D) { UE_LOG(LogSeinBPFL, Warning, TEXT("SetRallyPoint: entity %s has no FSeinProductionData"), *H.ToString()); return false; }
-	D->RallyPoint = V;
+	D->RallyTarget.bIsEntityTarget = false;
+	D->RallyTarget.Location = V;
+	D->RallyTarget.EntityTarget = FSeinEntityHandle();
 	return true;
 }
 

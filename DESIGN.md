@@ -215,7 +215,9 @@ Gameplay tags on entities. Used for arbitration, queries, classification, and cr
 SeinARTS.Unit.<Class>[.<Subtype>]         // Unit.Infantry.Sniper, Unit.Vehicle.Tank
 SeinARTS.Ability.<Name>                   // Ability.Move, Ability.Sprint
 SeinARTS.State.<Name>                     // State.Channeling, State.Stealthed
-SeinARTS.CommandContext.<Context>         // CommandContext.RightClickGround
+SeinARTS.Command.Type.<Type>              // Command.Type.ActivateAbility, Command.Type.QueueProduction
+SeinARTS.Command.Context.<Context>        // Command.Context.RightClick, Command.Context.Target.Enemy
+SeinARTS.Command.Reject.<Reason>          // Command.Reject.Unaffordable, Command.Reject.PathUnreachable
 SeinARTS.Terrain.<Category>.<Subcategory> // Terrain.Cover.Heavy
 SeinARTS.Resource.<Name>                  // Resource.Munitions
 SeinARTS.Tech.<Name>                      // Tech.EfficientProduction
@@ -254,7 +256,7 @@ See also: **§5 CommandBrokers** (the sim-side primitive that mediates commands 
 
 - **Local debug output is separate from the txn log.** The current in-editor command log overlay shows post-resolution `ActivateAbility [tag]` lines. That's debug visibility, not wire-format. Belt + suspenders at zero cost — the wire stays minimal, designers still see resolved actions.
 
-- **CommandType uses gameplay tags, not a C++ enum.** Namespace: `SeinARTS.CommandType.*`. Reasons: designers can add their own command types in content without C++ changes; replay format is version-stable (tag strings, not enum ordinals); pairs naturally with the existing `SeinARTS.CommandContext.*` namespace.
+- **CommandType uses gameplay tags, not a C++ enum.** Namespace: `SeinARTS.Command.Type.*`. Reasons: designers can add their own command types in content without C++ changes; replay format is version-stable (tag strings, not enum ordinals); pairs naturally with the `SeinARTS.Command.Context.*` click-intent namespace and the `SeinARTS.Command.Reject.*` reason-tag namespace (§13 path-reject plumbing).
 
 - **Command payload: common fields + optional typed payload.** `FSeinCommand` carries a fixed set of common fields (PlayerID, CommandType tag, IssueTick, EntityHandle, TargetEntity, TargetLocation, ContextOrAbilityTag) plus an **optional `FInstancedStruct Payload`** for command types that need more. Payload types are named USTRUCTs (`FSeinShiftQueuePayload`, `FSeinBrokerOrderPayload`, etc.), never free-form bags. Simple commands leave the payload empty.
 
@@ -284,10 +286,10 @@ See also: **§5 CommandBrokers** (the sim-side primitive that mediates commands 
 
 ### Implementation deltas that fall out
 
-- Convert `ESeinCommandType` enum to an `FGameplayTag CommandType` field. Framework-shipped types live in `SeinARTS.CommandType.*` (ActivateAbility, CancelAbility, QueueProduction, CancelProduction, SetRallyPoint, Ping, CameraUpdate, SelectionChanged, ChatMessage, Emote, etc.).
+- Convert `ESeinCommandType` enum to an `FGameplayTag CommandType` field. Framework-shipped types live in `SeinARTS.Command.Type.*` (ActivateAbility, CancelAbility, QueueProduction, CancelProduction, SetRallyPoint, Ping, CameraUpdate, SelectionChanged, ChatMessage, Emote, etc.).
 - Add optional `FInstancedStruct Payload` field to `FSeinCommand`.
 - Add `FSeinVisualEvent::MakeCommandRejectedEvent(reason, context)` + emit from all `ProcessCommands` rejection branches.
-- Retire `IsObserverCommand()` as an enum-switch; either add an `FGameplayTag` flag on the tag (`SeinARTS.CommandType.Observer.*` prefix) or a sidecar set of observer-type tags — design choice during implementation.
+- Retire `IsObserverCommand()` as an enum-switch; either add an `FGameplayTag` flag on the tag (`SeinARTS.Command.Type.Observer.*` prefix) or a sidecar set of observer-type tags — design choice during implementation.
 - Extend the observer command set: `ChatMessage`, `Emote`, `Ping` already exist; add `ControlGroupAssigned` explicitly.
 
 ---
@@ -308,7 +310,7 @@ Player right-clicks with 20 heterogeneous units selected (sniper + 2 rifle squad
 6. Holds the command queue for shift-chained orders
 7. Self-spawns when an order arrives; self-culls when empty
 
-The txn log carries ONE entry per player click regardless of selection size (`FSeinCommand { CommandType=SeinARTS.CommandType.BrokerOrder, MemberHandles, TargetLocation, Context }`). Each client's sim spawns or reuses a broker, runs the resolver, dispatches.
+The txn log carries ONE entry per player click regardless of selection size (`FSeinCommand { CommandType=SeinARTS.Command.Type.BrokerOrder, MemberHandles, TargetLocation, Context }`). Each client's sim spawns or reuses a broker, runs the resolver, dispatches.
 
 ### Decisions
 
@@ -1096,6 +1098,22 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
   - The ability the command triggers executes at current sim state — the enemy may have moved; attack-move will discover them in their new position.
   - No ghost-filtering or sim rejection on "target-not-visible" — that's a UI-layer hint only.
 
+### Multi-layer vision
+
+When a map uses §13's multi-layer navigation (overpass + underpass, multi-story buildings, bridges), vision is also per-layer. An enemy on the overpass isn't visible to a unit on the underpass through the overpass floor.
+
+- `FSeinVisionGroup` carries per-layer cell bitfields — one `TBitArray<>` per layer per framework-bit (Explored / Visible) per custom layer bit. Storage: `NumNavLayers × VisionCellCount × NumPackedVisionLayers` bits per group. Layers can be sparse (a layer only exists on cells where nav-layer content exists).
+- Vision stamp delta operates per-layer: the entity's vision stamp only writes to cells on its own layer. Entity's layer resolves from its current sim transform via the `USeinNavigationGrid::ResolveCellAddress(worldPos)` query.
+- `FSeinVisionBlockerData` carries a `Layer` field; its clipped raycasts only affect stamps on its layer.
+- Unit-visibility queries (`SeinIsEntityVisible`) look up the target's layer first, then check the observer's VisionGroup on that layer.
+- Template cache keys extend to `{Radius, PerceptionLayers, LayerIndex}` — a template stamped on layer 0 differs from one stamped on layer 1 if blocker geometry differs at that XY. (Flat-map games never hit the layer-index dimension of the cache; zero overhead.)
+
+**Memory impact:** flat single-layer maps pay zero extra. A 2-layer 2048² × 4:1 coarseness × 8 groups × 2 packed bytes ≈ 8 MB (double the single-layer ~4 MB). At massive-scale 5000² × 2 layers × 8 groups × 2 bytes ≈ 50 MB per extra layer. Multi-layer games pay per extra layer; flat maps pay nothing.
+
+**Non-goals:**
+- Cross-layer vision sharing. Layers are visually independent. "See through a grated floor" is designer-scripted — either propagate manually via effects, or author blockers to allow partial visibility.
+- Vision-based layer occlusion (e.g., overpass roof auto-blocks vision below). Blockers are explicit `FSeinVisionBlockerData` entities; designers author them.
+
 ### Future optimization variants (noted, not built)
 
 Locked defaults already include the biggest wins (coarse vision grid, 4-bit packed refcounts, tile partitioning, 4-tick batching). Further variants for extreme scales:
@@ -1130,6 +1148,7 @@ Locked defaults already include the biggest wins (coarse vision grid, 4-bit pack
 - `EntityEnteredVision` / `EntityExitedVision` visual events + enum entries.
 - Plugin settings: `VisionLayers`, `FogRenderTickRate` (default 10 Hz), `VisionCellsPerNavCell` (default 1, Variant A hook), `VisionTileSize` (default 0, Variant B hook).
 - Render-side fog subsystem in `SeinARTSFramework` that ticks at `FogRenderTickRate` and reads the current VisionGroup bitfield for the local player.
+- Multi-layer vision (when §13 multi-layer nav is active): `FSeinVisionGroup` grows per-layer bitfields + per-layer refcount arrays; `FSeinVisionBlockerData` carries a `Layer` field; template cache key extends to `{Radius, PerceptionLayers, LayerIndex}`; stamp delta + visibility queries resolve per-layer via `USeinNavigationGrid::ResolveCellAddress(worldPos)`.
 
 ---
 
@@ -1182,6 +1201,24 @@ struct FSeinCellData_HeightSlope : public FSeinCellData_Flat
 Plugin setting `ElevationMode` picks which struct the grid allocates. Queries go through a virtual interface; games with no elevation don't pay for height fields. Designers may subclass for game-specific extensions.
 
 **Default is 4 inline tag indices, not 2.** Memory: +2 bytes per cell for 2× fast-path capacity. At 2048² that's +8 MB — worth it. Cells with more than 4 tags spill into a sparse overflow `TMap<int32 CellIndex, TArray<uint8>> CellTagOverflow` on the grid. Rare path.
+
+### Agent clearance — multi-size pathing
+
+A single walkability bit isn't enough when agents span a wide size range (infantry + tanks, marines + mechs, workers + capital ships). A 2m-radius vehicle can't fit through a 1m gap that a soldier clears. Clearance-field addressing solves this without per-agent full-grid replication:
+
+**Clearance field (default, one per layer):**
+- Each cell stores a `uint8 Clearance` value = quantized Euclidean distance to the nearest blocked cell, computed once at bake via a standard distance transform.
+- Pathfinder queries compare `Clearance ≥ AgentRadius` at each cell on the candidate path. Failing cells are treated as blocked for that agent.
+- Bigger agents automatically get wider paths; smaller agents can take tight routes. 1 byte per cell per layer.
+- Added to `FSeinCellData_Flat` as an extra field → cell size grows to 5 bytes (or 4 with one tag-index slot reduced). Plugin-setting toggle to omit clearance entirely for uniform-agent-size games.
+
+**Optional: per-class clearance layers.** For games with extreme agent-size spread, plugin setting `USeinARTSCoreSettings::AgentRadiusClasses: TArray<FFixedPoint>` declares N size bins. Bake produces one clearance field per class (1 byte per cell per class per layer). Entities declare their class via `FSeinFootprintData::AgentClass: uint8` (index into the plugin setting). Pathfinder picks the clearance field matching the agent's class. Opt-in — default is the single clearance field above.
+
+**Accuracy limit.** Clearance is discrete at cell granularity. A 5m agent trying to fit through a 5.5m gap on a 1m grid only sees integer clearances (5 or 6, not 5.5). For games with agents >10× cell size, either use a coarser grid or opt into per-class layers. The framework's guidance that cell size should match unit scale (§13 intro, memory examples) is load-bearing for mixed-size games.
+
+**Non-goals:**
+- Footprint-shape-aware pathing (oriented rectangles, polygons). Clearance is isotropic (radius-based). Designers needing oriented-footprint pathing subclass `USeinMovementProfile` for rotation-aware local queries.
+- Per-entity clearance overrides at runtime. Classes are declared up-front; runtime swaps aren't supported.
 
 ### Per-map tag palette
 
@@ -1248,11 +1285,12 @@ Pathing at the scales we target needs three layers working together. Locked as b
 
 **4. Steering — `USeinMovementProfile` subclasses.**
 - Given current state + target position + flow direction, produces motion respecting physical constraints.
-- `USeinInfantryMovementProfile` — tight agility, RVO avoidance, sub-cell pathing.
+- `USeinInfantryMovementProfile` — tight agility, fixed-point separation steering, sub-cell pathing.
 - `USeinWheeledMovementProfile` — min-turn-radius, no pivot in place, acceleration curves.
 - `USeinTrackedMovementProfile` — pivot allowed (slow), heavy mass, acceleration curves.
 - Designer-extensible (sea, air, spacecraft, hovercraft profiles). Already scaffolded in the framework.
 - Steering consumes flow-field direction as input; formation resolver as position target; physics simulated in fixed-point.
+- **Collision avoidance is deterministic flocking, not RVO.** `USeinSteeringBPFL` ships fixed-point `SeinGetSeparationForce` / `SeinGetCohesionForce` / `SeinGetAlignmentForce` as designer-composable primitives. Reciprocal Velocity Obstacles (RVO) is inherently floating-point and non-trivially deterministic; flocking is simpler, deterministic by construction, and visually sufficient at RTS agent densities. Profiles compose these forces with flow-field direction to produce the final velocity each tick.
 
 **Why all four, not just one:**
 - Flow field alone = can't abstract long distances, can't represent formations.
@@ -1272,7 +1310,172 @@ Broker order → HPA* picks cluster sequence → regional flow fields cached per
 This works at both ends of the spectrum:
 - **Small-squad tactical games, 1 m cells**: flow fields at 32×32 tile resolution give cell-level direction; Infantry profile with tight RVO handles close quarters.
 - **Massive-unit games, 8 m cells, vehicle columns**: flow fields at 32×32 tile = 256 m × 256 m regions; Wheeled profile enforces turn radius; column formation.
-- **Large-formation games, 1-2 m cells, 100-member block formation**: flow field for the formation anchor; formation resolver places members in locked ranks; Infantry-TightFormation profile with RVO off.
+- **Large-formation games, 1-2 m cells, 100-member block formation**: flow field for the formation anchor; formation resolver places members in locked ranks; Infantry-TightFormation profile with separation forces disabled (members hold formation rather than fanning out).
+
+### NavLinks — traversal-ability edges
+
+Not every walkable connection is a continuous run of cells. Vaulting over a fence, dropping off a ledge, climbing a short wall, entering a building through a specific door — these are discrete traversals driven by a dedicated ability, not by steering.
+
+NavLinks are **abstract-graph edges** that sit alongside HPA*'s cluster-border edges. They're authored by a designer placing an `ASeinNavLinkProxy` actor with two endpoint transforms; at bake, the link registers with the nav grid's abstract graph.
+
+```cpp
+UCLASS()
+class ASeinNavLinkProxy : public AActor
+{
+    UPROPERTY(EditAnywhere) FTransform StartEndpoint;
+    UPROPERTY(EditAnywhere) FTransform EndEndpoint;
+    UPROPERTY(EditAnywhere) TSubclassOf<USeinAbility> TraversalAbility;
+    UPROPERTY(EditAnywhere) uint16 AdditionalCost = 0;       // added to the base cell-to-cell cost
+    UPROPERTY(EditAnywhere) bool bBidirectional = true;
+    UPROPERTY(EditAnywhere) FGameplayTagQuery EligibilityQuery; // empty = any entity
+};
+```
+
+At bake, each placed link:
+1. Resolves each endpoint transform to an `FSeinCellAddress` (layer + XY, via downward trace from the transform into the nav grid).
+2. Writes an abstract-graph edge `{ src, dst, base_cost + AdditionalCost, TraversalAbility, EligibilityQuery }`.
+3. Writes the reverse edge too if `bBidirectional`.
+
+**HPA* consumes navlinks as first-class edges.** Pathfinding doesn't care whether an edge is a cluster-border crossing or a navlink — both have a source cell, destination cell, cost, and (for navlinks) an associated traversal ability. `EligibilityQuery` filters links from the pathfinder's perspective: a unit tagged `Vehicle` won't consider a link tagged infantry-only.
+
+**Traversal flow:**
+
+1. HPA* plan includes an abstract edge that is a navlink: `... → cell X → navlink_23 → cell Y → ...`.
+2. Unit flow-field-steers toward cell X (the link's entry cell) within its current cluster.
+3. On arrival at cell X, the movement profile detects "next step in my plan is a navlink" and hands off to `TraversalAbility`.
+4. The traversal ability plays its animation + deterministically moves the unit to cell Y (possibly on a different layer). Ability-end fires a completion hook.
+5. Broker advances the unit's plan-cursor past the navlink; unit reads its next cluster's flow field and steering resumes.
+
+**Starter abilities under `SeinARTS.Starter.*`:**
+- `USeinAbility_Vault` — bidirectional, jump-over-cover animation.
+- `USeinAbility_DropDown` — one-way, fall-off-ledge animation.
+- `USeinAbility_Climb` — one-way, climb-up animation.
+
+Framework ships these as examples; designers author their own (rope-swing, teleporter, portal, jetpack, whatever) by subclassing `USeinAbility` and assigning it to a link's `TraversalAbility`.
+
+**Runtime toggling** via `SeinSetNavLinkEnabled(linkId, bEnabled)` — destroying a bridge disables the link's edge (HPA* paths through it invalidate, affected flow fields evict); re-enabling restores it. No re-bake needed.
+
+**Non-goals:**
+- Framework-prescribed traversal animations or physics. Designer-authored.
+- Curved nav-link paths. Endpoints are two fixed cells; trajectory between them is the traversal ability's responsibility.
+- Auto-detection of navlink opportunities from level geometry. Designers place them deliberately.
+
+### Multi-layer navigation
+
+An overpass + underpass stack, a multi-story building with floors, a bridge across a canyon — these require two or more walkable surfaces sharing the same XY footprint. §13's compact cell storage is flat 2D (`TArray<CellData>` indexed by `y * width + x`). Multi-layer support is added by **per-layer grids stitched via navlinks**.
+
+**Model:**
+
+- `USeinNavigationGrid` carries `TArray<FSeinNavigationLayer> Layers` where each layer is a self-contained 2D grid (cells, tiles, HPA* clusters) sharing the same XY extents + cell size.
+- Layers are indexed 0..N-1 at bake time; index 0 is the ground layer, higher indices stack upward. A flat-terrain map has exactly one layer.
+- Cell addressing is `FSeinCellAddress { uint8 Layer; int32 CellIndex; }`. `USeinNavigationGrid` BPFLs that previously took a flat index now take `FSeinCellAddress` (`Layer` defaults to 0 for backward-compatibility with single-layer callers).
+- HPA* cluster IDs are per-layer — "Cluster B on layer 1" is unambiguous.
+- **NavLinks are the only mechanism for layer transitions.** A navlink whose endpoints resolve to different layers becomes a cross-layer edge in the abstract graph. There is no other way to hop layers mid-path.
+
+**Flow fields stay single-layer, layer-unaware.** A Dijkstra sweep for a flow field never crosses a layer boundary. The flow field's "goal" is the exit toward the next cluster in the HPA* plan — which, for a cross-layer segment, is a navlink-entry cell on the current layer. When the unit traverses the navlink, the broker advances the plan-cursor and the unit reads the next layer's flow field (already cached).
+
+**Cache cost does not scale with layer count.** Flow fields are computed per-cluster-per-broker-order. Cluster sequence length drives cost; whether the sequence traverses one layer or five doesn't change the count.
+
+**Shared palette, per-layer storage.** The `CellTagPalette` and overflow map are per-map, not per-layer (one tag vocabulary across the whole grid). Per-layer cell data, tiles, and HPA* clusters live on each `FSeinNavigationLayer` independently. Layers can be sparse — cells only exist where bake found walkable geometry at that Z band — so multi-layer maps pay memory only where layers actually exist.
+
+**Debug visualization:** editor-side nav-debug drawing exposes a layer picker. The in-game view doesn't care — units resolve their own layer from their HPA* plan.
+
+**Vision is also per-layer.** An enemy on an overpass isn't visible to a unit on the underpass through the overpass floor. Vision grids and blocker tiers carry a `Layer` field on multi-layer maps; stamp deltas and entity-visibility queries resolve per-layer. See §12 for the per-layer vision storage + query details.
+
+**Non-goals:**
+- Continuous 3D nav / free-form height. Discrete layers are sufficient for overpass/underpass/multistory patterns.
+- Cross-layer flow fields. The composition works specifically because flow fields stay single-layer.
+- Automatic layer detection without a NavVolume covering the area. Layers are baked, not inferred at runtime.
+- Cross-layer vision propagation by default. Layers are visually independent; "see through a grated floor" is designer-authored via effects or blocker tuning.
+
+### Nav bake pipeline — SeinNavVolume + auto-blocking
+
+Where UE uses `ANavMeshBoundsVolume` + `ARecastNavMesh` to define *where* nav exists and auto-rasterize level geometry into walkability, Sein uses `ASeinNavVolume` + the sim-side `USeinNavigationGrid`. The ergonomic parallel is deliberate: drop a volume into the level, scale it, rebuild paths, done.
+
+**`ASeinNavVolume`** (inherits `AVolume`):
+- **Bounds** from its root `UBrushComponent` (the volume's brush defines the region; typically a box, but any brush works).
+- **Cell size** — inherits from `USeinARTSCoreSettings::DefaultCellSize` (plugin setting); can be overridden per-volume.
+- **Elevation mode** — inherits plugin setting (`None`/`HeightOnly`/`HeightSlope`); per-volume override allowed.
+- **Multi-layer toggle** — off by default (flat maps stay single-layer). When on, exposes a `LayerSeparation` threshold (default 300 cm).
+- **Bake button** — editor detail-panel button "Rebuild Sein Nav" that triggers the bake over all `ASeinNavVolume`s in the level (parallels UE's "Build → Build Paths" ergonomic).
+- Multiple volumes per level are supported; they **union** into one `USeinNavigationGrid`. All volumes must agree on cell size and elevation mode (bake errors out with a clear message if they conflict).
+
+**Serialization.** The baked grid serializes into a `USeinNavigationGridAsset` companion uasset referenced by the level. Runtime loads the asset; no runtime re-bake. Replay-safe.
+
+**Auto-blocking from level geometry.** At bake time, for each cell in the union of all NavVolume bounds:
+1. Trace downward from the top of the volume, filtering primitives by `UPrimitiveComponent::CanEverAffectNavigation()` — the same filter UE's NavMesh uses. Meshes already marked nav-relevant for UE nav get auto-registered with Sein nav at zero extra setup.
+2. No hit → cell is out-of-bounds (not walkable).
+3. Hit on a primitive marked `ForceBlocked` (via `USeinNavModifierComponent`), or on solid geometry taller than the walkable-slope threshold → cell is blocked.
+4. Hit on a walkable primitive → cell is walkable, height = hit Z (stored in `HeightTier`/`HeightFixed` per elevation mode).
+
+For multi-layer maps, the bake repeats traces downward across the volume height, spacing hits by `LayerSeparation`. Distinct Z bands populate separate layers on the same XY.
+
+**`USeinNavModifierComponent`** (opt-in override per-primitive):
+- Attached to any primitive component. Overrides how that primitive participates in the bake.
+- `ESeinNavModifierMode { None, ForceBlocked, ForceWalkable, StampTags }`.
+  - `ForceBlocked` — marks cells blocked regardless of collision (decorative collider that shouldn't carve nav).
+  - `ForceWalkable` — marks cells walkable regardless of collision (decorative fence that visually blocks but is ignored by nav).
+  - `StampTags` — writes cell tags over the covered footprint (cover/biome stamping tied to a specific mesh; complements `ASeinTerrainVolume` for volume-stamped tags).
+- Parallels UE's `UNavModifierComponent` pattern.
+
+**NavLink baking.** Every `ASeinNavLinkProxy` placed within a NavVolume's bounds has its endpoints resolved to `FSeinCellAddress` (including layer, via downward trace from each endpoint transform) and written into the HPA* abstract graph. Links whose endpoints fall outside any NavVolume bounds are skipped with a warning.
+
+**Runtime mutation.** Placed-volume and placed-mesh changes require a re-bake (editor-time, deterministic). Runtime mutations (shelling, wall construction, bridge destruction) go through the existing mutation BPFLs (`SeinSetCellWalkability`, `SeinSetCellMovementCost`) plus new `SeinSetNavLinkEnabled`. All runtime mutations fire `TerrainMutated` / `NavLinkChanged` visual events for render-side reactions.
+
+**Coexistence with UE native nav.** A project can run both `ANavMeshBoundsVolume` (for UE nav consumers like AI perception or UE NavLink) and `ASeinNavVolume` (for sim pathing) in the same level. They share the nav-affectance filter but produce independent data. Framework philosophy: Sein is the authoritative sim-side pathing layer; UE nav remains available for non-sim subsystems.
+
+**Async bake + editor notifications.** Baking a 2048² × N-layer grid = millions of traces. The Rebuild Sein Nav button must not block the editor. Idiomatic UE 5 pattern:
+
+1. **Background work** via `AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, ...)`. The bake is trivially parallelizable — each cell's trace is independent; per-tile summary merges happen on the game thread at the end.
+2. **Progress toast** via `FSlateNotificationManager::Get().StartProgressNotification(FText, int32 MaxValue)` → `FProgressNotificationHandle`. Background task periodically marshals progress updates back to the game thread via `AsyncTask(ENamedThreads::GameThread, [Handle, Completed](){ Handle.UpdateProgress(Completed); })`.
+3. **Completion states** — on success, update the notification with `SNotificationItem::CS_Success` + final tile count; on failure, `SNotificationItem::CS_Fail` with an error message (e.g., "volume cell-size mismatch"). On user cancel, `CS_None` with "Bake cancelled."
+4. **Multiple volumes** bake concurrently — one task per volume, results merged on the game thread.
+5. **Progress granularity**: tile-level (one step per completed tile) gives a responsive bar without per-cell update overhead. For a 2048² grid at 32² tiles that's ~4096 progress steps.
+
+**Non-goals (bake pipeline):**
+- Incremental bake (only re-bake changed regions). V1 re-bakes the affected NavVolume in full.
+- Bake during PIE. Editor-only.
+
+**Bake determinism.** Trace-based bake is deterministic within a single machine (same geometry + same query params → same hits). **Cross-machine, the bake is not bit-identical** — UE's collision math uses floating-point internally and a few ULP drift between SSE/AVX/FMA variations will produce slightly different hit Z values. The framework mitigates by quantizing every hit to the fixed-point tier boundary (`HeightTier: uint8` for HeightOnly mode, `HeightFixed: int16` cm for HeightSlope) — sub-cm float variation gets erased at quantization.
+
+Result: bakes are *functionally* identical across machines (same walkability, same height tiers, same tag stamps) but the serialized `USeinNavigationGridAsset` bytes may differ. For teams needing bit-identical output across a team, commit the asset to VCS and treat one machine's output as canonical — same workflow as UE's `ARecastNavMesh` and built lighting. Replay determinism only requires identical **runtime** state; bake happens pre-ship and is never replayed.
+
+**World Partition coexistence.** V1 bake model assumes one level load → one `USeinNavigationGridAsset` covering the level's NavVolume union. World Partition (streamed sublevels, dynamic load/unload) is not supported in V1 nav:
+- Single whole-level bake at editor time; World Partition sublevels inside the NavVolume bounds bake together.
+- Runtime-streamed actors don't participate in the bake; they use runtime cell-mutation BPFLs + navlink enable/disable if they need to affect nav.
+- Streaming-aware nav (per-tile bake, on-demand stitch, cross-tile HPA*) is flagged as post-V1 future work.
+
+### Path-reject plumbing — rejecting unreachable moves cleanly
+
+Right-clicking on unwalkable terrain (water, inside a building, an isolated island) should give the same clean feedback as any other rejected command. The existing `CommandRejected` visual event (§4) carries the rejected `CommandType` tag but not *why*; the header doc already flags that reason-tagging was deferred "until reason-tag vocabulary is designed." This section designs it.
+
+**Mechanism:**
+
+1. **At command-dispatch time (`ProcessCommands::ActivateAbility`)** — the Move ability's pre-activation validation performs an HPA* abstract-graph reachability query from the entity's current cluster to the goal's cluster. If the goal cell is entirely unwalkable (e.g., water, blocked, off-map), reject with `GoalUnwalkable`. If the goal cluster is unreachable from the source cluster in the abstract graph (separate island, no navlink connects), reject with `PathUnreachable`. Both queries are cheap — abstract graph is already in memory, and a BFS on cluster edges is O(abstract-graph-size).
+2. **At movement-action runtime** — if the abstract-graph said reachable but local refinement fails (stale cache, mid-frame bridge destruction, or a corner case), the `SeinMoveToAction` cancels the ability on first refinement failure and fires a late `CommandRejected` with `PathUnreachable` reason. Keeps the reject path uniform from the UI's perspective.
+
+**`CommandRejected` event gains optional `FGameplayTag ReasonTag` field.** Previously carried only `CommandTag` (which CommandType was rejected). Backfilled at every existing reject site in `ProcessCommands` with the matching reason tag. Old UI that only reads `CommandTag` keeps working; new UI can binding-switch on `ReasonTag` for richer feedback ("🚫 Not enough resources" vs "🚫 Can't reach there").
+
+**Reason-tag vocabulary (`SeinARTS.Command.Reject.*`):**
+- `Unaffordable` — fails `SeinCanAfford`
+- `OnCooldown` — ability on cooldown
+- `BlockedByTag` — `ActivationBlockedTags` matched
+- `OutOfRange` — target outside `MaxRange`
+- `InvalidTarget` — fails `ValidTargetTags` or explicit `CanActivate`
+- `NoLineOfSight` — fails `bRequiresLineOfSight` (see §12)
+- `PathUnreachable` — nav graph says no abstract path exists (or local refinement failed)
+- `GoalUnwalkable` — target cell is blocked / off-map / not walkable for the agent class
+- `MissingComponent` — entity lacks the component the command needs (e.g., no `FSeinProductionData` for `QueueProduction`)
+- `QueueFull` — production queue at capacity
+- Designers extend the namespace with game-specific reasons.
+
+The reason-tag namespace parallels `SeinARTS.Command.Type.*` and `SeinARTS.Command.Context.*` under the shared `SeinARTS.Command.*` root, so UI code that filters to the command-tag hierarchy sees everything related in one subtree.
+
+**`FSeinAbilityAvailability::Reason` enum gains matching values** so UI can query "could I move to that cell right now?" via `SeinGetAbilityAvailability` without issuing a command — supports right-click-preview UX (dim cursor when hovering unwalkable terrain).
+
+**Non-goals:**
+- Multi-reason rejection ("unaffordable AND on cooldown"). Pick the first-failing gate per §7 ordering; keep the event single-reason for UI simplicity.
+- Per-unit reason reporting for broker-order rejection. Broker commands reject at the broker level; per-member gating happens inside the resolver and doesn't bubble up distinct reasons.
 
 ### Cover query — directional vector output
 
@@ -1371,12 +1574,15 @@ struct FSeinFootprintData : public FSeinComponent
 
 On entity spawn: rotate offsets by `Rotation`, compute absolute cell indices, register with nav grid's entity-on-cell map, mark affected cells' pathing/vision flags. On destroy: reverse.
 
-### Terrain authoring workflow
+### Authoring surface — three volume/actor types
 
-Framework provides the data structures; tooling is a later task. For v1, two authoring paths supported:
+Three designer-placed actor types compose the authoring workflow. Drop them into the level, configure, rebuild nav.
 
-1. **Placed volumes in Unreal level editor.** Designer-authored blueprint actors that cover areas and declare "cells I cover get tags X, Y" plus "cover facing direction Z" etc. At map bake, volumes are rasterized into cell tags.
-2. **Derived from nav.** Existing nav-bake logic extended to populate walkability, height (from geometry raycast), and biome (from material tags).
+1. **`ASeinNavVolume`** — bake bounds for the nav grid (see "Nav bake pipeline" above). Defines *where* nav exists, cell size, elevation mode, multi-layer toggle. One or more per level (union into one grid). Auto-blocks level geometry via `UPrimitiveComponent::CanEverAffectNavigation()`.
+2. **`ASeinTerrainVolume`** — tag-stamping volume. Covers a region and declares "cells I cover get tags X, Y" plus optional cover-facing direction, biome, movement-cost override, etc. Many per level. Runs after nav bake, writing to the existing grid's cell tags.
+3. **`ASeinNavLinkProxy`** — traversal-ability edge between two discrete cells (see "NavLinks" above). Placed where continuous steering can't carry the unit — vaults, drops, climbs, portals, etc.
+
+Supplementary: **`USeinNavModifierComponent`** for per-primitive bake overrides (force-blocked / force-walkable / stamp-tags on a specific mesh). Use when a particular mesh needs treatment that differs from its collision setup.
 
 **Deferred**: a custom paint-tool Slate widget in SeinARTSEditor for direct cell-tag painting. Significant editor-module investment; queue for post-v1.
 
@@ -1388,6 +1594,17 @@ Framework provides the data structures; tooling is a later task. For v1, two aut
 - Continuous (non-grid) LOS raycasting. Discrete grid is deterministic and sufficient.
 - Per-cell extension data beyond tag palette. Games extend via the nav grid's sparse overflow or custom cell-struct subclasses.
 - Custom paint tool for v1. Defer to editor pass.
+- Continuous 3D nav / unlimited-layer geometry. Multi-layer support is discrete layers stitched by navlinks.
+- Runtime nav-volume mutation / re-bake. Bake is editor-time; runtime changes go through mutation BPFLs and navlink enable/disable.
+- Auto-detection of navlink opportunities from level geometry. Designers place them deliberately.
+- Framework-blessed movement-cost-per-slope model. Elevation mode `HeightSlope` stores the data; designers choose how (or whether) to consume it.
+- RVO / reciprocal velocity obstacles. Framework avoidance is fixed-point flocking (separation/cohesion/alignment), deterministic by construction.
+- Incremental re-bake of changed regions. Full NavVolume re-bake only.
+- Bake during PIE / runtime. Editor-time only.
+- Bit-identical cross-machine bake output without VCS check-in.
+- World Partition streaming support in V1. Single-level bake; streamed sublevels bake together, runtime streaming goes through mutation BPFLs.
+- Footprint-shape-aware pathing (oriented rectangles / polygons). Clearance field is isotropic radius-based.
+- Multi-reason rejection for a single command. First-failing-gate single-reason model per §7 ordering.
 
 ### Implementation deltas that fall out
 
@@ -1414,6 +1631,26 @@ Framework provides the data structures; tooling is a later task. For v1, two aut
 - Cell-mutation BPFLs invalidate vision-template cache (§12) for affected cells.
 - Volume-based terrain authoring: blueprint actor base class `ASeinTerrainVolume` with `OnBake(navGrid)` hook that rasterizes its declared tags onto covered cells.
 - Nav-refactor binding requirements: HPA* + regional flow fields + per-cluster flow-field cache + hierarchical path query API.
+- `ASeinNavVolume : AVolume` — nav-bake bounds actor with per-volume cell size / elevation mode / multi-layer overrides; multiple per-level volumes union into one grid. Editor detail-panel "Rebuild Sein Nav" button.
+- Auto-blocking bake: trace-based rasterization of level geometry filtered by `UPrimitiveComponent::CanEverAffectNavigation()` (matches UE NavMesh filter). No trace channel setup required for designers who already marked meshes nav-relevant.
+- `USeinNavModifierComponent` with `ESeinNavModifierMode { None, ForceBlocked, ForceWalkable, StampTags }` for per-primitive bake overrides.
+- `ASeinNavLinkProxy : AActor` with two endpoint transforms, traversal ability class, cost modifier, bidirectional flag, eligibility `FGameplayTagQuery`.
+- `FSeinCellAddress { uint8 Layer; int32 CellIndex }` addressing across all nav/grid BPFLs (backward-compatible default `Layer = 0`).
+- `USeinNavigationGrid::Layers: TArray<FSeinNavigationLayer>` replacing flat cell storage. Each layer owns its own cell data + tiles + HPA* clusters; palette is shared across layers.
+- HPA* abstract-graph edge type unified: cluster-border edges + navlink edges treated identically by the pathfinder (both carry src/dst/cost; navlinks additionally carry traversal ability + eligibility query).
+- Starter abilities `USeinAbility_Vault`, `USeinAbility_DropDown`, `USeinAbility_Climb` under `SeinARTS.Starter.*`.
+- Runtime BPFL: `SeinSetNavLinkEnabled(linkId, bEnabled)`; visual event `NavLinkChanged(linkId)`.
+- `USeinNavigationGridAsset` companion uasset serializing baked grid data (cells, tiles, clusters, abstract graph, navlinks) per-level.
+- Plugin settings: `DefaultCellSize`, `DefaultElevationMode`, `DefaultLayerSeparation`.
+- Per-cell `uint8 Clearance` field on `FSeinCellData_Flat` (cell size bumps to 5 bytes; plugin toggle to omit for uniform-size games). Distance-transform pass at bake computes the field per layer.
+- Plugin setting `AgentRadiusClasses: TArray<FFixedPoint>` + `FSeinFootprintData::AgentClass: uint8` for multi-class clearance (opt-in per-class clearance layers).
+- Async bake pipeline: background `AsyncTask` + `FSlateNotificationManager::StartProgressNotification` + `FProgressNotificationHandle` + cooperative cancellation. Progress granularity = tile-completed steps.
+- Hit-Z quantization to fixed-point tier at bake for cross-machine functional determinism.
+- `FGameplayTag ReasonTag` field added to `FSeinVisualEvent` for `CommandRejected` events (backward-compatible — old UI reading only `CommandTag` still works).
+- Reason-tag registry under `SeinARTS.Command.Reject.*` (`Unaffordable` / `OnCooldown` / `BlockedByTag` / `OutOfRange` / `InvalidTarget` / `NoLineOfSight` / `PathUnreachable` / `GoalUnwalkable` / `MissingComponent` / `QueueFull`).
+- HPA* abstract-graph reachability query at Move-command dispatch → early `CommandRejected { PathUnreachable | GoalUnwalkable }` before ability activation.
+- `FSeinAbilityAvailability::Reason` enum extended with `PathUnreachable` / `GoalUnwalkable` for binding-queryable pre-check UX.
+- Per-layer vision storage on `FSeinVisionGroup` + `Layer` field on `FSeinVisionBlockerData` (§12 Multi-layer vision subsection).
 
 ### Memory examples at realistic scales (Flat cell mode, 4-byte cells, 4-tag inline)
 
@@ -1647,7 +1884,7 @@ Client-side ephemeral state for player UI. Not sim. Logged as observer commands 
 
 - Add `bSelectable: bool` field to a universal entity component (exists in some form today; check + formalize).
 - `USeinSelectionComponent` on the player controller (exists, ratify + extend).
-- Observer command types under `SeinARTS.CommandType.Observer.Selection.*` and `...ControlGroup.*`.
+- Observer command types under `SeinARTS.Command.Type.Observer.Selection.*` and `...ControlGroup.*`.
 - `USeinSelectionBPFL` with: `SeinReplaceSelection`, `SeinAddToSelection`, `SeinRemoveFromSelection`, `SeinSelectAllByType`, `SeinBindControlGroup`, `SeinAddToControlGroup`, `SeinRecallControlGroup`, `SeinResolveMoveableSelection`.
 - `USeinContainmentBPFL` getters for nested-occupant queries: `SeinGetOccupants`, `SeinGetAllNestedOccupants`, `SeinGetContainmentTree`.
 - Death-visual-event listener on `USeinSelectionComponent` for group-cleanup plumbing.
@@ -1824,8 +2061,7 @@ This uses only existing primitives. No `USeinScenario` UObject. No event-subscri
 - `PlayPreRenderedCinematic` / `EndCinematic` visual events added to the visual event enum.
 - `ESeinCinematicSkipMode` enum.
 - Integration with §18 voting for `VoteToSkip` mode (forward-reference).
-- Rename `SeinActorFactory` → `SeinEntityFactory` (minimal, kept as-is functionality).
-- Add `SeinUnitFactory` (pre-seeds Archetype + Bridge + Abilities + Movement + Combat components).
+- Rename `SeinActorFactory` → `SeinEntityFactory` (minimal, kept as-is functionality; Combat is designer-overridden per §11 so no pre-seeded starter kit).
 - Starter scenario BP under `SeinARTS.Starter.*` content.
 - Example playable scene wiring: starter scenario + starter AI (§16) + example units.
 
@@ -2164,8 +2400,11 @@ Composed-above-choke-points (designer freestyle):
 - **2026-04-17** — Q&A round 11: Relationships (containment/transport/garrison/attachment) locked. Hybrid primitive: base `FSeinContainmentData` (occupants, capacity, query filter, eject-on-death flag, visibility mode) + specialization components (`FSeinAttachmentSpec`, `FSeinTransportSpec`, `FSeinGarrisonSpec`). Orthogonal relationship axes: entity may have at most one attachment + one containment simultaneously (tree structure for chained containments). Destruction propagation configurable with on-eject and on-death effect hooks. Capacity model: integer capacity + entity-size + accepted-tag-query + `CanAccept` BP escape. Three visibility modes: `Hidden` (excluded from spatial queries), `PositionedRelative` (position from container + slot offset), `Partial` (hidden from targeting but participates in specific abilities). Attribution stats always count contained entities. Starter entry/exit abilities shipped; subgenre-specific starter content (garrison fire, crew weapon operation, retreat) under `SeinARTS.Starter.SquadTactics.*`. Optional deterministic visual-slot assignment for replay visual consistency. Command routing designer-authored; view-model pattern handles UI. Locked cleanly given the orthogonal-axes insight that broker membership + attachment + containment are three independent primitives.
 - **2026-04-19** — Q&A round 12: Selection & control groups locked. Client-side-only, no sim-state. Observer command stream (`SelectionReplaced`/`Added`/`Removed`, `ControlGroupAssigned`/`AddedTo`/`Selected`) is authoritative for replay UI reconstruction. `bSelectable: bool` flag on entities (default true; projectiles and other non-interactable entities opt out). **Selection does NOT require ownership; command issuance DOES** — enemy entities can be selected for info-panel display but not orderable; controller filters to owned entities before emitting `ActivateAbility`. Transport/containment selection nuance: group move commands disembark contained members if their container isn't also in the group; skip them (transport carries) if the container is in the group. Helper `SeinResolveMoveableSelection` partitions the selection. Death-driven cleanup: client-side `USeinSelectionComponent` listens to `Death` visual events and removes dead handles from groups/selection; replay reconstructs by filtering original assignments against live entities at playback. Nested containment exposed via three BPFLs (immediate occupants, flat all-nested, hierarchical tree). Framework ships a starter `USeinSelectionComponent` with standard selection primitives; designer subclasses or replaces. AI doesn't select — commands carry handles directly. Spectator/POV replay modes are a replay-app concern, not framework. Strengthened broker ownership invariant: broker member set must be wholly owned by single player; broker primitive enforces at instantiation (not just caller-side filter); allied-command-sharing is match-settings territory.
 - **2026-04-19** — Q&A round 13: AI locked, thin section. **Key reframe: strategic AI sits ABOVE the sim layer, like a human. It does NOT need to be deterministic** (runs on one designated host; emitted commands are what crosses the lockstep boundary). Unit-level micro-AI is just passive abilities (§7) — not a separate system. Framework provides thin `USeinAIController` base class with tick + sim-state query BPFLs (both all-entities for cheating AI and visible-per-player for fog-respecting AI) + command-emit BPFL. No prescribed architecture (designer picks BT / FSM / utility / GOAP / custom). No difficulty primitive. Host runs AI; on host migration or dropped-player takeover, new host spins up AI controllers from current sim state (stateful hand-off deferred). Debug logging to regular output log (never command txn log). Framework ships one starter `USeinAIController_Starter` BP under starter content as a playable example — not a blessed pattern. Replay just replays command stream; AI doesn't re-run.
-- **2026-04-19** — Q&A round 14: Scenario events / cinematics locked as a thin section. **Key insight: scenarios are NOT a new primitive — they're abstract sim entities (§1) with ability components (§7).** Scenario logic composes from existing primitives: passive tick-polling abilities + response abilities activated via `SeinActivateAbility` by external code. Thin utility layer adds: `bIsAbstract` flag on `USeinArchetypeDefinition` (ActorBridge hides + skips cosmetic routing); entity lookup via framework-level `USeinEntityLookupBPFL` (promoted below); `USeinScenarioBPFL` with `SeinSetSimPaused` + `SeinPlayPreRenderedCinematic` + `SeinEndCinematic`; `PlayPreRenderedCinematic`/`EndCinematic` visual events; `ESeinCinematicSkipMode` enum (Individual/VoteToSkip/HostOnly/NoSkip); vote-to-skip forward-references §18 voting. Multiple scenarios composable. Save/resume via command-stream replay; no explicit scenario state. No objective primitive — too varied across games. Editor factory split: rename `SeinActorFactory` → `SeinEntityFactory` (minimal); add `SeinUnitFactory` (starter unit kit). Retracted: `USeinScenario` UObject; `TriggerEventTags` on abilities. Starter example scenario under `SeinARTS.Starter.*`.
+- **2026-04-19** — Q&A round 14: Scenario events / cinematics locked as a thin section. **Key insight: scenarios are NOT a new primitive — they're abstract sim entities (§1) with ability components (§7).** Scenario logic composes from existing primitives: passive tick-polling abilities + response abilities activated via `SeinActivateAbility` by external code. Thin utility layer adds: `bIsAbstract` flag on `USeinArchetypeDefinition` (ActorBridge hides + skips cosmetic routing); entity lookup via framework-level `USeinEntityLookupBPFL` (promoted below); `USeinScenarioBPFL` with `SeinSetSimPaused` + `SeinPlayPreRenderedCinematic` + `SeinEndCinematic`; `PlayPreRenderedCinematic`/`EndCinematic` visual events; `ESeinCinematicSkipMode` enum (Individual/VoteToSkip/HostOnly/NoSkip); vote-to-skip forward-references §18 voting. Multiple scenarios composable. Save/resume via command-stream replay; no explicit scenario state. No objective primitive — too varied across games. Editor factory: rename `SeinActorFactory` → `SeinEntityFactory` (minimal, bare template). The speculative `SeinUnitFactory` with pre-seeded Abilities/Movement/Combat was authored during Session 1.2 and retired during Session 2.5 once §11 clarified Combat is designer-overridden — the `Entity` factory is the sole SeinActor factory going forward. Retracted: `USeinScenario` UObject; `TriggerEventTags` on abilities. Starter example scenario under `SeinARTS.Starter.*`.
 - **2026-04-19** — **Entity lookup promoted to framework-DNA level.** What started as a scenario convenience BPFL was elevated to a cross-cutting framework primitive after recognizing it's useful everywhere ("find all Riflemen", "find the HQ", "find entities with tag X in radius Y"). `USeinWorldSubsystem` now maintains two global indices: `EntityTagIndex: TMap<FGameplayTag, TArray<FSeinEntityHandle>>` (auto-indexed by the §3 tag-refcount system on every grant/ungrant) and `NamedEntityRegistry: TMap<FName, FSeinEntityHandle>` (singleton lookup). Added as cross-cutting invariant #10 in the preamble. `USeinEntityLookupBPFL` exposes: named register/lookup/unregister, tag-based set/first/count/has queries, tag-based queries filtered by spatial radius or player ownership, hierarchical tag-query matching for parent-tag matching. Memory overhead: 4 KB – 400 KB trivial at RTS scale; CPU is O(1) amortized for grant/lookup, O(entities_with_tag) for ungrant (acceptable; can swap to TSet if hot). §3 Tags updated with the global-index decision; §17 Scenario references the shared lookup infrastructure instead of shipping a scenario-only registry.
 - **2026-04-19** — Q&A round 15 (final): Match Settings & match flow locked as §18. Captures everything that's "not a sim primitive but affects how a match plays out." Storage: `FSeinMatchSettings` USTRUCT (framework-shipped fields) + `USeinMatchSettings` UObject asset (lobby presets) + `FInstancedStruct CustomSettings` (designer extensions). Immutable after match start — snapshot into `USeinWorldSubsystem` at sim-start, read via BPFL. Match flow state machine: `Lobby → Starting → Playing → Paused → Ending → Ended`, command-driven transitions, visual events for scenario/UI subscription. Pre-match countdown + minimum match duration as match settings. Pause modes: `Tactical` (commands accumulate during pause, default) vs `Hard` (commands rejected); per-call override possible. Voting primitive locked as first-class sim state with `FSeinVoteState`, `StartVote`/`CastVote` commands, `OnVoteStarted`/`OnVoteProgress`/`OnVoteResolved` visual events, resolution modes (Majority/Unanimous/HostDecides/Plurality), auto-expiration. Victory is scenario-driven via `SeinEndMatch(winner, reason)` — framework provides zero prescribed victory enum. Spectator support via `bIsSpectator` flag + command filter. Host migration via `ESeinHostDropAction` enum (EndMatch/PauseUntilNewHost/AutoMigrate/AITakeover). Diplomacy primitive: `ESeinPlayerRelation { Enemy, Neutral, Allied }` with get/set BPFL + `bAllowMidMatchAllies` gate + `OnPlayerRelationChanged` event. Replay header: `FSeinReplayHeader` with framework version, map, seed, settings snapshot, player registrations, tick range. Framework's philosophy captured explicitly: enforces invariants at choke points (sim/render boundary, command validation, tag refcount, entity lifecycle, effect/ability lifecycle, component storage); composition above stays designer-freestyle. Game modes, victory conditions, objectives, lobby UI all live in designer code. `AGameModeBase`-compatible integration point. Flagged as future enhancements: sim-speed multipliers for skirmish, stateful AI hand-off on host migration, custom paint tool in editor.
 - **2026-04-19** — Diplomacy redesigned: the initial `ESeinPlayerRelation { Enemy, Neutral, Allied }` enum was too restrictive for richer grand-strategy / 4X diplomacy models (cold war, non-aggression pacts, defensive alliances, trade agreements, vassalage, etc.). Replaced with a **directional per-pair `FGameplayTagContainer`** — same composability as §3 entity tags. Framework ships baseline vocabulary (`SeinARTS.Diplomacy.State.*` + `SeinARTS.Diplomacy.Permission.*`) used by core systems (§5 broker owner-scope, §11 friendly-fire filter, §12 vision sharing). Designers extend with arbitrary tags (`MyGame.Diplomacy.Treaty.NonAggressionPact`, etc.) without framework changes. Mutation via `FSeinCommand::ModifyDiplomacy` (command-driven, replay-deterministic). `OnDiplomacyChanged` visual event for subscribers. Parallel `DiplomacyTagIndex` for O(1) tag-based pair queries. `bAllowMidMatchDiplomacy` match-setting gate (rename from `bAllowMidMatchAllies`). Convenience BPFL wrappers (`SeinDeclareWar`, `SeinDeclarePeace`, `SeinProposeTruce`) for baseline transitions; full richness via `SeinModifyDiplomacy`.
 - **2026-04-19** — **All 18 sections locked.** Design pass complete. Next phase: implementation passes batched against accumulated deltas + ongoing IP-safety scrub of source comments + docs site before ship.
+- **2026-04-21 (part 1)** — Nav workshop (pre-Session 3.1, Phase 3 kickoff): resolved four open questions before implementation starts on the nav refactor. (1) **Multi-layer nav** added to §13 as per-layer grids stitched via navlinks — flow fields stay single-layer + layer-unaware, HPA* abstracts over layer transitions, cache cost scales with cluster-sequence length not layer count, flat maps pay zero extra memory. Addressing migrates to `FSeinCellAddress { uint8 Layer; int32 CellIndex }`; `USeinNavigationGrid` carries `TArray<FSeinNavigationLayer> Layers` (ground = layer 0); tag palette stays per-map shared across layers. (2) **`ASeinNavVolume`** added as the nav-bake bounds primitive (parallels UE's `ANavMeshBoundsVolume`): multiple per-level volumes union into one grid, per-volume cell-size / elevation-mode / multi-layer overrides, editor detail-panel "Rebuild Sein Nav" button, baked data serializes to a `USeinNavigationGridAsset` companion uasset. (3) **Auto-blocking** via `UPrimitiveComponent::CanEverAffectNavigation()` — the same filter UE NavMesh uses, so meshes already marked nav-relevant work with Sein nav at zero extra setup. `USeinNavModifierComponent` with `ESeinNavModifierMode { None, ForceBlocked, ForceWalkable, StampTags }` provides per-primitive overrides (parallels UE's `UNavModifierComponent`). (4) **NavLinks** added as a first-class primitive in §13: `ASeinNavLinkProxy` actors register as HPA* abstract-graph edges — pathfinding treats cluster-border crossings and navlink traversals identically; each link carries a `TSubclassOf<USeinAbility> TraversalAbility`, optional cost modifier, bidirectional flag, and `FGameplayTagQuery EligibilityQuery` for filtering (infantry-only vaults, vehicle-only bridges, etc.); runtime enable/disable via `SeinSetNavLinkEnabled` without re-bake; starter abilities `USeinAbility_Vault` / `_DropDown` / `_Climb` shipped under `SeinARTS.Starter.*` as examples. §13 gains three new subsections ("NavLinks", "Multi-layer navigation", "Nav bake pipeline — SeinNavVolume + auto-blocking"); "Terrain authoring workflow" rewritten as "Authoring surface — three volume/actor types" (NavVolume / TerrainVolume / NavLinkProxy); non-goals and implementation deltas extended. **No changes to the locked nav composition** (HPA* + regional flow fields + formation resolver + movement profiles) — multi-layer and navlinks slot in cleanly as additional abstract-graph edge types and per-layer cluster partitioning. Phase 3 of PLAN.md revised: Session 3.0 (this workshop) complete; 3.1 absorbs SeinNavVolume + auto-blocking; 3.2 absorbs NavLink baking into HPA*; 3.3 absorbs multi-layer stitching; new Session 3.5 spun off for terrain/cover/capture/footprint that was previously bundled into 3.1.
+- **2026-04-21 (part 2)** — Nav workshop follow-ups: resolved the gaps flagged after the main four questions. (1) **Agent clearance** subsection added to §13 Compact cell data — single per-cell `uint8 Clearance` field (distance-transform pass at bake) handles mixed-size pathing cleanly; optional plugin-settings `AgentRadiusClasses` + `FSeinFootprintData::AgentClass` for games with extreme size spread. Addresses the tank-vs-infantry-fitting-through-gap concern with zero memory cost for uniform-size games. Accuracy caveat documented: cell-granularity clearance has integer precision, so cell size should match unit scale for tight fits. (2) **Steering determinism** audit: existing `SeinARTSNavigation` module already ships **fixed-point flocking** (separation/cohesion/alignment in `USeinSteeringBPFL` + slerp-like `ApplyTurnRateLimit` via `SeinMath::Acos` — fully deterministic). §13 "RVO avoidance" language was aspirational and wrong; rewritten to describe the actual flocking approach + explicit RVO non-goal. No porting work needed. (3) **Async bake + editor toast** spec added to Nav bake pipeline: background `AsyncTask` + `FSlateNotificationManager::StartProgressNotification` / `FProgressNotificationHandle` (UE 5 idiom), tile-level progress granularity, success/fail/cancel completion states, concurrent multi-volume bake. (4) **Path-reject plumbing** new subsection: `FSeinVisualEvent` CommandRejected event gains optional `FGameplayTag ReasonTag` + `SeinARTS.Command.Reject.*` vocabulary (`Unaffordable` / `OnCooldown` / `BlockedByTag` / `OutOfRange` / `InvalidTarget` / `NoLineOfSight` / `PathUnreachable` / `GoalUnwalkable` / `MissingComponent` / `QueueFull`). Move-command dispatch runs an HPA* abstract-graph reachability query early-reject (+ late cancel for refinement failures). `FSeinAbilityAvailability::Reason` enum extended for binding-queryable pre-check UX (right-click-preview dimming when hovering unwalkable terrain). Closes the "reason-tag vocabulary deferred" note in `FSeinVisualEvent::MakeCommandRejectedEvent` header. (5) **Bake determinism** paragraph added: bake is functionally deterministic cross-machine (same walkability / height tiers / tag stamps) via hit-Z quantization to fixed-point tier boundaries at bake; bit-identical serialized output is not guaranteed across SSE/AVX/FMA variations — teams needing bit-identical output check in the `USeinNavigationGridAsset` via VCS (same workflow as UE's built lighting + RecastNavMesh). (6) **World Partition coexistence**: flagged as V1 non-goal; streaming-aware nav deferred. (7) **Multi-layer vision** confirmed and added to §12 as new subsection — `FSeinVisionGroup` grows per-layer bitfields when §13 multi-layer nav is active, blockers carry a `Layer` field, template cache key extends to include layer index; memory scales per-layer, flat maps pay zero extra. Cross-ref added to §13's Multi-layer navigation subsection. Total amendments: §13 gains "Agent clearance" subsection + "Async bake + editor notifications" / "Bake determinism" / "World Partition coexistence" added to "Nav bake pipeline" + "Path-reject plumbing" new subsection; §12 gains "Multi-layer vision" subsection; non-goals + implementation deltas extended in both sections. No changes to the part-1 workshop decisions (multi-layer, NavVolume, auto-blocking, NavLinks); this pass tightens the edges.
+- **2026-04-21 (part 3)** — Command-tag namespace refactor before Session 3.1 coding starts. Reason: the path-reject plumbing work (part 2) introduced a third command-related tag family (`Command.Reject.*`), and the existing two (`CommandContext.*` and `CommandType.*`) sat as sibling roots rather than under a shared parent. Refactored to a unified hierarchy under `SeinARTS.Command.*`: `SeinARTS.Command.Context.*` (was `SeinARTS.CommandContext.*`), `SeinARTS.Command.Type.*` (was `SeinARTS.CommandType.*`), and `SeinARTS.Command.Reject.*` (parent only; leaves land in Session 3.2). UI and designer code that filters to "anything command-related" now has one subtree to query. C++ identifiers renamed to match: `SeinARTSTags::CommandContext_*` → `Command_Context_*`, `CommandType_*` → `Command_Type_*`. All 30+ call sites migrated across `SeinCommand.{h,cpp}`, `SeinWorldSubsystem.cpp`, `SeinPlayerController.cpp`, `SeinCommandLogSubsystem.cpp`. §3 tag-hierarchy sample block + §4 Commands decisions + §5 broker-order tag reference + §13 path-reject subsection + §15 Selection future-work entry all updated to the new namespace. Historical changelog and session-log entries preserved with their original names for archival accuracy. **Breaking change:** any designer tag source or saved replay referencing the old tag strings needs regeneration; there are no shipped games yet, so the blast radius is contained.

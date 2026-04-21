@@ -8,6 +8,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
+#include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
 #include "Components/SeinComponent.h"
 #include "SeinResourceIncomeData.generated.h"
@@ -21,9 +22,11 @@ struct SEINARTSCOREENTITY_API FSeinResourceIncomeData : public FSeinComponent
 {
 	GENERATED_BODY()
 
-	/** Resource income rates keyed by resource name (e.g. "Gold", "Wood") */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy")
-	TMap<FName, FFixedPoint> IncomePerSecond;
+	/** Resource income rates keyed by resource gameplay tag (under
+	 *  SeinARTS.Resource.*). Added to the owning player's balance per sim-second. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy",
+		meta = (Categories = "SeinARTS.Resource"))
+	TMap<FGameplayTag, FFixedPoint> IncomePerSecond;
 };
 
 FORCEINLINE uint32 GetTypeHash(const FSeinResourceIncomeData& Component)

@@ -55,4 +55,38 @@ public:
 	/** Get the number of waypoints in a path */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Length"))
 	static int32 SeinGetPathLength(const FSeinPath& Path);
+
+	// Reachability + NavLink runtime mutation (DESIGN §13)
+	// ====================================================================================================
+
+	/**
+	 * Fast reachability query via HPA* abstract graph. Returns true if a path
+	 * exists from `From` to `To` for an entity with `AgentTags` (empty tag set
+	 * accepts all navlinks). Used by path-reject plumbing to early-reject Move
+	 * commands targeting unreachable cells.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Is Location Reachable"))
+	static bool SeinIsLocationReachable(
+		const UObject* WorldContextObject,
+		FFixedVector From,
+		FFixedVector To,
+		FGameplayTagContainer AgentTags);
+
+	/**
+	 * Toggle a navlink's enabled flag at runtime (bridge destroyed / re-enabled).
+	 * Fires a NavLinkChanged visual event on change. Returns false if the
+	 * navlink ID is invalid.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Set Nav Link Enabled"))
+	static bool SeinSetNavLinkEnabled(
+		const UObject* WorldContextObject,
+		int32 NavLinkID,
+		bool bEnabled);
+
+	/** Number of baked navlinks on the current level's grid. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Get Nav Link Count"))
+	static int32 SeinGetNavLinkCount(const UObject* WorldContextObject);
 };

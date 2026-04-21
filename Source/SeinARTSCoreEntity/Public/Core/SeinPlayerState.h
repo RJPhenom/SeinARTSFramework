@@ -12,12 +12,13 @@
 #include "Core/SeinFactionID.h"
 #include "Types/FixedPoint.h"
 #include "GameplayTagContainer.h"
-#include "Attributes/SeinModifier.h"
+#include "Data/SeinResourceTypes.h"
+#include "Effects/SeinActiveEffect.h"
 #include "SeinPlayerState.generated.h"
 
 /**
  * Sim-side player state. One per player slot in the lockstep simulation.
- * Holds faction assignment, team, named resources, and elimination flag.
+ * Holds faction assignment, team, tag-keyed resources, and elimination flag.
  */
 USTRUCT(BlueprintType)
 struct SEINARTSCOREENTITY_API FSeinPlayerState
@@ -37,11 +38,22 @@ struct SEINARTSCOREENTITY_API FSeinPlayerState
 	uint8 TeamID = 0;
 
 	/**
-	 * Named resources (designer-defined: "Manpower", "Fuel", etc.).
-	 * Keys are resource names, values are fixed-point amounts.
+	 * Player resources keyed by resource gameplay tag (under SeinARTS.Resource.*).
+	 * Catalog entries in USeinARTSCoreSettings + per-faction ResourceKit entries
+	 * determine which tags are populated on player registration.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy")
-	TMap<FName, FFixedPoint> Resources;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Economy",
+		meta = (Categories = "SeinARTS.Resource"))
+	TMap<FGameplayTag, FFixedPoint> Resources;
+
+	/**
+	 * Per-resource cap overrides. Catalog entries supply the default cap;
+	 * faction kit entries + runtime modifiers may override. If a tag is absent
+	 * here the catalog/kit default applies.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Economy",
+		meta = (Categories = "SeinARTS.Resource"))
+	TMap<FGameplayTag, FFixedPoint> ResourceCaps;
 
 	/** Whether this player has been eliminated from the match */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
@@ -51,55 +63,82 @@ struct SEINARTSCOREENTITY_API FSeinPlayerState
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	bool bReady = false;
 
-	// --- Tech / Research ---
+	// --- Player Tags (DESIGN §10 — refcounted, mirrors entity FSeinTagData) ---
 
-	/** Tech tags this player has unlocked through research. */
+	/** Refcount per tag. A tag is present (in `PlayerTags`) iff its count > 0.
+	 *  Maintained by `USeinWorldSubsystem::GrantPlayerTag` / `UngrantPlayerTag`
+	 *  on apply/remove of Archetype + Player scope effects. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Tech")
-	FGameplayTagContainer UnlockedTechTags;
+	TMap<FGameplayTag, int32> PlayerTagRefCounts;
 
-	/** Per-archetype modifiers granted by completed research (e.g., "-10% cost for Infantry"). */
+	/** Cached presence set mirroring `PlayerTagRefCounts`. Queries (`HasTag`
+	 *  / `HasAll`) route through this container for hot-path lookups. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Tech")
-	TArray<FSeinModifier> ArchetypeModifiers;
+	FGameplayTagContainer PlayerTags;
+
+	// --- Stats (DESIGN §11 attribution counters) ---
+
+	/** Tag-keyed attribution counters. Bumped by framework BPFLs (damage / heal /
+	 *  death / production completion) and by designer ability graphs via
+	 *  USeinStatsBPFL::SeinBumpStat. Part of the state hash — deterministic, replay-safe. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Stats")
+	TMap<FGameplayTag, FFixedPoint> StatCounters;
+
+	// --- Effects (DESIGN §8 3-scope) ---
+
+	/** Archetype-scope effects applied to this player. Each effect's CDO modifiers
+	 *  target entity component fields filtered by `TargetArchetypeTag` at attribute
+	 *  resolve time; every owned entity with the matching tag receives the influence. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Effects")
+	TArray<FSeinActiveEffect> ArchetypeEffects;
+
+	/** Player-scope effects applied to this player. Modifiers target player-state
+	 *  sub-structs (resource income rates, caps, pop cap, upkeep) via the dedicated
+	 *  player-attribute resolver path. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Effects")
+	TArray<FSeinActiveEffect> PlayerEffects;
+
+	/** Monotonically increasing ID counter for effect instances on this player (not
+	 *  globally unique — scoped to `ArchetypeEffects` + `PlayerEffects`). */
+	uint32 NextEffectInstanceID = 1;
 
 	FSeinPlayerState() = default;
 	explicit FSeinPlayerState(FSeinPlayerID InPlayerID, FSeinFactionID InFactionID, uint8 InTeamID = 0);
 
 	// --- Resource helpers ---
 
-	/** Returns true if the player has at least the specified amount of every resource in Cost. */
-	bool CanAfford(const TMap<FName, FFixedPoint>& Cost) const;
+	/** Plain balance-comparison affordability check. Treats every cost entry as
+	 *  `DeductFromBalance` — does NOT consult the catalog's `CostDirection` or
+	 *  `SpendBehavior`. For catalog-aware checks (pop / supply / AddTowardCap
+	 *  resources or allow-debt behavior) call `USeinResourceBPFL::SeinCanAfford`
+	 *  instead. Kept on the struct for hot-path call sites that authored their
+	 *  costs as plain stockpile spend. */
+	bool CanAfford(const FSeinResourceCost& Cost) const;
 
-	/**
-	 * Deducts resources if affordable. Returns false (and changes nothing) if
-	 * any entry in Cost exceeds the player's current balance.
-	 */
-	bool DeductResources(const TMap<FName, FFixedPoint>& Cost);
+	/** Deducts resources if affordable (plain balance math, see CanAfford). */
+	bool DeductResources(const FSeinResourceCost& Cost);
 
-	/** Adds resources to the player. Creates entries for new resource names. */
-	void AddResources(const TMap<FName, FFixedPoint>& Amount);
+	/** Adds resources to the player. Creates entries for new resource tags. No
+	 *  cap clamping — use `USeinResourceBPFL::SeinGrantIncome` for cap-aware adds. */
+	void AddResources(const FSeinResourceCost& Amount);
 
-	/** Returns the current amount of a named resource, or zero if not present. */
-	FFixedPoint GetResource(FName ResourceName) const;
+	/** Returns the current amount of a tagged resource, or zero if not present. */
+	FFixedPoint GetResource(FGameplayTag ResourceTag) const;
 
-	/** Sets a named resource to an exact value. Creates the entry if needed. */
-	void SetResource(FName ResourceName, FFixedPoint Amount);
+	/** Sets a tagged resource to an exact value. Creates the entry if needed. */
+	void SetResource(FGameplayTag ResourceTag, FFixedPoint Amount);
 
-	// --- Tech helpers ---
+	// --- Tag / Tech helpers ---
 
-	/** Returns true if the player has all the specified tech tags (empty = always true). */
-	bool HasAllTechTags(const FGameplayTagContainer& Required) const;
+	/** True if the specified tag is currently present on this player (refcount > 0). */
+	bool HasPlayerTag(FGameplayTag Tag) const;
 
-	/** Grant a tech tag to this player. */
-	void GrantTechTag(FGameplayTag Tag);
+	/** True if every tag in the container is currently present. Empty container = true. */
+	bool HasAllPlayerTags(const FGameplayTagContainer& Required) const;
 
-	/** Revoke a tech tag from this player. */
-	void RevokeTechTag(FGameplayTag Tag);
-
-	/** Add an archetype-scope modifier (from completed research). */
-	void AddArchetypeModifier(const FSeinModifier& Modifier);
-
-	/** Remove all archetype modifiers originating from a specific effect/research ID. */
-	void RemoveArchetypeModifiersBySource(uint32 SourceEffectID);
+	/** Alias for `HasAllPlayerTags` — kept for call-site familiarity during the tech
+	 *  migration. "Tech tags" are just player tags under the §10 unification. */
+	bool HasAllTechTags(const FGameplayTagContainer& Required) const { return HasAllPlayerTags(Required); }
 };
 
 FORCEINLINE uint32 GetTypeHash(const FSeinPlayerState& State)

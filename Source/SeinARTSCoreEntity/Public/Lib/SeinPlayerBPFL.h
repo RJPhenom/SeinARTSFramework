@@ -1,11 +1,12 @@
 /**
- * SeinARTS Framework 
+ * SeinARTS Framework
  * Copyright (c) 2026 Phenom Studios, Inc.
  *
  * @file:		SeinPlayerBPFL.h
  * @date:		3/27/2026
  * @author:		RJ Macklem
- * @brief:		Blueprint Function Library for player resources and entity queries.
+ * @brief:		Blueprint Function Library for per-player entity queries.
+ *				Resource reads/writes moved to USeinResourceBPFL (see DESIGN §6).
  * @disclaimer: This code was generated in part by an AI language model.
  */
 
@@ -15,7 +16,6 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Core/SeinEntityHandle.h"
 #include "Core/SeinPlayerID.h"
-#include "Types/FixedPoint.h"
 #include "SeinPlayerBPFL.generated.h"
 
 class USeinWorldSubsystem;
@@ -26,25 +26,6 @@ class SEINARTSCOREENTITY_API USeinPlayerBPFL : public UBlueprintFunctionLibrary
 	GENERATED_BODY()
 
 public:
-
-	// Resources
-	// ====================================================================================================
-
-	/** Get a named resource amount for a player */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Player", meta = (WorldContext = "WorldContextObject", DisplayName = "Get Player Resource"))
-	static FFixedPoint SeinGetPlayerResource(const UObject* WorldContextObject, FSeinPlayerID PlayerID, FName ResourceName);
-
-	/** Add a named resource to a player's stockpile */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player", meta = (WorldContext = "WorldContextObject", DisplayName = "Add Player Resource"))
-	static void SeinAddPlayerResource(const UObject* WorldContextObject, FSeinPlayerID PlayerID, FName ResourceName, FFixedPoint Amount);
-
-	/** Deduct a named resource from a player. Returns false if insufficient. */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player", meta = (WorldContext = "WorldContextObject", DisplayName = "Deduct Player Resource"))
-	static bool SeinDeductPlayerResource(const UObject* WorldContextObject, FSeinPlayerID PlayerID, FName ResourceName, FFixedPoint Amount);
-
-	/** Check whether a player can afford a set of resource costs */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Player", meta = (WorldContext = "WorldContextObject", DisplayName = "Can Player Afford"))
-	static bool SeinCanPlayerAfford(const UObject* WorldContextObject, FSeinPlayerID PlayerID, const TMap<FName, FFixedPoint>& Cost);
 
 	// Entity Queries
 	// ====================================================================================================

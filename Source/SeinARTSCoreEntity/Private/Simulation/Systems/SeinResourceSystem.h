@@ -11,6 +11,7 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinResourceIncomeData.h"
 #include "Core/SeinPlayerState.h"
+#include "Data/SeinResourceTypes.h"
 
 /**
  * System: Resource Income
@@ -46,12 +47,12 @@ public:
 			}
 
 			// Scale income by DeltaTime and add to the player's resources.
-			TMap<FName, FFixedPoint> ScaledIncome;
-			ScaledIncome.Reserve(IncomeComp->IncomePerSecond.Num());
+			FSeinResourceCost ScaledIncome;
+			ScaledIncome.Amounts.Reserve(IncomeComp->IncomePerSecond.Num());
 
 			for (const auto& Pair : IncomeComp->IncomePerSecond)
 			{
-				ScaledIncome.Add(Pair.Key, Pair.Value * DeltaTime);
+				ScaledIncome.Amounts.Add(Pair.Key, Pair.Value * DeltaTime);
 			}
 
 			PlayerState->AddResources(ScaledIncome);

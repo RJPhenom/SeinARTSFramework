@@ -9,6 +9,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "GameplayTagContainer.h"
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinFactionID.h"
 #include "Player/SeinPlayerController.h"
@@ -55,9 +56,15 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode")
 	bool bAutoStartSimulation = true;
 
-	/** Starting resources given to each player on registration. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode")
-	TMap<FName, float> StartingResources;
+	/**
+	 * Starting-resource override map applied on top of the faction's ResourceKit
+	 * at player registration. Keyed by resource tag (SeinARTS.Resource.*).
+	 * Leave empty to use faction-kit defaults. Match-settings-level tweaks will
+	 * eventually supersede this per §18; see PLAN.md Session 5.3.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode",
+		meta = (Categories = "SeinARTS.Resource"))
+	TMap<FGameplayTag, float> StartingResources;
 
 	// ========== Runtime State ==========
 

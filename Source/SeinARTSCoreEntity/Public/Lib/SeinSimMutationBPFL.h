@@ -73,8 +73,10 @@ public:
 	// ====================================================================================================
 	//
 	// NOTE: Combat + Ability field-level setters are intentionally omitted.
-	//   - Combat: FSeinCombatData is pre-§10-reframe (pending Session 2.5 refactor to Health/MaxHealth).
-	//             Damage/heal goes through SeinApplyDamage/SeinApplyHealing in SeinCombatBPFL.
+	//   - Combat: Health mutation goes through USeinCombatBPFL::SeinApplyDamage / SeinApplyHeal so
+	//             the framework fires DamageApplied/HealApplied visual events, bumps attribution
+	//             stats, and runs the death-handler flow. `SeinSetCombatData` remains as a
+	//             whole-struct escape hatch for migrations / debug tooling.
 	//   - Ability: mutating another ability's runtime state is a footgun. Abilities control their
 	//              own lifecycle via OnTick/OnEnd and the activate/cancel command path.
 

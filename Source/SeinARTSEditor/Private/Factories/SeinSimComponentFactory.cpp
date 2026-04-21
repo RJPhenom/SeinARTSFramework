@@ -42,7 +42,7 @@ bool USeinSimComponentFactory::IsSeinDeterministicStruct(const UStruct* Struct)
 
 FText USeinSimComponentFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinSimComponentFactoryDisplayName", "Component");
+	return LOCTEXT("SeinSimComponentFactoryDisplayName", "SeinARTS Component");
 }
 
 uint32 USeinSimComponentFactory::GetMenuCategories() const

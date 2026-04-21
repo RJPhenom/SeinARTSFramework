@@ -19,9 +19,25 @@
 #include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
+#include "Core/SeinEntityHandle.h"
 #include "SeinTerrainBPFL.generated.h"
 
 class USeinNavigationGrid;
+
+/** Cover query result — tags at a cell + optional cover-facing direction. DESIGN §13. */
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
+struct SEINARTSNAVIGATION_API FSeinTerrainCoverQuery
+{
+	GENERATED_BODY()
+
+	/** Cover + biome tags at the queried location. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Terrain")
+	FGameplayTagContainer Tags;
+
+	/** Unit vector along which cover is oriented (non-directional = zero). */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Terrain")
+	FFixedVector CoverFacingDirection;
+};
 
 UCLASS(meta = (DisplayName = "SeinARTS Terrain Library"))
 class SEINARTSNAVIGATION_API USeinTerrainBPFL : public UBlueprintFunctionLibrary
@@ -53,4 +69,21 @@ public:
 	/** Convert grid coordinates to a world-space center position */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Terrain", meta = (DisplayName = "Grid To World"))
 	static FFixedVector SeinGridToWorld(USeinNavigationGrid* Grid, FIntPoint GridPosition);
+
+	/** Query cover tags + facing direction at a world location (DESIGN §13).
+	 *  CoverFacingDirection is zero for non-directional cover. Designer computes
+	 *  the dot-product against their attack vector for directional-cover math. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Terrain",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Query Cover At Location"))
+	static FSeinTerrainCoverQuery SeinQueryCoverAtLocation(const UObject* WorldContextObject, FFixedVector Location);
+
+	/** Register a multi-cell footprint — marks cells DynamicBlocked for pathing. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Terrain|Footprint",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Register Footprint"))
+	static void SeinRegisterFootprint(const UObject* WorldContextObject, FSeinEntityHandle Entity, FFixedVector WorldLocation);
+
+	/** Unregister a previously-registered footprint. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Terrain|Footprint",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Unregister Footprint"))
+	static void SeinUnregisterFootprint(const UObject* WorldContextObject, FSeinEntityHandle Entity, FFixedVector WorldLocation);
 };

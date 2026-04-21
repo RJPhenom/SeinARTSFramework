@@ -11,6 +11,7 @@
 #include "SeinARTSEditorStyle.h"
 #include "Actor/SeinActor.h"
 #include "Abilities/SeinAbility.h"
+#include "Effects/SeinEffectBlueprint.h"
 #include "Widgets/SeinWidgetBlueprint.h"
 #include "Engine/Blueprint.h"
 #include "Engine/Texture2D.h"
@@ -80,8 +81,9 @@ const FTexture* USeinBlueprintThumbnailRenderer::GetIconResource(ESeinAssetType 
 	FName TextureName;
 	switch (Type)
 	{
-	case ESeinAssetType::Unit:      TextureName = FName(TEXT("SeinUnitIcon92"));      break;
+	case ESeinAssetType::Unit:      TextureName = FName(TEXT("SeinEntityIcon92"));    break;
 	case ESeinAssetType::Ability:   TextureName = FName(TEXT("SeinAbilityIcon92"));   break;
+	case ESeinAssetType::Effect:    TextureName = FName(TEXT("SeinEffectIcon92"));    break;
 	case ESeinAssetType::Widget:    TextureName = FName(TEXT("SeinWidgetIcon92"));    break;
 	default: return nullptr;
 	}
@@ -103,12 +105,17 @@ USeinBlueprintThumbnailRenderer::ESeinAssetType USeinBlueprintThumbnailRenderer:
 		return ESeinAssetType::None;
 	}
 
-	// Widget uses asset-class check because its factory produces a dedicated
-	// USeinWidgetBlueprint UCLASS. Unit/Ability use parent-class checks since
-	// they're plain UBlueprint assets differentiated only by their parent.
+	// Widget + Effect use asset-class checks (their factories produce dedicated
+	// UCLASSes). Unit/Ability use parent-class checks since they're plain
+	// UBlueprint assets differentiated only by their parent.
 	if (Blueprint->IsA<USeinWidgetBlueprint>())
 	{
 		return ESeinAssetType::Widget;
+	}
+
+	if (Blueprint->IsA<USeinEffectBlueprint>())
+	{
+		return ESeinAssetType::Effect;
 	}
 
 	if (Blueprint->ParentClass->IsChildOf(ASeinActor::StaticClass()))
@@ -128,9 +135,10 @@ FLinearColor USeinBlueprintThumbnailRenderer::GetBarColor(ESeinAssetType Type)
 {
 	switch (Type)
 	{
-	case ESeinAssetType::Unit:      return FLinearColor(0.0f, 0.584f, 1.0f, 1.0f);    // #0095FF
-	case ESeinAssetType::Ability:   return FLinearColor(1.0f, 0.0f, 0.0f, 1.0f);      // #FF0000
-	case ESeinAssetType::Widget:    return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("8844AA"))); // #8844AA
+	case ESeinAssetType::Unit:      return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("0095FF"))); // #0095FF
+	case ESeinAssetType::Ability:   return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("FF0000"))); // #FF0000
+	case ESeinAssetType::Effect:    return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("FFFF00"))); // #FFFF00
+	case ESeinAssetType::Widget:    return FLinearColor::FromSRGBColor(FColor::FromHex(TEXT("0095FF"))); // #0095FF
 	default:                        return FLinearColor::Transparent;
 	}
 }

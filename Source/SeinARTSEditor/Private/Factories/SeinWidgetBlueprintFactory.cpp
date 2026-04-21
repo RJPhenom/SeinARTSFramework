@@ -116,7 +116,7 @@ UObject* USeinWidgetBlueprintFactory::FactoryCreateNew(UClass* Class, UObject* I
 
 FText USeinWidgetBlueprintFactory::GetDisplayName() const
 {
-	return LOCTEXT("SeinWidgetBlueprintFactoryDisplayName", "Widget");
+	return LOCTEXT("SeinWidgetBlueprintFactoryDisplayName", "View Model Widget");
 }
 
 uint32 USeinWidgetBlueprintFactory::GetMenuCategories() const

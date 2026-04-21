@@ -59,9 +59,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Math", meta = (DisplayName = "Fixed Vector To Vector"))
 	static FVector SeinFixedVectorToVector(const FFixedVector& Value);
 
-	/** Format a resource cost map into a human-readable string (e.g., "100 Manpower, 50 Fuel"). */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Format", meta = (DisplayName = "Format Resource Cost"))
-	static FText SeinFormatResourceCost(const TMap<FName, float>& Cost);
+	/** Format a tag-keyed resource cost map into a human-readable string
+	 *  (e.g., "100 Manpower, 50 Fuel"). Resource tag leaf name is used as the label. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|UI|Format", meta = (DisplayName = "Format Resource Cost", Categories = "SeinARTS.Resource"))
+	static FText SeinFormatResourceCost(const TMap<FGameplayTag, float>& Cost);
 
 	// ==================== Screen Projection ====================
 

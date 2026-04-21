@@ -6,6 +6,7 @@
 
 #include "Debug/SeinCommandLogSubsystem.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Tags/SeinARTSGameplayTags.h"
 #include "Engine/World.h"
 #include "Engine/Engine.h"
 #include "HAL/IConsoleManager.h"
@@ -107,9 +108,9 @@ void USeinCommandLogSubsystem::OnCommandsProcessing(int32 Tick, const TArray<FSe
 
 FString USeinCommandLogSubsystem::DescribeCommand(const FSeinCommand& Cmd)
 {
-	switch (Cmd.CommandType)
-	{
-	case ESeinCommandType::ActivateAbility:
+	const FGameplayTag& T = Cmd.CommandType;
+
+	if (T == SeinARTSTags::Command_Type_ActivateAbility)
 	{
 		const FString TagStr = Cmd.AbilityTag.IsValid() ? Cmd.AbilityTag.ToString() : TEXT("None");
 		const FVector Loc = Cmd.TargetLocation.ToVector();
@@ -125,19 +126,25 @@ FString USeinCommandLogSubsystem::DescribeCommand(const FSeinCommand& Cmd)
 		}
 		return Desc;
 	}
-	case ESeinCommandType::CancelAbility:
+	if (T == SeinARTSTags::Command_Type_CancelAbility)
+	{
 		return TEXT("CancelAbility");
-	case ESeinCommandType::QueueProduction:
+	}
+	if (T == SeinARTSTags::Command_Type_QueueProduction)
+	{
 		return FString::Printf(TEXT("QueueProduction [%s]"),
 			Cmd.AbilityTag.IsValid() ? *Cmd.AbilityTag.ToString() : TEXT("None"));
-	case ESeinCommandType::CancelProduction:
+	}
+	if (T == SeinARTSTags::Command_Type_CancelProduction)
+	{
 		return FString::Printf(TEXT("CancelProduction idx=%d"), Cmd.QueueIndex);
-	case ESeinCommandType::SetRallyPoint:
+	}
+	if (T == SeinARTSTags::Command_Type_SetRallyPoint)
 	{
 		const FVector Loc = Cmd.TargetLocation.ToVector();
 		return FString::Printf(TEXT("SetRallyPoint (%.0f, %.0f, %.0f)"), Loc.X, Loc.Y, Loc.Z);
 	}
-	case ESeinCommandType::Ping:
+	if (T == SeinARTSTags::Command_Type_Ping)
 	{
 		const FVector Loc = Cmd.TargetLocation.ToVector();
 		FString Desc = FString::Printf(TEXT("PING (%.0f, %.0f, %.0f)"), Loc.X, Loc.Y, Loc.Z);
@@ -147,7 +154,7 @@ FString USeinCommandLogSubsystem::DescribeCommand(const FSeinCommand& Cmd)
 		}
 		return Desc;
 	}
-	case ESeinCommandType::CameraUpdate:
+	if (T == SeinARTSTags::Command_Type_Observer_CameraUpdate)
 	{
 		const FVector Loc = Cmd.TargetLocation.ToVector();
 		const float Yaw = Cmd.AuxA.ToFloat();
@@ -156,26 +163,23 @@ FString USeinCommandLogSubsystem::DescribeCommand(const FSeinCommand& Cmd)
 		return FString::Printf(TEXT("CameraUpdate pos=(%.0f,%.0f,%.0f) yaw=%.1f pitch=%.1f zoom=%.0f"),
 			Loc.X, Loc.Y, Loc.Z, Yaw, Pitch, Zoom);
 	}
-	case ESeinCommandType::SelectionChanged:
+	if (T == SeinARTSTags::Command_Type_Observer_SelectionChanged)
+	{
 		return FString::Printf(TEXT("SelectionChanged (%d ents, focus=%d)"),
 			Cmd.EntityList.Num(), Cmd.ActiveFocusIndex);
-	default:
-		return TEXT("???");
 	}
+	// Unknown / designer-extended command type — log the raw tag.
+	return FString::Printf(TEXT("%s"), T.IsValid() ? *T.ToString() : TEXT("???"));
 }
 
-FColor USeinCommandLogSubsystem::GetCommandColor(ESeinCommandType Type)
+FColor USeinCommandLogSubsystem::GetCommandColor(FGameplayTag CommandType)
 {
-	switch (Type)
-	{
-	case ESeinCommandType::ActivateAbility:   return FColor(80, 255, 80);
-	case ESeinCommandType::CancelAbility:     return FColor(255, 160, 0);
-	case ESeinCommandType::QueueProduction:   return FColor(80, 220, 255);
-	case ESeinCommandType::CancelProduction:  return FColor(255, 255, 80);
-	case ESeinCommandType::SetRallyPoint:     return FColor(100, 200, 255);
-	case ESeinCommandType::Ping:              return FColor(255, 80, 255);
-	case ESeinCommandType::CameraUpdate:      return FColor(120, 120, 120);
-	case ESeinCommandType::SelectionChanged:  return FColor(120, 120, 120);
-	default:                                  return FColor::White;
-	}
+	if (CommandType == SeinARTSTags::Command_Type_ActivateAbility)  return FColor(80, 255, 80);
+	if (CommandType == SeinARTSTags::Command_Type_CancelAbility)    return FColor(255, 160, 0);
+	if (CommandType == SeinARTSTags::Command_Type_QueueProduction)  return FColor(80, 220, 255);
+	if (CommandType == SeinARTSTags::Command_Type_CancelProduction) return FColor(255, 255, 80);
+	if (CommandType == SeinARTSTags::Command_Type_SetRallyPoint)    return FColor(100, 200, 255);
+	if (CommandType == SeinARTSTags::Command_Type_Ping)             return FColor(255, 80, 255);
+	if (CommandType.MatchesTag(SeinARTSTags::Command_Type_Observer)) return FColor(120, 120, 120);
+	return FColor::White;
 }

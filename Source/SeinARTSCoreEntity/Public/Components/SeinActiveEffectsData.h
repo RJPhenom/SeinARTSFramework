@@ -1,7 +1,8 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinActiveEffectsData.h
- * @brief   Component that holds all active effects on an entity.
+ * @brief   Component that holds all Instance-scope active effects on an entity.
+ *          Archetype- and Player-scope effects live on FSeinPlayerState.
  */
 
 #pragma once
@@ -15,47 +16,46 @@
 #include "SeinActiveEffectsData.generated.h"
 
 /**
- * ECS-style component that stores the set of active effects on a single entity.
- * Provides methods for adding, removing, querying, and collecting modifiers
- * from all currently active effects.
+ * ECS-style component storing the Instance-scope active effects on an entity.
+ * Per DESIGN §8, Archetype- and Player-scope effects don't live here — they
+ * live on the owner's `FSeinPlayerState::ArchetypeEffects` / `::PlayerEffects`.
  */
 USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinActiveEffectsData : public FSeinComponent
 {
 	GENERATED_BODY()
 
-	/** All currently active effects on this entity. */
+	/** All currently active Instance-scope effects on this entity. */
 	UPROPERTY()
 	TArray<FSeinActiveEffect> ActiveEffects;
 
-	/** Monotonically increasing ID counter for effect instances. */
+	/** Monotonically increasing ID counter for effect instances (scoped to this
+	 *  component — not globally unique, only unique within this entity's storage). */
 	uint32 NextEffectInstanceID = 1;
 
-	/**
-	 * Add an effect. Assigns a unique EffectInstanceID.
-	 * @return The assigned EffectInstanceID.
-	 */
+	/** Assign an instance ID and append. Returns the assigned ID. */
 	uint32 AddEffect(const FSeinActiveEffect& Effect);
 
-	/** Remove an effect by its instance ID. */
+	/** Remove by instance ID. No-op if not found. */
 	void RemoveEffect(uint32 EffectInstanceID);
 
-	/** Remove all active effects whose EffectTag matches the given tag. */
+	/** Remove all active effects whose CDO EffectTag matches. */
 	void RemoveEffectsWithTag(const FGameplayTag& Tag);
 
-	/** Check whether any active effect has the given EffectTag. */
+	/** True if any active effect's CDO EffectTag matches. */
 	bool HasEffectWithTag(const FGameplayTag& Tag) const;
 
-	/** Get the total stack count of effects with the given EffectName. */
-	int32 GetStackCount(FName EffectName) const;
+	/** Sum of CurrentStacks across all active effects whose CDO EffectTag matches. */
+	int32 GetStackCountForTag(const FGameplayTag& Tag) const;
 
-	/**
-	 * Gather all modifiers from every active effect into OutModifiers.
-	 * Modifiers from stacked effects are added once per stack.
-	 */
+	/** Sum of CurrentStacks across all active effects of a given class. */
+	int32 GetStackCountForClass(TSubclassOf<USeinEffect> EffectClass) const;
+
+	/** Gather all CDO modifiers from every active effect into OutModifiers.
+	 *  Modifiers are emitted once per stack (matches DESIGN §8 `Stack` rule). */
 	void CollectModifiers(TArray<FSeinModifier>& OutModifiers) const;
 
-	/** Remove all active effects. */
+	/** Clear storage. */
 	void Clear();
 };
 

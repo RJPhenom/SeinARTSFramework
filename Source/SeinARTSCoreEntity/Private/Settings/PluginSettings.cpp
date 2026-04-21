@@ -14,11 +14,18 @@
 USeinARTSCoreSettings::USeinARTSCoreSettings()
 	: SimulationTickRate(30)
 	, MaxTicksPerFrame(5)
+	, EffectCountWarningThreshold(256)
+	, DefaultCellSize(100.0f)
+	, DefaultElevationMode(ESeinElevationMode::None)
+	, DefaultLayerSeparation(100.0f)
+	, NavTileSize(32)
+	, BakeTilesPerProgressStep(16)
+	, MaxWalkableSlopeDegrees(45.0f)
 #if WITH_EDITORONLY_DATA
-	, bShowUnitInBasicCategory(true)
 	, bShowAbilityInBasicCategory(true)
 	, bShowComponentInBasicCategory(false)
 	, bShowEffectInBasicCategory(true)
+	, bShowEntityInBasicCategory(true)
 	, bShowWidgetInBasicCategory(false)
 #endif
 {

@@ -5,6 +5,7 @@
  */
 
 #include "Input/SeinCommand.h"
+#include "Tags/SeinARTSGameplayTags.h"
 
 // --- FSeinCommand factory methods ---
 
@@ -18,7 +19,7 @@ FSeinCommand FSeinCommand::MakeAbilityCommand(
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
 	Cmd.EntityHandle = Entity;
-	Cmd.CommandType = ESeinCommandType::ActivateAbility;
+	Cmd.CommandType = SeinARTSTags::Command_Type_ActivateAbility;
 	Cmd.AbilityTag = Tag;
 	Cmd.TargetEntity = Target;
 	Cmd.TargetLocation = Location;
@@ -32,7 +33,7 @@ FSeinCommand FSeinCommand::MakeCancelCommand(
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
 	Cmd.EntityHandle = Entity;
-	Cmd.CommandType = ESeinCommandType::CancelAbility;
+	Cmd.CommandType = SeinARTSTags::Command_Type_CancelAbility;
 	return Cmd;
 }
 
@@ -44,7 +45,7 @@ FSeinCommand FSeinCommand::MakeProductionCommand(
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
 	Cmd.EntityHandle = Building;
-	Cmd.CommandType = ESeinCommandType::QueueProduction;
+	Cmd.CommandType = SeinARTSTags::Command_Type_QueueProduction;
 	Cmd.AbilityTag = ArchetypeTag;
 	return Cmd;
 }
@@ -57,7 +58,7 @@ FSeinCommand FSeinCommand::MakeRallyPointCommand(
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
 	Cmd.EntityHandle = Building;
-	Cmd.CommandType = ESeinCommandType::SetRallyPoint;
+	Cmd.CommandType = SeinARTSTags::Command_Type_SetRallyPoint;
 	Cmd.TargetLocation = Location;
 	return Cmd;
 }
@@ -74,7 +75,7 @@ FSeinCommand FSeinCommand::MakeAbilityCommandEx(
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
 	Cmd.EntityHandle = Entity;
-	Cmd.CommandType = ESeinCommandType::ActivateAbility;
+	Cmd.CommandType = SeinARTSTags::Command_Type_ActivateAbility;
 	Cmd.AbilityTag = Tag;
 	Cmd.TargetEntity = Target;
 	Cmd.TargetLocation = Location;
@@ -90,7 +91,7 @@ FSeinCommand FSeinCommand::MakePingCommand(
 {
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
-	Cmd.CommandType = ESeinCommandType::Ping;
+	Cmd.CommandType = SeinARTSTags::Command_Type_Ping;
 	Cmd.TargetLocation = Location;
 	Cmd.TargetEntity = OptionalTarget;
 	return Cmd;
@@ -100,8 +101,7 @@ FSeinCommand FSeinCommand::MakePingCommand(
 
 bool FSeinCommand::IsObserverCommand() const
 {
-	return CommandType == ESeinCommandType::CameraUpdate
-		|| CommandType == ESeinCommandType::SelectionChanged;
+	return CommandType.MatchesTag(SeinARTSTags::Command_Type_Observer);
 }
 
 FSeinCommand FSeinCommand::MakeCameraUpdateCommand(
@@ -112,7 +112,7 @@ FSeinCommand FSeinCommand::MakeCameraUpdateCommand(
 {
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
-	Cmd.CommandType = ESeinCommandType::CameraUpdate;
+	Cmd.CommandType = SeinARTSTags::Command_Type_Observer_CameraUpdate;
 	Cmd.TargetLocation = PivotLocation;
 	Cmd.AuxA = Yaw;
 	Cmd.AuxB = ZoomDistance;
@@ -126,7 +126,7 @@ FSeinCommand FSeinCommand::MakeSelectionChangedCommand(
 {
 	FSeinCommand Cmd;
 	Cmd.PlayerID = Player;
-	Cmd.CommandType = ESeinCommandType::SelectionChanged;
+	Cmd.CommandType = SeinARTSTags::Command_Type_Observer_SelectionChanged;
 	Cmd.EntityList = SelectedEntities;
 	Cmd.ActiveFocusIndex = InActiveFocusIndex;
 	return Cmd;

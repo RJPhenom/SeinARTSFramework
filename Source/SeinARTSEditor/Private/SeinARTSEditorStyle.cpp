@@ -35,16 +35,18 @@ void FSeinARTSEditorStyle::Initialize()
 	IconsDir = BrandKitDir;
 	StyleSet->SetContentRoot(BrandKitDir);
 
-	// ==================== Unit (SeinActor) ====================
+	// ==================== Entity (SeinActor) ====================
+	// Single factory shipped (USeinEntityFactory — bare template). Combat is
+	// designer-overridden per DESIGN §11, so no pre-seeded Unit starter kit.
 
 	StyleSet->Set(
 		"ClassIcon.SeinActor",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinUnitIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinEntityIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
 	);
 
 	StyleSet->Set(
 		"ClassThumbnail.SeinActor",
-		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinUnitIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinEntityIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
 	);
 
 	// ==================== Ability (SeinAbility) ====================
@@ -57,6 +59,31 @@ void FSeinARTSEditorStyle::Initialize()
 	StyleSet->Set(
 		"ClassThumbnail.SeinAbility",
 		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinAbilityIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+	);
+
+	// ==================== Effect (SeinEffect) ====================
+
+	StyleSet->Set(
+		"ClassIcon.SeinEffect",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinEffectIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+	);
+
+	StyleSet->Set(
+		"ClassThumbnail.SeinEffect",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinEffectIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
+	);
+
+	// ==================== Generic Sein Asset ====================
+	// Fallback icon for any SeinARTS asset lacking a type-specific thumbnail.
+
+	StyleSet->Set(
+		"ClassIcon.SeinAsset",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinAssetIcon16"), TEXT(".png")), FVector2D(16.0f, 16.0f))
+	);
+
+	StyleSet->Set(
+		"ClassThumbnail.SeinAsset",
+		new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("SeinAssetIcon92"), TEXT(".png")), FVector2D(92.0f, 92.0f))
 	);
 
 	// ==================== Component ====================
@@ -134,10 +161,12 @@ void FSeinARTSEditorStyle::Initialize()
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet);
 
 	// Load PNG files as UTexture2D for thumbnail renderers (FCanvas can't use Slate file brushes)
-	LoadAndCacheIcon(FName(TEXT("SeinUnitIcon92")),       TEXT("SeinUnitIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinEntityIcon92")),     TEXT("SeinEntityIcon92.png"));
 	LoadAndCacheIcon(FName(TEXT("SeinAbilityIcon92")),    TEXT("SeinAbilityIcon92.png"));
 	LoadAndCacheIcon(FName(TEXT("SeinComponentIcon92")),  TEXT("SeinComponentIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinEffectIcon92")),     TEXT("SeinEffectIcon92.png"));
 	LoadAndCacheIcon(FName(TEXT("SeinWidgetIcon92")),     TEXT("SeinWidgetIcon92.png"));
+	LoadAndCacheIcon(FName(TEXT("SeinAssetIcon92")),      TEXT("SeinAssetIcon92.png"));
 }
 
 UTexture2D* FSeinARTSEditorStyle::LoadAndCacheIcon(const FName& TextureName, const FString& Filename)

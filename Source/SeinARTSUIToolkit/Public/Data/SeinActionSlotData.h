@@ -65,9 +65,9 @@ struct SEINARTSUITOOLKIT_API FSeinActionSlotData
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI|Action")
 	float CooldownPercent = 0.0f;
 
-	/** Resource cost to activate (float for display). */
-	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI|Action")
-	TMap<FName, float> ResourceCost;
+	/** Resource cost to activate, keyed by resource tag (float for display). */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI|Action", meta = (Categories = "SeinARTS.Resource"))
+	TMap<FGameplayTag, float> ResourceCost;
 
 	/** Slot index within the panel (for input mapping). */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|UI|Action")

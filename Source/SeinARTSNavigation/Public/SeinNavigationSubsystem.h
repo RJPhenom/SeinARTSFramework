@@ -22,6 +22,8 @@
 
 class USeinPathfinder;
 class USeinNavigationGrid;
+class USeinNavigationGridAsset;
+class USeinFlowFieldPlanner;
 
 UCLASS()
 class SEINARTSNAVIGATION_API USeinNavigationSubsystem : public UWorldSubsystem
@@ -31,6 +33,7 @@ class SEINARTSNAVIGATION_API USeinNavigationSubsystem : public UWorldSubsystem
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	/** Get the runtime pathfinder. Never null after Initialize(). */
 	USeinPathfinder* GetPathfinder() const { return Pathfinder; }
@@ -46,10 +49,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation")
 	void RebuildGrid(int32 Width, int32 Height, float CellSize, FVector Origin);
 
+	/** Apply a baked grid asset to the runtime grid (used by level-load path). */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation")
+	void ApplyGridAsset(USeinNavigationGridAsset* Asset);
+
+	/** Find the first baked grid asset referenced by any ASeinNavVolume in the world. */
+	USeinNavigationGridAsset* FindBakedGridAssetInWorld() const;
+
+	/** Flow-field planner (HPA* + Dijkstra + per-broker plan cache). */
+	USeinFlowFieldPlanner* GetFlowFieldPlanner() const { return FlowPlanner; }
+
 private:
 	UPROPERTY()
 	TObjectPtr<USeinNavigationGrid> Grid;
 
 	UPROPERTY()
 	TObjectPtr<USeinPathfinder> Pathfinder;
+
+	UPROPERTY()
+	TObjectPtr<USeinFlowFieldPlanner> FlowPlanner;
 };

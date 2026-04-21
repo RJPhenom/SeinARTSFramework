@@ -39,32 +39,32 @@ void USeinPlayerViewModel::Refresh()
 		CachedResources.Add(Pair.Key, Pair.Value.ToFloat());
 	}
 
-	CachedTechTags = State->UnlockedTechTags;
+	CachedTechTags = State->PlayerTags;
 
 	OnRefreshed.Broadcast();
 }
 
 // ==================== Resource Access ====================
 
-float USeinPlayerViewModel::GetResource(FName ResourceName) const
+float USeinPlayerViewModel::GetResource(FGameplayTag ResourceTag) const
 {
-	const float* Found = CachedResources.Find(ResourceName);
+	const float* Found = CachedResources.Find(ResourceTag);
 	return Found ? *Found : 0.0f;
 }
 
-TMap<FName, float> USeinPlayerViewModel::GetAllResources() const
+TMap<FGameplayTag, float> USeinPlayerViewModel::GetAllResources() const
 {
 	return CachedResources;
 }
 
-TArray<FName> USeinPlayerViewModel::GetResourceNames() const
+TArray<FGameplayTag> USeinPlayerViewModel::GetResourceTags() const
 {
-	TArray<FName> Names;
-	CachedResources.GetKeys(Names);
-	return Names;
+	TArray<FGameplayTag> Tags;
+	CachedResources.GetKeys(Tags);
+	return Tags;
 }
 
-bool USeinPlayerViewModel::CanAfford(const TMap<FName, float>& Cost) const
+bool USeinPlayerViewModel::CanAfford(const TMap<FGameplayTag, float>& Cost) const
 {
 	for (const auto& Pair : Cost)
 	{

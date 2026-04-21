@@ -11,6 +11,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Input/SeinCommand.h"
+#include "GameplayTagContainer.h"
 #include "SeinCommandLogSubsystem.generated.h"
 
 class USeinWorldSubsystem;
@@ -26,7 +27,7 @@ struct FSeinCommandLogEntry
 	int32 Tick = 0;
 	int32 PlayerIndex = -1;
 	int32 EntityIndex = -1;
-	ESeinCommandType CommandType = ESeinCommandType::ActivateAbility;
+	FGameplayTag CommandType;
 	FString Description;
 	FColor DisplayColor = FColor::White;
 };
@@ -66,5 +67,5 @@ private:
 
 	void OnCommandsProcessing(int32 Tick, const TArray<FSeinCommand>& Commands);
 	static FString DescribeCommand(const FSeinCommand& Cmd);
-	static FColor GetCommandColor(ESeinCommandType Type);
+	static FColor GetCommandColor(FGameplayTag CommandType);
 };
