@@ -904,125 +904,10 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 
 void ASeinPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASeinActor* TargetActor)
 {
-	USeinWorldSubsystem* Subsystem = GetWorldSubsystem();
-	if (!Subsystem)
-	{
-		return;
-	}
-
-	// Build the command context from what was clicked
-	const FGameplayTagContainer Context = BuildCommandContext(TargetActor, WorldLocation);
-
-	// Determine which entities receive commands
-	TArray<ASeinActor*> CommandTargets;
-	if (ActiveFocusIndex >= 0 && ActiveFocusIndex < SelectedActors.Num())
-	{
-		// Focused mode — only the focused entity
-		if (ASeinActor* Focused = SelectedActors[ActiveFocusIndex].Get())
-		{
-			if (Focused->HasValidEntity())
-			{
-				CommandTargets.Add(Focused);
-			}
-		}
-	}
-	else
-	{
-		// "All" mode — all selected entities
-		CommandTargets = GetValidSelectedActors();
-	}
-
-	if (CommandTargets.IsEmpty())
-	{
-		return;
-	}
-
-	// Resolve the target entity handle (if clicking on an entity)
-	const FSeinEntityHandle TargetEntityHandle =
-		(TargetActor && TargetActor->HasValidEntity())
-			? TargetActor->GetEntityHandle()
-			: FSeinEntityHandle::Invalid();
-
-	// Convert world location to fixed-point
-	const FFixedVector FixedLocation = FFixedVector::FromVector(WorldLocation);
-
-	// Command resolution now lives on FSeinAbilityData (DESIGN §7 Q9) — read via
-	// the world subsystem, not the archetype component.
-	auto ResolveForActor = [&](ASeinActor* Actor) -> const FSeinAbilityData*
-	{
-		if (!Actor || !Actor->HasValidEntity()) return nullptr;
-		return Subsystem->GetComponent<FSeinAbilityData>(Actor->GetEntityHandle());
-	};
-
-	// Resolve the leader's ability tag (for LeaderDriven mode)
-	FGameplayTag LeaderAbilityTag;
-	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() > 0)
-	{
-		if (const FSeinAbilityData* LeaderAbilities = ResolveForActor(CommandTargets[0]))
-		{
-			LeaderAbilityTag = LeaderAbilities->ResolveCommandContext(Context);
-		}
-	}
-
-	FGameplayTag LastIssuedTag;
-
-	for (ASeinActor* Actor : CommandTargets)
-	{
-		if (!Actor || !Actor->HasValidEntity())
-		{
-			continue;
-		}
-
-		FGameplayTag AbilityTag;
-		const FSeinAbilityData* AbilityData = ResolveForActor(Actor);
-
-		if (DispatchMode == ESeinCommandDispatchMode::PerEntity)
-		{
-			if (AbilityData)
-			{
-				AbilityTag = AbilityData->ResolveCommandContext(Context);
-			}
-		}
-		else // LeaderDriven
-		{
-			if (Actor == CommandTargets[0])
-			{
-				AbilityTag = LeaderAbilityTag;
-			}
-			else if (AbilityData)
-			{
-				// Followers: try to use the leader's ability tag. If the follower's
-				// mappings would resolve to something else, fall back to the follower's
-				// own FallbackAbilityTag (usually Move).
-				const FGameplayTag OwnTag = AbilityData->ResolveCommandContext(Context);
-				AbilityTag = (OwnTag == LeaderAbilityTag) ? LeaderAbilityTag : AbilityData->FallbackAbilityTag;
-			}
-		}
-
-		if (!AbilityTag.IsValid())
-		{
-			continue;
-		}
-
-		// Create and enqueue the command
-		FSeinCommand Cmd = FSeinCommand::MakeAbilityCommand(
-			SeinPlayerID,
-			Actor->GetEntityHandle(),
-			AbilityTag,
-			TargetEntityHandle,
-			FixedLocation
-		);
-		Cmd.Tick = Subsystem->GetCurrentTick();
-
-		Subsystem->EnqueueCommand(Cmd);
-		LastIssuedTag = AbilityTag;
-	}
-
-	// Fire feedback event
-	if (LastIssuedTag.IsValid())
-	{
-		OnCommandIssued.Broadcast(LastIssuedTag, WorldLocation);
-	}
+	// Thin delegate to the Ex form — no queue, no formation endpoint. Both
+	// paths now funnel through IssueSmartCommandEx's branch on DispatchMode
+	// so broker-dispatch vs per-entity logic lives in one place.
+	IssueSmartCommandEx(WorldLocation, TargetActor, /*bQueue=*/false, FVector::ZeroVector);
 }
 
 void ASeinPlayerController::IssueSmartCommandEx(
@@ -1075,17 +960,49 @@ void ASeinPlayerController::IssueSmartCommandEx(
 		return Subsystem->GetComponent<FSeinAbilityData>(Actor->GetEntityHandle());
 	};
 
-	FGameplayTag LeaderAbilityTag;
-	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() > 0)
+	// LeaderDriven dispatch — one BrokerOrder carries the full selection per
+	// DESIGN §5. Txn log gets one entry per click regardless of selection size;
+	// the default resolver fans out to per-member ActivateAbility calls, with
+	// Move fallback for members that can't service the leader's ContextTag.
+	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() >= 2)
 	{
+		FGameplayTag LeaderAbilityTag;
 		if (const FSeinAbilityData* LeaderAbilities = ResolveForActorEx(CommandTargets[0]))
 		{
 			LeaderAbilityTag = LeaderAbilities->ResolveCommandContext(Context);
 		}
+		if (LeaderAbilityTag.IsValid())
+		{
+			TArray<FSeinEntityHandle> MemberHandles;
+			MemberHandles.Reserve(CommandTargets.Num());
+			for (ASeinActor* Actor : CommandTargets)
+			{
+				if (Actor && Actor->HasValidEntity())
+				{
+					MemberHandles.Add(Actor->GetEntityHandle());
+				}
+			}
+
+			FSeinCommand BrokerCmd;
+			BrokerCmd.PlayerID = SeinPlayerID;
+			BrokerCmd.CommandType = SeinARTSTags::Command_Type_BrokerOrder;
+			BrokerCmd.AbilityTag = LeaderAbilityTag;
+			BrokerCmd.TargetEntity = TargetEntityHandle;
+			BrokerCmd.TargetLocation = FixedLocation;
+			BrokerCmd.EntityList = MemberHandles;
+			BrokerCmd.bQueueCommand = bQueue;
+			BrokerCmd.AuxLocation = FixedFormationEnd;
+			BrokerCmd.Tick = Subsystem->GetCurrentTick();
+			Subsystem->EnqueueCommand(BrokerCmd);
+			OnCommandIssued.Broadcast(LeaderAbilityTag, WorldLocation);
+			return;
+		}
 	}
 
+	// PerEntity dispatch (or single-unit / focused): one ActivateAbility command
+	// per member so each entity resolves its own DefaultCommands. Preserves the
+	// heterogeneous-mix behavior (medics heal, infantry attack on the same click).
 	FGameplayTag LastIssuedTag;
-
 	for (ASeinActor* Actor : CommandTargets)
 	{
 		if (!Actor || !Actor->HasValidEntity())
@@ -1093,33 +1010,10 @@ void ASeinPlayerController::IssueSmartCommandEx(
 			continue;
 		}
 
-		FGameplayTag AbilityTag;
 		const FSeinAbilityData* AbilityData = ResolveForActorEx(Actor);
-
-		if (DispatchMode == ESeinCommandDispatchMode::PerEntity)
-		{
-			if (AbilityData)
-			{
-				AbilityTag = AbilityData->ResolveCommandContext(Context);
-			}
-		}
-		else // LeaderDriven
-		{
-			if (Actor == CommandTargets[0])
-			{
-				AbilityTag = LeaderAbilityTag;
-			}
-			else if (AbilityData)
-			{
-				const FGameplayTag OwnTag = AbilityData->ResolveCommandContext(Context);
-				AbilityTag = (OwnTag == LeaderAbilityTag) ? LeaderAbilityTag : AbilityData->FallbackAbilityTag;
-			}
-		}
-
-		if (!AbilityTag.IsValid())
-		{
-			continue;
-		}
+		if (!AbilityData) continue;
+		const FGameplayTag AbilityTag = AbilityData->ResolveCommandContext(Context);
+		if (!AbilityTag.IsValid()) continue;
 
 		FSeinCommand Cmd = FSeinCommand::MakeAbilityCommandEx(
 			SeinPlayerID,
@@ -1275,6 +1169,25 @@ void ASeinPlayerController::PurgeStaleSelection()
 		{
 			SelectedActors.RemoveAt(i);
 			bChanged = true;
+		}
+	}
+
+	// Control-group cleanup (DESIGN §15). Dead entity handles linger as stale
+	// entries in group arrays; drop them deterministically each tick so recall-
+	// group and group-count BPFLs return accurate live counts. Check handle
+	// validity against the sim pool — generation counters let us detect
+	// recycled slots safely.
+	if (USeinWorldSubsystem* Sub = GetWorldSubsystem())
+	{
+		for (int32 Group = 0; Group < 10; ++Group)
+		{
+			TArray<FSeinEntityHandle>& Handles = ControlGroups[Group];
+			const int32 Before = Handles.Num();
+			Handles.RemoveAll([Sub](const FSeinEntityHandle& H)
+			{
+				return !Sub->IsEntityAlive(H);
+			});
+			(void)Before; // reserved for telemetry if control-group-changed events land later
 		}
 	}
 

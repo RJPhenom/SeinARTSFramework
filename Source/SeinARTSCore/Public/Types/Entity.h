@@ -35,24 +35,26 @@ struct SEINARTSCORE_API FSeinEntity
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	FFixedTransform Transform;
 
-	/** Entity state flags (sim-side only — selection is render-side) */
+	/** Entity state flags. Sim-side authoritative; clients read to decide
+	 *  selection UI (FLAG_SELECTABLE — DESIGN §15). */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Entity")
 	int32 Flags;
 
 	// State flag bits
-	static constexpr int32 FLAG_ALIVE = 1 << 0;
+	static constexpr int32 FLAG_ALIVE        = 1 << 0;
 	static constexpr int32 FLAG_INVULNERABLE = 1 << 1;
+	static constexpr int32 FLAG_SELECTABLE   = 1 << 2;
 
 	FSeinEntity()
 		: ID(FSeinID::Invalid())
 		, Transform(FFixedTransform::Identity())
-		, Flags(FLAG_ALIVE)
+		, Flags(FLAG_ALIVE | FLAG_SELECTABLE)
 	{}
 
 	explicit FSeinEntity(FSeinID InID)
 		: ID(InID)
 		, Transform(FFixedTransform::Identity())
-		, Flags(FLAG_ALIVE)
+		, Flags(FLAG_ALIVE | FLAG_SELECTABLE)
 	{}
 
 	/** Check if entity is alive */
@@ -64,14 +66,16 @@ struct SEINARTSCORE_API FSeinEntity
 	/** Set alive flag */
 	FORCEINLINE void SetAlive(bool bAlive)
 	{
-		if (bAlive)
-		{
-			Flags |= FLAG_ALIVE;
-		}
-		else
-		{
-			Flags &= ~FLAG_ALIVE;
-		}
+		if (bAlive) { Flags |= FLAG_ALIVE; }
+		else        { Flags &= ~FLAG_ALIVE; }
+	}
+
+	/** Client selection gate (DESIGN §15). True = player UI can pick this entity. */
+	FORCEINLINE bool IsSelectable() const { return (Flags & FLAG_SELECTABLE) != 0; }
+	FORCEINLINE void SetSelectable(bool bSelectable)
+	{
+		if (bSelectable) { Flags |= FLAG_SELECTABLE; }
+		else             { Flags &= ~FLAG_SELECTABLE; }
 	}
 };
 

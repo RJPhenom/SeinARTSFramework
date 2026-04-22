@@ -6,6 +6,7 @@
 
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
+#include "AI/SeinAIController.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Data/SeinFaction.h"
 #include "Settings/PluginSettings.h"
@@ -15,9 +16,17 @@
 #include "Abilities/SeinLatentActionManager.h"
 #include "Components/SeinAbilityData.h"
 #include "Components/SeinActiveEffectsData.h"
+#include "Components/SeinAttachmentSpec.h"
+#include "Components/SeinBrokerMembershipData.h"
+#include "Components/SeinCommandBrokerData.h"
+#include "Components/SeinContainmentData.h"
+#include "Components/SeinContainmentMemberData.h"
 #include "Components/SeinProductionData.h"
 #include "Components/SeinTagData.h"
+#include "Components/SeinTransportSpec.h"
 #include "Components/ActorComponents/SeinActorComponent.h"
+#include "Brokers/SeinCommandBrokerResolver.h"
+#include "Brokers/SeinDefaultCommandBrokerResolver.h"
 #include "Attributes/SeinModifier.h"
 #include "Attributes/SeinAttributeResolver.h"
 #include "Core/SeinSimContext.h"
@@ -31,10 +40,13 @@
 #include "Simulation/Systems/SeinEffectTickSystem.h"
 #include "Simulation/Systems/SeinCooldownSystem.h"
 #include "Simulation/Systems/SeinAbilityTickSystem.h"
+#include "Simulation/Systems/SeinCommandBrokerSystem.h"
 #include "Simulation/Systems/SeinProductionSystem.h"
 #include "Simulation/Systems/SeinResourceSystem.h"
 #include "Simulation/Systems/SeinStateHashSystem.h"
 #include "Simulation/Systems/SeinLifespanSystem.h"
+
+#include "Brokers/SeinBrokerTypes.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinSim, Log, All);
 
@@ -61,6 +73,7 @@ void USeinWorldSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	BuiltInSystems.Add(new FSeinProductionSystem());
 	BuiltInSystems.Add(new FSeinResourceSystem());
 	BuiltInSystems.Add(new FSeinLifespanSystem());
+	BuiltInSystems.Add(new FSeinCommandBrokerSystem());
 	BuiltInSystems.Add(new FSeinStateHashSystem());
 
 	for (ISeinSystem* Sys : BuiltInSystems)
@@ -155,6 +168,16 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 {
 	if (!bIsRunning) return false;
 
+	// Paused sim: freeze the wall-clock accumulator (no drift-to-resume catch-up
+	// spikes) and skip the tick-system loop entirely. Commands accumulate in
+	// PendingCommands (Tactical pause per DESIGN §17 / §18) and flush on resume.
+	// Visual events already buffered flush via actor bridge's own read loop.
+	if (bSimPaused)
+	{
+		TimeAccumulator = 0.0f;
+		return true;
+	}
+
 	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
 	const int32 MaxTicks = Settings->MaxTicksPerFrame;
 
@@ -198,7 +221,15 @@ void USeinWorldSubsystem::TickSystems(FFixedPoint DeltaTime)
 		}
 	}
 
-	// Phase 2: CommandProcessing — dequeue and dispatch commands
+	// Advance the match state machine (DESIGN §18) — Starting-state pre-match
+	// countdown transitions to Playing once the deadline tick is reached.
+	TickMatchState();
+	// Expire idle votes (DESIGN §18 voting primitive).
+	TickVotes();
+
+	// Phase 2: CommandProcessing — tick AI first (DESIGN §16) so emitted
+	// commands accumulate in PendingCommands and get drained same-tick.
+	TickAIControllers(DeltaTime);
 	ProcessCommands();
 	for (ISeinSystem* System : Systems)
 	{
@@ -260,11 +291,189 @@ void USeinWorldSubsystem::ProcessCommands()
 				Cmd.PlayerID, Cmd.EntityHandle, Cmd.CommandType, Reason));
 		};
 
+		// Match flow commands (DESIGN §18). Handled before the spectator / pause
+		// / starting-state filters so Resume / End / Restart can always unstick
+		// the sim. No entity handle required — these target the subsystem itself.
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_StartMatch)
+		{
+			FSeinMatchSettings Settings;
+			if (Cmd.Payload.IsValid() && Cmd.Payload.GetScriptStruct() == FSeinMatchSettings::StaticStruct())
+			{
+				Settings = Cmd.Payload.Get<FSeinMatchSettings>();
+			}
+			StartMatch(Settings);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_EndMatch)
+		{
+			// Winner = PlayerID on the command; reason = AbilityTag slot.
+			EndMatch(Cmd.PlayerID, Cmd.AbilityTag);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_PauseMatchRequest)
+		{
+			SetSimPaused(true, CurrentMatchSettings.DefaultPauseMode);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_ResumeMatchRequest)
+		{
+			SetSimPaused(false);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_ConcedeMatch)
+		{
+			// V1: concede immediately ends the match with no-winner. Designers
+			// who want per-team victory / last-player-standing wire their own
+			// scenario + call EndMatch with the right winner.
+			EndMatch(FSeinPlayerID::Neutral(), SeinARTSTags::Command_Type_ConcedeMatch);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_RestartMatch)
+		{
+			MatchState = ESeinMatchState::Lobby;
+			EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchEnded));
+			continue;
+		}
+
+		// Vote commands (DESIGN §18 voting primitive).
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_StartVote)
+		{
+			FSeinStartVoteCommandPayload Pay;
+			if (Cmd.Payload.IsValid() && Cmd.Payload.GetScriptStruct() == FSeinStartVoteCommandPayload::StaticStruct())
+			{
+				Pay = Cmd.Payload.Get<FSeinStartVoteCommandPayload>();
+			}
+			StartVote(Cmd.AbilityTag, Pay.Resolution, Pay.RequiredThreshold, Pay.ExpiresInTicks, Cmd.PlayerID);
+			continue;
+		}
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_CastVote)
+		{
+			CastVote(Cmd.AbilityTag, Cmd.PlayerID, Cmd.QueueIndex);
+			continue;
+		}
+
+		// Diplomacy command (DESIGN §18). Gated on `bAllowMidMatchDiplomacy`.
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_ModifyDiplomacy)
+		{
+			// Allow while in Lobby/Starting regardless of the gate — diplomacy
+			// is effectively set during match-setup. Only gate while Playing+.
+			const bool bMidMatch = (MatchState == ESeinMatchState::Playing ||
+				MatchState == ESeinMatchState::Paused);
+			if (bMidMatch && !CurrentMatchSettings.bAllowMidMatchDiplomacy)
+			{
+				EnqueueVisualEvent(FSeinVisualEvent::MakeCommandRejectedEvent(
+					Cmd.PlayerID, Cmd.EntityHandle, Cmd.CommandType,
+					SeinARTSTags::Command_Reject_DiplomacyLocked));
+				continue;
+			}
+			if (Cmd.Payload.IsValid() && Cmd.Payload.GetScriptStruct() == FSeinDiplomacyCommandPayload::StaticStruct())
+			{
+				const FSeinDiplomacyCommandPayload& P = Cmd.Payload.Get<FSeinDiplomacyCommandPayload>();
+				ApplyDiplomacyDelta(P.FromPlayer, P.ToPlayer, P.TagsToAdd, P.TagsToRemove);
+			}
+			continue;
+		}
+
+		// Global filters on sim-mutating commands (DESIGN §18).
+		auto EmitFilterReject = [this, &Cmd](FGameplayTag Reason)
+		{
+			EnqueueVisualEvent(FSeinVisualEvent::MakeCommandRejectedEvent(
+				Cmd.PlayerID, Cmd.EntityHandle, Cmd.CommandType, Reason));
+		};
+		if (const FSeinPlayerState* PS = GetPlayerState(Cmd.PlayerID))
+		{
+			if (PS->bIsSpectator)
+			{
+				EmitFilterReject(SeinARTSTags::Command_Reject_SpectatorForbidden);
+				continue;
+			}
+		}
+		if (bSimPausedHard)
+		{
+			EmitFilterReject(SeinARTSTags::Command_Reject_SimPaused);
+			continue;
+		}
+		if (MatchState == ESeinMatchState::Starting)
+		{
+			EmitFilterReject(SeinARTSTags::Command_Reject_MatchStateInvalid);
+			continue;
+		}
+
 		// Ping commands don't require a valid entity — emit a visual event and continue.
 		if (Cmd.CommandType == SeinARTSTags::Command_Type_Ping)
 		{
 			EnqueueVisualEvent(FSeinVisualEvent::MakePingEvent(
 				Cmd.PlayerID, Cmd.TargetLocation, Cmd.TargetEntity));
+			continue;
+		}
+
+		// BrokerOrder targets a member list (Cmd.EntityList), not Cmd.EntityHandle.
+		// Handle it before the single-entity validity guard below.
+		if (Cmd.CommandType == SeinARTSTags::Command_Type_BrokerOrder)
+		{
+			if (Cmd.EntityList.Num() == 0)
+			{
+				RejectCommand(SeinARTSTags::Command_Reject_InvalidTarget);
+				continue;
+			}
+
+			// Filter members by ownership (DESIGN §5 "wholly-single-player" invariant).
+			// When match settings enable `bAlliedCommandSharing`, the filter widens to
+			// accept members owned by allies that grant `Permission.CommandSharing`
+			// toward the issuing player (DESIGN §18 cross-cutting hook). The
+			// broker's owner stays `Cmd.PlayerID` — allied members join but the
+			// broker is still single-owner for all downstream semantics.
+			const bool bAlliedSharingOn = CurrentMatchSettings.bAlliedCommandSharing;
+			TArray<FSeinEntityHandle> Filtered;
+			Filtered.Reserve(Cmd.EntityList.Num());
+			for (const FSeinEntityHandle& M : Cmd.EntityList)
+			{
+				if (!EntityPool.IsValid(M)) continue;
+				const FSeinPlayerID MemberOwner = GetEntityOwner(M);
+				if (MemberOwner == Cmd.PlayerID) { Filtered.Add(M); continue; }
+				if (bAlliedSharingOn)
+				{
+					const bool bAllied = GetDiplomacyTags(MemberOwner, Cmd.PlayerID)
+						.HasTagExact(SeinARTSTags::Diplomacy_Permission_Allied)
+						&& GetDiplomacyTags(Cmd.PlayerID, MemberOwner)
+							.HasTagExact(SeinARTSTags::Diplomacy_Permission_Allied);
+					const bool bCmdShared = GetDiplomacyTags(MemberOwner, Cmd.PlayerID)
+						.HasTagExact(SeinARTSTags::Diplomacy_Permission_CommandSharing);
+					if (bAllied && bCmdShared) { Filtered.Add(M); continue; }
+				}
+				// else: foreign member, drop silently (caller-side UX should have filtered).
+			}
+			if (Filtered.Num() == 0)
+			{
+				RejectCommand(SeinARTSTags::Command_Reject_InvalidTarget);
+				continue;
+			}
+
+			FSeinBrokerQueuedOrder Order;
+			Order.ContextTag = Cmd.AbilityTag;
+			Order.TargetEntity = Cmd.TargetEntity;
+			Order.TargetLocation = Cmd.TargetLocation;
+			Order.FormationEnd = Cmd.AuxLocation;
+
+			// If shift-queued and every member already shares a broker, append to
+			// that broker's queue; else evict + spawn a fresh broker (which inline-
+			// dispatches the first order).
+			FSeinEntityHandle ExistingBroker;
+			if (Cmd.bQueueCommand)
+			{
+				ExistingBroker = FindSharedBroker(Filtered);
+			}
+			if (ExistingBroker.IsValid())
+			{
+				if (FSeinCommandBrokerData* Broker = GetComponent<FSeinCommandBrokerData>(ExistingBroker))
+				{
+					Broker->OrderQueue.Add(Order);
+				}
+			}
+			else
+			{
+				CreateBrokerForMembers(Filtered, Cmd.PlayerID, Order);
+			}
 			continue;
 		}
 
@@ -331,21 +540,69 @@ void USeinWorldSubsystem::ProcessCommands()
 				*Ability, Cmd.EntityHandle, Cmd.TargetEntity, Cmd.TargetLocation, *this);
 			if (ValidationResult != ESeinAbilityTargetValidationResult::Valid)
 			{
-				// OutOfRange + AutoMoveThen: pre-Phase 4 this falls through to Reject
-				// (CommandBroker integration required — PLAN Session 4.1). Log the
-				// intent so designers can tell the feature is stubbed, not ignored.
+				// OutOfRange + AutoMoveThen: prepend an internal Move order on a
+				// single-member broker, then queue the original ability behind it.
+				// The Move targets the target's current position (or Cmd.TargetLocation
+				// if no target entity). Cost is deducted upfront — the player's click
+				// commits at AutoMoveThen-acceptance time (classic RTS UX). Broker
+				// dispatch skips cost re-deduction per SeinCommandBrokerSystem.
 				if (ValidationResult == ESeinAbilityTargetValidationResult::OutOfRange &&
 					Ability->OutOfRangeBehavior == ESeinOutOfRangeBehavior::AutoMoveThen)
 				{
-					UE_LOG(LogSeinSim, Warning,
-						TEXT("ActivateAbility[%s]: AutoMoveThen requested but CommandBrokers not yet wired (Phase 4); rejecting"),
-						*Cmd.AbilityTag.ToString());
+					// Member must have a Move ability to fulfill the prefix. If not,
+					// there's nothing to auto-move with — reject as OutOfRange.
+					if (!AbilityComp->HasAbilityWithTag(SeinARTSTags::Ability_Move))
+					{
+						UE_LOG(LogSeinSim, Warning,
+							TEXT("ActivateAbility[%s]: AutoMoveThen requested but entity has no Move ability; rejecting"),
+							*Cmd.AbilityTag.ToString());
+						RejectCommand(SeinARTSTags::Command_Reject_OutOfRange);
+						continue;
+					}
+
+					// Affordability check stays — AutoMoveThen is an "accept this
+					// command" path, not a free pass on cost gates.
+					if (!USeinResourceBPFL::SeinCanAfford(this, Cmd.PlayerID, Ability->ResourceCost))
+					{
+						RejectCommand(SeinARTSTags::Command_Reject_Unaffordable);
+						continue;
+					}
+					USeinResourceBPFL::SeinDeduct(this, Cmd.PlayerID, Ability->ResourceCost);
+
+					// Resolve the Move destination. If the command targets an entity,
+					// use its current world position; else use the raw TargetLocation.
+					FFixedVector MoveDest = Cmd.TargetLocation;
+					if (Cmd.TargetEntity.IsValid())
+					{
+						if (const FSeinEntity* Tgt = GetEntity(Cmd.TargetEntity))
+						{
+							MoveDest = Tgt->Transform.GetLocation();
+						}
+					}
+
+					FSeinBrokerQueuedOrder MovePrefix;
+					MovePrefix.ContextTag = SeinARTSTags::Ability_Move;
+					MovePrefix.TargetLocation = MoveDest;
+					MovePrefix.bIsInternalPrefix = true;
+
+					FSeinBrokerQueuedOrder Followup;
+					Followup.ContextTag = Cmd.AbilityTag;
+					Followup.TargetEntity = Cmd.TargetEntity;
+					Followup.TargetLocation = Cmd.TargetLocation;
+
+					TArray<FSeinEntityHandle> SingleMember = { Cmd.EntityHandle };
+					FSeinEntityHandle BrokerHandle = CreateBrokerForMembers(SingleMember, Cmd.PlayerID, MovePrefix);
+					if (BrokerHandle.IsValid())
+					{
+						if (FSeinCommandBrokerData* Broker = GetComponent<FSeinCommandBrokerData>(BrokerHandle))
+						{
+							Broker->OrderQueue.Add(Followup);
+						}
+					}
+					continue;
 				}
-				else
-				{
-					UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: target validation failed (%d)"),
-						*Cmd.AbilityTag.ToString(), static_cast<int32>(ValidationResult));
-				}
+				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: target validation failed (%d)"),
+					*Cmd.AbilityTag.ToString(), static_cast<int32>(ValidationResult));
 				FGameplayTag ReasonTag;
 				switch (ValidationResult)
 				{
@@ -686,6 +943,25 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	return Handle;
 }
 
+FSeinEntityHandle USeinWorldSubsystem::SpawnAbstractEntity(
+	const FFixedTransform& SpawnTransform,
+	FSeinPlayerID OwnerPlayerID)
+{
+	// Acquire a handle from the pool; no ActorClass = no render spawn, no
+	// archetype walk, no ability initialization. The caller is on the hook to
+	// add whatever components the abstract entity needs via AddComponent<T>.
+	FSeinEntityHandle Handle = EntityPool.Acquire(SpawnTransform, OwnerPlayerID);
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogSeinSim, Error, TEXT("SpawnAbstractEntity: pool.Acquire failed"));
+		return FSeinEntityHandle::Invalid();
+	}
+	// Intentionally no EntityActorClassMap entry — actor bridge no-ops on missing map entry.
+	UE_LOG(LogSeinSim, Verbose, TEXT("Spawned abstract entity %s (owner: %s)"),
+		*Handle.ToString(), *OwnerPlayerID.ToString());
+	return Handle;
+}
+
 void USeinWorldSubsystem::DestroyEntity(FSeinEntityHandle Handle)
 {
 	if (!Handle.IsValid() || !EntityPool.IsValid(Handle))
@@ -719,6 +995,70 @@ void USeinWorldSubsystem::ProcessDeferredDestroys()
 		// storages + pool release so downstream consumers can still read the
 		// effect's state while the removal hooks fire.
 		RemoveEffectsFromDeadSource(Handle);
+
+		// Containment death propagation (DESIGN §14) runs before storages clear so
+		// PropagateContainerDeath can still read the container's Occupants list +
+		// OnEject/OnContainerDeath effect classes off FSeinContainmentData.
+		if (GetComponent<FSeinContainmentData>(Handle))
+		{
+			PropagateContainerDeath(Handle);
+		}
+
+		// Member-side: if the dying entity is contained, evict it from its
+		// container's Occupants + CurrentLoad / VisualSlotAssignments / attachment
+		// slot. Mirrors the CommandBroker eviction below.
+		if (const FSeinContainmentMemberData* MemComp = GetComponent<FSeinContainmentMemberData>(Handle))
+		{
+			if (EntityPool.IsValid(MemComp->CurrentContainer))
+			{
+				if (FSeinContainmentData* Container = GetComponent<FSeinContainmentData>(MemComp->CurrentContainer))
+				{
+					Container->Occupants.Remove(Handle);
+					Container->CurrentLoad = FMath::Max(0, Container->CurrentLoad - MemComp->Size);
+					if (Container->bTracksVisualSlots)
+					{
+						const int32 Idx = MemComp->VisualSlotIndex;
+						if (Container->VisualSlotAssignments.IsValidIndex(Idx))
+						{
+							Container->VisualSlotAssignments[Idx] = FSeinEntityHandle();
+						}
+					}
+					// Attachment slot (if any) — clear assignment + fire visual event.
+					if (MemComp->CurrentSlot.IsValid())
+					{
+						if (FSeinAttachmentSpec* Spec = GetComponent<FSeinAttachmentSpec>(MemComp->CurrentContainer))
+						{
+							Spec->Assignments.Remove(MemComp->CurrentSlot);
+						}
+						EnqueueVisualEvent(FSeinVisualEvent::MakeAttachmentSlotEmptiedEvent(
+							MemComp->CurrentContainer, Handle, MemComp->CurrentSlot));
+					}
+					// Death of a contained entity doesn't spawn an exit-location event
+					// — container dying with eject=false funnels through
+					// PropagateContainerDeath above; death of just one occupant inside
+					// a still-living container is a quieter cleanup (no world teleport).
+				}
+			}
+		}
+
+		// Evict from the dying entity's current broker (DESIGN §5). If this leaves
+		// the broker with no members and no queued orders, cull it via DestroyEntity
+		// — it'll be processed on the next tick's PostTick.
+		if (const FSeinBrokerMembershipData* Memb = GetComponent<FSeinBrokerMembershipData>(Handle))
+		{
+			if (EntityPool.IsValid(Memb->CurrentBrokerHandle))
+			{
+				if (FSeinCommandBrokerData* Broker = GetComponent<FSeinCommandBrokerData>(Memb->CurrentBrokerHandle))
+				{
+					Broker->Members.Remove(Handle);
+					Broker->bCapabilityMapDirty = true;
+					if (Broker->Members.Num() == 0 && Broker->OrderQueue.Num() == 0 && !Broker->bIsExecuting)
+					{
+						DestroyEntity(Memb->CurrentBrokerHandle);
+					}
+				}
+			}
+		}
 
 		// Clear the entity from the global tag index and the named registry
 		// before component storages are freed (UnindexEntityTags reads FSeinTagData).
@@ -1723,4 +2063,819 @@ void USeinWorldSubsystem::UnregisterHandleFromNames(FSeinEntityHandle Handle)
 			It.RemoveCurrent();
 		}
 	}
+}
+
+// ==================== CommandBroker helpers (DESIGN §5) ====================
+
+FSeinEntityHandle USeinWorldSubsystem::FindSharedBroker(const TArray<FSeinEntityHandle>& Members) const
+{
+	if (Members.Num() == 0) return FSeinEntityHandle::Invalid();
+
+	FSeinEntityHandle Shared;
+	for (const FSeinEntityHandle& M : Members)
+	{
+		const FSeinBrokerMembershipData* Memb = GetComponent<FSeinBrokerMembershipData>(M);
+		if (!Memb || !Memb->CurrentBrokerHandle.IsValid())
+		{
+			return FSeinEntityHandle::Invalid();
+		}
+		if (!Shared.IsValid())
+		{
+			Shared = Memb->CurrentBrokerHandle;
+		}
+		else if (Shared != Memb->CurrentBrokerHandle)
+		{
+			return FSeinEntityHandle::Invalid();
+		}
+	}
+	return Shared;
+}
+
+FSeinEntityHandle USeinWorldSubsystem::CreateBrokerForMembers(
+	const TArray<FSeinEntityHandle>& FilteredMembers,
+	FSeinPlayerID OwnerPlayerID,
+	const FSeinBrokerQueuedOrder& FirstOrder)
+{
+	if (FilteredMembers.Num() == 0) return FSeinEntityHandle::Invalid();
+
+	// 1. Evict each member from its prior broker (one-broker-per-member invariant).
+	for (const FSeinEntityHandle& M : FilteredMembers)
+	{
+		FSeinBrokerMembershipData* Memb = GetComponent<FSeinBrokerMembershipData>(M);
+		if (!Memb || !Memb->CurrentBrokerHandle.IsValid()) continue;
+		if (!EntityPool.IsValid(Memb->CurrentBrokerHandle)) continue;
+		FSeinCommandBrokerData* OldBroker = GetComponent<FSeinCommandBrokerData>(Memb->CurrentBrokerHandle);
+		if (!OldBroker) continue;
+		OldBroker->Members.Remove(M);
+		OldBroker->bCapabilityMapDirty = true;
+		if (OldBroker->Members.Num() == 0 && OldBroker->OrderQueue.Num() == 0 && !OldBroker->bIsExecuting)
+		{
+			DestroyEntity(Memb->CurrentBrokerHandle);
+		}
+	}
+
+	// 2. Compute initial centroid.
+	FFixedVector InitialCentroid;
+	int32 CentroidCount = 0;
+	for (const FSeinEntityHandle& M : FilteredMembers)
+	{
+		if (const FSeinEntity* E = GetEntity(M))
+		{
+			InitialCentroid += E->Transform.GetLocation();
+			++CentroidCount;
+		}
+	}
+	if (CentroidCount > 0)
+	{
+		InitialCentroid = InitialCentroid / FFixedPoint::FromInt(CentroidCount);
+	}
+
+	// 3. Spawn the abstract broker entity.
+	FSeinEntityHandle BrokerHandle = SpawnAbstractEntity(FFixedTransform(InitialCentroid), OwnerPlayerID);
+	if (!BrokerHandle.IsValid()) return FSeinEntityHandle::Invalid();
+
+	// 4. Build + inject FSeinCommandBrokerData with the first order pre-queued.
+	FSeinCommandBrokerData BrokerData;
+	BrokerData.Members = FilteredMembers;
+	BrokerData.Centroid = InitialCentroid;
+	BrokerData.Anchor = FirstOrder.TargetLocation;
+	BrokerData.OrderQueue.Add(FirstOrder);
+	BrokerData.bCapabilityMapDirty = true;
+
+	// Resolver class resolution: plugin-setting soft class → framework default.
+	TSubclassOf<USeinCommandBrokerResolver> ResolverClass;
+	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
+	{
+		if (!Settings->DefaultBrokerResolverClass.IsNull())
+		{
+			ResolverClass = Settings->DefaultBrokerResolverClass.LoadSynchronous();
+		}
+	}
+	if (!ResolverClass || ResolverClass->HasAnyClassFlags(CLASS_Abstract))
+	{
+		ResolverClass = USeinDefaultCommandBrokerResolver::StaticClass();
+	}
+	BrokerData.Resolver = NewObject<USeinCommandBrokerResolver>(this, ResolverClass);
+
+	AddComponent(BrokerHandle, BrokerData);
+
+	// 5. Update each member's back-reference. Create the component if missing.
+	for (const FSeinEntityHandle& M : FilteredMembers)
+	{
+		FSeinBrokerMembershipData* Memb = GetComponent<FSeinBrokerMembershipData>(M);
+		if (Memb)
+		{
+			Memb->CurrentBrokerHandle = BrokerHandle;
+		}
+		else
+		{
+			FSeinBrokerMembershipData NewMemb;
+			NewMemb.CurrentBrokerHandle = BrokerHandle;
+			AddComponent(M, NewMemb);
+		}
+	}
+
+	// 6. Inline-dispatch the first order (skips the 1-tick delay of waiting for
+	// SeinCommandBrokerSystem's PostTick pass). Subsequent queue advancement runs
+	// through the system.
+	if (FSeinCommandBrokerData* BrokerPtr = GetComponent<FSeinCommandBrokerData>(BrokerHandle))
+	{
+		SeinCommandBrokerDispatch::DispatchFrontOrder(*this, BrokerHandle, *BrokerPtr);
+	}
+
+	return BrokerHandle;
+}
+
+// ==================== Match Flow (DESIGN §18) ====================
+
+void USeinWorldSubsystem::SetSimPaused(bool bPaused, ESeinPauseMode PauseMode)
+{
+	const bool bWasPaused = bSimPaused;
+	bSimPaused = bPaused;
+	bSimPausedHard = bPaused && (PauseMode == ESeinPauseMode::Hard);
+
+	// Fire match-flow visual events for UI / scenario subscribers. Suppress
+	// double-fires when the state didn't actually change.
+	if (bWasPaused != bPaused)
+	{
+		if (bPaused)
+		{
+			if (MatchState == ESeinMatchState::Playing)
+			{
+				MatchState = ESeinMatchState::Paused;
+			}
+			EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchPaused));
+		}
+		else
+		{
+			if (MatchState == ESeinMatchState::Paused)
+			{
+				MatchState = ESeinMatchState::Playing;
+			}
+			EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchResumed));
+		}
+	}
+}
+
+void USeinWorldSubsystem::StartMatch(const FSeinMatchSettings& Settings)
+{
+	if (MatchState != ESeinMatchState::Lobby && MatchState != ESeinMatchState::Ended)
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("StartMatch: ignored — match state is already %d"),
+			static_cast<int32>(MatchState));
+		return;
+	}
+	// Snapshot settings — immutable from this point until next StartMatch.
+	CurrentMatchSettings = Settings;
+	MatchState = ESeinMatchState::Starting;
+
+	// Pre-match countdown deadline in sim ticks. Convert the fixed-point seconds
+	// value to ticks via the configured tick rate. Minimum 1 tick to ensure the
+	// Starting state is observable even with zero countdown setting.
+	const USeinARTSCoreSettings* CoreSettings = GetDefault<USeinARTSCoreSettings>();
+	const int32 TickRate = CoreSettings ? CoreSettings->SimulationTickRate : 30;
+	const FFixedPoint Seconds = Settings.PreMatchCountdown;
+	// Fixed-point → int truncation with ceil on any fractional part.
+	int32 CountdownTicks = static_cast<int32>((Seconds * FFixedPoint::FromInt(TickRate)).ToInt());
+	if (Seconds > FFixedPoint::Zero && CountdownTicks <= 0) CountdownTicks = 1;
+	StartingStateDeadlineTick = CurrentTick + CountdownTicks;
+
+	EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchStarting));
+	UE_LOG(LogSeinSim, Log, TEXT("StartMatch: Starting state begins, deadline at tick %d"), StartingStateDeadlineTick);
+}
+
+void USeinWorldSubsystem::EndMatch(FSeinPlayerID Winner, FGameplayTag Reason)
+{
+	if (MatchState == ESeinMatchState::Ended || MatchState == ESeinMatchState::Lobby)
+	{
+		return; // nothing in-flight to end
+	}
+	MatchState = ESeinMatchState::Ending;
+	EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchEnding, Winner, Reason));
+
+	// Immediate Ending → Ended transition in V1; designers that want a staged
+	// cleanup phase (fade-out cinematic, score screen pause) can schedule work
+	// during Ending via scenario abilities, then route to a follow-up command
+	// to finalize. Minimal polish can land when the first real game asks.
+	MatchState = ESeinMatchState::Ended;
+	EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchEnded, Winner, Reason));
+	UE_LOG(LogSeinSim, Log, TEXT("EndMatch: Winner=%s Reason=%s"),
+		*Winner.ToString(), *Reason.ToString());
+}
+
+void USeinWorldSubsystem::TickMatchState()
+{
+	if (MatchState == ESeinMatchState::Starting)
+	{
+		if (CurrentTick >= StartingStateDeadlineTick)
+		{
+			MatchState = ESeinMatchState::Playing;
+			MatchStartTick = CurrentTick;
+			EnqueueVisualEvent(FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType::MatchStarted));
+			UE_LOG(LogSeinSim, Log, TEXT("Match transitioned to Playing at tick %d"), CurrentTick);
+		}
+	}
+}
+
+// ==================== Voting (DESIGN §18) ====================
+
+void USeinWorldSubsystem::StartVote(FGameplayTag VoteType, ESeinVoteResolution Resolution, int32 RequiredThreshold, int32 ExpiresInTicks, FSeinPlayerID Initiator)
+{
+	if (!VoteType.IsValid()) return;
+	if (ActiveVotes.Contains(VoteType))
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("StartVote: vote %s already active"), *VoteType.ToString());
+		return;
+	}
+	FSeinVoteState Vote;
+	Vote.VoteType = VoteType;
+	Vote.Resolution = Resolution;
+	Vote.RequiredThreshold = FMath::Max(1, RequiredThreshold);
+	Vote.InitiatedAtTick = CurrentTick;
+	Vote.ExpiresAtTick = (ExpiresInTicks > 0) ? CurrentTick + ExpiresInTicks : INT32_MAX;
+	Vote.Initiator = Initiator;
+	ActiveVotes.Add(VoteType, MoveTemp(Vote));
+
+	EnqueueVisualEvent(FSeinVisualEvent::MakeVoteStartedEvent(VoteType, Initiator, RequiredThreshold));
+}
+
+void USeinWorldSubsystem::CastVote(FGameplayTag VoteType, FSeinPlayerID Voter, int32 VoteValue)
+{
+	if (!VoteType.IsValid()) return;
+	FSeinVoteState* Vote = ActiveVotes.Find(VoteType);
+	if (!Vote) return;
+	Vote->Votes.Add(Voter, VoteValue);
+
+	int32 Yes = 0, No = 0;
+	for (const auto& Pair : Vote->Votes) { (Pair.Value > 0) ? ++Yes : ++No; }
+	EnqueueVisualEvent(FSeinVisualEvent::MakeVoteProgressEvent(VoteType, Yes, No));
+
+	EvaluateAndResolveVote(VoteType);
+}
+
+ESeinVoteStatus USeinWorldSubsystem::GetVoteStatus(FGameplayTag VoteType) const
+{
+	if (!VoteType.IsValid()) return ESeinVoteStatus::NotStarted;
+	return ActiveVotes.Contains(VoteType) ? ESeinVoteStatus::Active : ESeinVoteStatus::NotStarted;
+}
+
+TArray<FSeinVoteState> USeinWorldSubsystem::GetActiveVotes() const
+{
+	TArray<FSeinVoteState> Out;
+	Out.Reserve(ActiveVotes.Num());
+	for (const auto& Pair : ActiveVotes) { Out.Add(Pair.Value); }
+	return Out;
+}
+
+bool USeinWorldSubsystem::EvaluateAndResolveVote(FGameplayTag VoteType)
+{
+	FSeinVoteState* Vote = ActiveVotes.Find(VoteType);
+	if (!Vote) return false;
+
+	int32 Yes = 0, No = 0;
+	for (const auto& Pair : Vote->Votes) { (Pair.Value > 0) ? ++Yes : ++No; }
+
+	// Eligible voter count — V1 uses the live registered-player count (including
+	// Neutral). More precise predicates (exclude spectators, exclude AI, etc.)
+	// land when the match-settings-driven vote-eligibility policy does.
+	const int32 Eligible = FMath::Max(1, PlayerStates.Num());
+
+	bool bPassed = false;
+	bool bResolveNow = false;
+	switch (Vote->Resolution)
+	{
+	case ESeinVoteResolution::Majority:
+		if (Yes * 2 > Eligible) { bPassed = true; bResolveNow = true; }
+		else if (Yes + No >= Eligible) { bResolveNow = true; bPassed = false; }
+		break;
+	case ESeinVoteResolution::Unanimous:
+		if (Yes >= Eligible) { bPassed = true; bResolveNow = true; }
+		else if (No > 0) { bResolveNow = true; bPassed = false; }
+		break;
+	case ESeinVoteResolution::HostDecides:
+		// V1: any "yes" passes, any "no" fails. Host designation lands with
+		// §18 match-flow network plumbing; until then treat first vote as decisive.
+		if (Yes > 0) { bPassed = true; bResolveNow = true; }
+		else if (No > 0) { bResolveNow = true; bPassed = false; }
+		break;
+	case ESeinVoteResolution::Plurality:
+		if (Yes + No >= Eligible)
+		{
+			bResolveNow = true;
+			bPassed = (Yes > No);
+		}
+		break;
+	}
+
+	// Also check the explicit threshold (overrides resolution if passed first).
+	if (!bResolveNow && Yes >= Vote->RequiredThreshold)
+	{
+		bResolveNow = true;
+		bPassed = true;
+	}
+
+	if (bResolveNow)
+	{
+		const FGameplayTag Resolved = Vote->VoteType;
+		EnqueueVisualEvent(FSeinVisualEvent::MakeVoteResolvedEvent(Resolved, bPassed));
+		ActiveVotes.Remove(VoteType);
+		return true;
+	}
+	return false;
+}
+
+void USeinWorldSubsystem::TickVotes()
+{
+	if (ActiveVotes.Num() == 0) return;
+	TArray<FGameplayTag> Expired;
+	for (const auto& Pair : ActiveVotes)
+	{
+		if (CurrentTick >= Pair.Value.ExpiresAtTick) { Expired.Add(Pair.Key); }
+	}
+	for (const FGameplayTag& Tag : Expired)
+	{
+		// Expired votes that haven't passed on their own fail deterministically.
+		EnqueueVisualEvent(FSeinVisualEvent::MakeVoteResolvedEvent(Tag, /*bPassed=*/false));
+		ActiveVotes.Remove(Tag);
+	}
+}
+
+// ==================== Diplomacy (DESIGN §18) ====================
+
+void USeinWorldSubsystem::ApplyDiplomacyDelta(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer, const FGameplayTagContainer& TagsToAdd, const FGameplayTagContainer& TagsToRemove)
+{
+	const FSeinDiplomacyKey Key(FromPlayer, ToPlayer);
+	FGameplayTagContainer& Current = DiplomacyRelations.FindOrAdd(Key);
+
+	// Remove first so the index-update sequence is consistent even when the
+	// same tag appears in both TagsToAdd + TagsToRemove.
+	for (const FGameplayTag& Tag : TagsToRemove)
+	{
+		if (Current.RemoveTag(Tag))
+		{
+			if (FSeinDiplomacyIndexBucket* Bucket = DiplomacyTagIndex.Find(Tag))
+			{
+				Bucket->Pairs.RemoveSingle(Key);
+				if (Bucket->Pairs.Num() == 0) { DiplomacyTagIndex.Remove(Tag); }
+			}
+		}
+	}
+	for (const FGameplayTag& Tag : TagsToAdd)
+	{
+		if (!Current.HasTagExact(Tag))
+		{
+			Current.AddTag(Tag);
+			DiplomacyTagIndex.FindOrAdd(Tag).Pairs.AddUnique(Key);
+		}
+	}
+
+	// Emit one event per delta — representative tag = first added (or first
+	// removed if no adds). UI queries `GetDiplomacyTags` for authoritative post-change state.
+	FGameplayTag Representative;
+	if (TagsToAdd.Num() > 0) { Representative = TagsToAdd.First(); }
+	else if (TagsToRemove.Num() > 0) { Representative = TagsToRemove.First(); }
+	EnqueueVisualEvent(FSeinVisualEvent::MakeDiplomacyChangedEvent(FromPlayer, ToPlayer, Representative));
+}
+
+FGameplayTagContainer USeinWorldSubsystem::GetDiplomacyTags(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer) const
+{
+	const FSeinDiplomacyKey Key(FromPlayer, ToPlayer);
+	if (const FGameplayTagContainer* Found = DiplomacyRelations.Find(Key))
+	{
+		return *Found;
+	}
+	return FGameplayTagContainer{};
+}
+
+TArray<FSeinDiplomacyKey> USeinWorldSubsystem::GetPairsWithDiplomacyTag(FGameplayTag Tag) const
+{
+	if (const FSeinDiplomacyIndexBucket* Bucket = DiplomacyTagIndex.Find(Tag))
+	{
+		return Bucket->Pairs;
+	}
+	return {};
+}
+
+// ==================== AI (DESIGN §16) ====================
+
+void USeinWorldSubsystem::RegisterAIController(USeinAIController* Controller, FSeinPlayerID OwnedPlayer)
+{
+	if (!Controller) return;
+	// Idempotent — if already registered, reseat the owned player + subsystem.
+	if (!AIControllers.Contains(Controller))
+	{
+		AIControllers.Add(Controller);
+	}
+	Controller->OwnedPlayerID = OwnedPlayer;
+	Controller->WorldSubsystem = this;
+	Controller->OnRegistered();
+	UE_LOG(LogSeinSim, Log, TEXT("Registered AI controller %s for player %s"),
+		*Controller->GetName(), *OwnedPlayer.ToString());
+}
+
+void USeinWorldSubsystem::UnregisterAIController(USeinAIController* Controller)
+{
+	if (!Controller) return;
+	const int32 Removed = AIControllers.Remove(Controller);
+	if (Removed > 0)
+	{
+		Controller->OnUnregistered();
+		Controller->WorldSubsystem = nullptr;
+	}
+}
+
+USeinAIController* USeinWorldSubsystem::GetAIControllerForPlayer(FSeinPlayerID PlayerID) const
+{
+	for (const TObjectPtr<USeinAIController>& Ctrl : AIControllers)
+	{
+		if (Ctrl && Ctrl->OwnedPlayerID == PlayerID)
+		{
+			return Ctrl;
+		}
+	}
+	return nullptr;
+}
+
+void USeinWorldSubsystem::TickAIControllers(FFixedPoint DeltaTime)
+{
+	// Snapshot the list so Tick callbacks that register/unregister don't crash
+	// the iteration; pending removals take effect next tick.
+	TArray<TObjectPtr<USeinAIController>> Snapshot = AIControllers;
+	for (const TObjectPtr<USeinAIController>& Ctrl : Snapshot)
+	{
+		if (!Ctrl) continue;
+		FSeinAITickContext Ctx;
+		Ctx.CurrentTick = CurrentTick;
+		Ctx.DeltaTime = DeltaTime;
+		Ctx.OwnedPlayerID = Ctrl->OwnedPlayerID;
+		Ctrl->Tick(Ctx);
+	}
+}
+
+// ==================== Relationships (DESIGN §14) ====================
+
+namespace
+{
+	// Assign the first invalid/free visual-slot index in a container's
+	// TotalCapacity-sized VisualSlotAssignments array. Growing the array lazily
+	// keeps cost proportional to actual occupant count; TotalCapacity just caps
+	// the search. Returns INDEX_NONE if every slot is filled.
+	int32 AssignFirstFreeVisualSlot(FSeinContainmentData& Container, FSeinEntityHandle Occupant)
+	{
+		if (!Container.bTracksVisualSlots) return INDEX_NONE;
+		if (Container.VisualSlotAssignments.Num() < Container.TotalCapacity)
+		{
+			Container.VisualSlotAssignments.SetNum(Container.TotalCapacity);
+		}
+		for (int32 i = 0; i < Container.VisualSlotAssignments.Num(); ++i)
+		{
+			if (!Container.VisualSlotAssignments[i].IsValid())
+			{
+				Container.VisualSlotAssignments[i] = Occupant;
+				return i;
+			}
+		}
+		return INDEX_NONE;
+	}
+}
+
+bool USeinWorldSubsystem::EnterContainer(FSeinEntityHandle Entity, FSeinEntityHandle Container)
+{
+	if (!EntityPool.IsValid(Entity) || !EntityPool.IsValid(Container))
+	{
+		return false;
+	}
+	if (Entity == Container)
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("EnterContainer: entity %s cannot enter itself"), *Entity.ToString());
+		return false;
+	}
+
+	FSeinContainmentMemberData* MemComp = GetComponent<FSeinContainmentMemberData>(Entity);
+	if (!MemComp)
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("EnterContainer: entity %s has no FSeinContainmentMemberData"), *Entity.ToString());
+		return false;
+	}
+	if (MemComp->CurrentContainer.IsValid())
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("EnterContainer: entity %s already contained by %s"),
+			*Entity.ToString(), *MemComp->CurrentContainer.ToString());
+		return false;
+	}
+
+	FSeinContainmentData* ContComp = GetComponent<FSeinContainmentData>(Container);
+	if (!ContComp)
+	{
+		UE_LOG(LogSeinSim, Warning, TEXT("EnterContainer: container %s has no FSeinContainmentData"), *Container.ToString());
+		return false;
+	}
+
+	// Capacity
+	if (ContComp->CurrentLoad + MemComp->Size > ContComp->TotalCapacity)
+	{
+		return false;
+	}
+
+	// Tag query (empty query = permissive)
+	if (!ContComp->AcceptedEntityQuery.IsEmpty())
+	{
+		const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Entity);
+		const FGameplayTagContainer EntityTags = TagComp ? TagComp->CombinedTags : FGameplayTagContainer{};
+		if (!ContComp->AcceptedEntityQuery.Matches(EntityTags))
+		{
+			return false;
+		}
+	}
+
+	// Commit state
+	ContComp->Occupants.Add(Entity);
+	ContComp->CurrentLoad += MemComp->Size;
+	MemComp->CurrentContainer = Container;
+	MemComp->VisualSlotIndex = AssignFirstFreeVisualSlot(*ContComp, Entity);
+	// CurrentSlot stays empty — set by AttachToSlot when attachment is used.
+
+	// Visibility-mode spatial effect: Hidden + Partial remove from grid; only
+	// PositionedRelative stays registered (rendered via container + offset).
+	if (ContComp->Visibility != ESeinContainmentVisibility::PositionedRelative)
+	{
+		if (SpatialGridUnregisterCallback.IsBound())
+		{
+			SpatialGridUnregisterCallback.Execute(Entity);
+		}
+	}
+
+	EnqueueVisualEvent(FSeinVisualEvent::MakeEntityEnteredContainerEvent(
+		Container, Entity, MemComp->VisualSlotIndex));
+	return true;
+}
+
+bool USeinWorldSubsystem::ExitContainer(FSeinEntityHandle Entity, FFixedVector ExitLocation)
+{
+	if (!EntityPool.IsValid(Entity)) return false;
+
+	FSeinContainmentMemberData* MemComp = GetComponent<FSeinContainmentMemberData>(Entity);
+	if (!MemComp || !MemComp->CurrentContainer.IsValid())
+	{
+		return false;
+	}
+	const FSeinEntityHandle Container = MemComp->CurrentContainer;
+	if (!EntityPool.IsValid(Container))
+	{
+		// Stale pointer — scrub and bail.
+		MemComp->CurrentContainer = FSeinEntityHandle();
+		MemComp->CurrentSlot = FGameplayTag();
+		MemComp->VisualSlotIndex = INDEX_NONE;
+		return false;
+	}
+
+	FSeinContainmentData* ContComp = GetComponent<FSeinContainmentData>(Container);
+	if (!ContComp) return false;
+
+	// Resolve exit world position.
+	FFixedVector FinalExit = ExitLocation;
+	if (FinalExit == FFixedVector())
+	{
+		FFixedVector ContainerLoc;
+		if (const FSeinEntity* ContEntity = GetEntity(Container))
+		{
+			ContainerLoc = ContEntity->Transform.GetLocation();
+		}
+		FinalExit = ContainerLoc;
+		if (const FSeinTransportSpec* TransportSpec = GetComponent<FSeinTransportSpec>(Container))
+		{
+			FinalExit = ContainerLoc + TransportSpec->DeployOffset;
+		}
+	}
+
+	// Write the exiter's transform.
+	if (FSeinEntity* ExiterEntity = EntityPool.Get(Entity))
+	{
+		FFixedTransform NewXfm = ExiterEntity->Transform;
+		NewXfm.SetLocation(FinalExit);
+		ExiterEntity->Transform = NewXfm;
+	}
+
+	// Attachment-slot cleanup, if any.
+	if (MemComp->CurrentSlot.IsValid())
+	{
+		if (FSeinAttachmentSpec* Spec = GetComponent<FSeinAttachmentSpec>(Container))
+		{
+			Spec->Assignments.Remove(MemComp->CurrentSlot);
+		}
+		EnqueueVisualEvent(FSeinVisualEvent::MakeAttachmentSlotEmptiedEvent(
+			Container, Entity, MemComp->CurrentSlot));
+	}
+
+	// Visual-slot cleanup.
+	if (ContComp->bTracksVisualSlots && ContComp->VisualSlotAssignments.IsValidIndex(MemComp->VisualSlotIndex))
+	{
+		ContComp->VisualSlotAssignments[MemComp->VisualSlotIndex] = FSeinEntityHandle();
+	}
+
+	// Occupant-list cleanup.
+	ContComp->Occupants.Remove(Entity);
+	ContComp->CurrentLoad = FMath::Max(0, ContComp->CurrentLoad - MemComp->Size);
+	MemComp->CurrentContainer = FSeinEntityHandle();
+	MemComp->CurrentSlot = FGameplayTag();
+	MemComp->VisualSlotIndex = INDEX_NONE;
+
+	// Re-register in spatial grid if the container was Hidden/Partial.
+	if (ContComp->Visibility != ESeinContainmentVisibility::PositionedRelative)
+	{
+		if (SpatialGridRegisterCallback.IsBound())
+		{
+			SpatialGridRegisterCallback.Execute(Entity);
+		}
+	}
+
+	EnqueueVisualEvent(FSeinVisualEvent::MakeEntityExitedContainerEvent(Container, Entity, FinalExit));
+	return true;
+}
+
+bool USeinWorldSubsystem::AttachToSlot(FSeinEntityHandle Entity, FSeinEntityHandle Container, FGameplayTag SlotTag)
+{
+	if (!EntityPool.IsValid(Entity) || !EntityPool.IsValid(Container)) return false;
+	if (!SlotTag.IsValid()) return false;
+
+	FSeinAttachmentSpec* Spec = GetComponent<FSeinAttachmentSpec>(Container);
+	if (!Spec) return false;
+
+	// Locate slot by tag.
+	const FSeinAttachmentSlotDef* SlotDef = Spec->Slots.FindByPredicate(
+		[&](const FSeinAttachmentSlotDef& S) { return S.SlotTag == SlotTag; });
+	if (!SlotDef) return false;
+
+	// Already filled?
+	if (FSeinEntityHandle* Existing = Spec->Assignments.Find(SlotTag))
+	{
+		if (Existing->IsValid()) return false;
+	}
+
+	// Slot-level tag query (independent of container-level AcceptedEntityQuery).
+	if (!SlotDef->AcceptedEntityQuery.IsEmpty())
+	{
+		const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Entity);
+		const FGameplayTagContainer EntityTags = TagComp ? TagComp->CombinedTags : FGameplayTagContainer{};
+		if (!SlotDef->AcceptedEntityQuery.Matches(EntityTags))
+		{
+			return false;
+		}
+	}
+
+	// Attachment implies containment — run the standard enter path first.
+	if (!EnterContainer(Entity, Container))
+	{
+		return false;
+	}
+
+	// Stamp slot assignment + member back-ref.
+	Spec->Assignments.Add(SlotTag, Entity);
+	if (FSeinContainmentMemberData* Mem = GetComponent<FSeinContainmentMemberData>(Entity))
+	{
+		Mem->CurrentSlot = SlotTag;
+	}
+
+	EnqueueVisualEvent(FSeinVisualEvent::MakeAttachmentSlotFilledEvent(Container, Entity, SlotTag));
+	return true;
+}
+
+bool USeinWorldSubsystem::DetachFromSlot(FSeinEntityHandle Entity)
+{
+	if (!EntityPool.IsValid(Entity)) return false;
+	FSeinContainmentMemberData* Mem = GetComponent<FSeinContainmentMemberData>(Entity);
+	if (!Mem || !Mem->CurrentSlot.IsValid()) return false;
+	// ExitContainer handles slot-assignment removal + visual event; simply delegate.
+	return ExitContainer(Entity);
+}
+
+void USeinWorldSubsystem::PropagateContainerDeath(FSeinEntityHandle DyingContainer)
+{
+	FSeinContainmentData* Container = GetComponent<FSeinContainmentData>(DyingContainer);
+	if (!Container) return;
+
+	FFixedVector ContainerLoc;
+	if (const FSeinEntity* ContEntity = GetEntity(DyingContainer))
+	{
+		ContainerLoc = ContEntity->Transform.GetLocation();
+	}
+
+	const bool bEject = Container->bEjectOnContainerDeath;
+	const TSubclassOf<USeinEffect> OnEjectEffect = Container->OnEjectEffect;
+	const TSubclassOf<USeinEffect> OnDeathEffect = Container->OnContainerDeathEffect;
+
+	// Snapshot — occupants list is mutated while iterating when ExitContainer
+	// runs, so copy first.
+	TArray<FSeinEntityHandle> Occupants = Container->Occupants;
+	for (const FSeinEntityHandle& Occ : Occupants)
+	{
+		if (!EntityPool.IsValid(Occ)) continue;
+
+		if (bEject)
+		{
+			// Exit at container's last location; apply eject effect if authored.
+			ExitContainer(Occ, ContainerLoc);
+			if (OnEjectEffect)
+			{
+				ApplyEffect(Occ, OnEjectEffect, DyingContainer);
+			}
+		}
+		else
+		{
+			// Occupant dies with container; optional effect first, then destroy.
+			if (OnDeathEffect)
+			{
+				ApplyEffect(Occ, OnDeathEffect, DyingContainer);
+			}
+			DestroyEntity(Occ);
+		}
+	}
+
+	// Container's Occupants now empty; its FSeinContainmentData is about to be
+	// stripped by the surrounding ProcessDeferredDestroys sweep.
+}
+
+FSeinEntityHandle USeinWorldSubsystem::GetImmediateContainer(FSeinEntityHandle Entity) const
+{
+	const FSeinContainmentMemberData* Mem = GetComponent<FSeinContainmentMemberData>(Entity);
+	return (Mem && EntityPool.IsValid(Mem->CurrentContainer)) ? Mem->CurrentContainer : FSeinEntityHandle();
+}
+
+FSeinEntityHandle USeinWorldSubsystem::GetRootContainer(FSeinEntityHandle Entity) const
+{
+	FSeinEntityHandle Cursor = GetImmediateContainer(Entity);
+	if (!Cursor.IsValid()) return FSeinEntityHandle();
+	// Walk up; cap at 32 to guard against pathological loops.
+	for (int32 Depth = 0; Depth < 32; ++Depth)
+	{
+		const FSeinEntityHandle Next = GetImmediateContainer(Cursor);
+		if (!Next.IsValid()) return Cursor;
+		Cursor = Next;
+	}
+	UE_LOG(LogSeinSim, Warning, TEXT("GetRootContainer: depth limit hit on %s — likely a containment cycle"),
+		*Entity.ToString());
+	return Cursor;
+}
+
+bool USeinWorldSubsystem::IsContained(FSeinEntityHandle Entity) const
+{
+	const FSeinContainmentMemberData* Mem = GetComponent<FSeinContainmentMemberData>(Entity);
+	return Mem && EntityPool.IsValid(Mem->CurrentContainer);
+}
+
+TArray<FSeinEntityHandle> USeinWorldSubsystem::GetAllNestedOccupants(FSeinEntityHandle Container) const
+{
+	TArray<FSeinEntityHandle> Out;
+	const FSeinContainmentData* Cont = GetComponent<FSeinContainmentData>(Container);
+	if (!Cont) return Out;
+
+	TArray<FSeinEntityHandle> Frontier = Cont->Occupants;
+	while (Frontier.Num() > 0)
+	{
+		FSeinEntityHandle Current = Frontier.Pop();
+		if (!EntityPool.IsValid(Current)) continue;
+		Out.Add(Current);
+		if (const FSeinContainmentData* Nested = GetComponent<FSeinContainmentData>(Current))
+		{
+			Frontier.Append(Nested->Occupants);
+		}
+	}
+	return Out;
+}
+
+FSeinContainmentTree USeinWorldSubsystem::BuildContainmentTree(FSeinEntityHandle Container) const
+{
+	FSeinContainmentTree Tree;
+
+	// Iterative DFS emitting entries in pre-order so the flattened array encodes
+	// the hierarchy: each child appears after its parent and is flagged with
+	// Depth + ParentIndex. BP consumers walk sequentially to rebuild the tree.
+	struct FFrame { FSeinEntityHandle Entity; int32 Depth; int32 ParentIndex; };
+	TArray<FFrame> Stack;
+	Stack.Reserve(8);
+	Stack.Push({Container, 0, INDEX_NONE});
+
+	while (Stack.Num() > 0)
+	{
+		const FFrame Frame = Stack.Pop();
+		if (!EntityPool.IsValid(Frame.Entity)) continue;
+
+		FSeinContainmentTreeEntry Entry;
+		Entry.Entity = Frame.Entity;
+		Entry.Depth = Frame.Depth;
+		Entry.ParentIndex = Frame.ParentIndex;
+		const int32 ThisIndex = Tree.Entries.Add(Entry);
+
+		if (const FSeinContainmentData* Cont = GetComponent<FSeinContainmentData>(Frame.Entity))
+		{
+			// Push children in reverse order so stack-popped order matches original
+			// occupant list order (deterministic).
+			for (int32 i = Cont->Occupants.Num() - 1; i >= 0; --i)
+			{
+				Stack.Push({Cont->Occupants[i], Frame.Depth + 1, ThisIndex});
+			}
+		}
+	}
+
+	return Tree;
 }

@@ -5,7 +5,9 @@
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinVisionData.h"
+#include "Data/SeinDiplomacyTypes.h"
 #include "Events/SeinVisualEvent.h"
+#include "Tags/SeinARTSGameplayTags.h"
 #include "Engine/World.h"
 #include "Types/Entity.h"
 
@@ -250,10 +252,30 @@ void USeinVisionSubsystem::StampCircle(
 	}
 }
 
+TArray<FSeinPlayerID> USeinVisionSubsystem::CollectEffectiveVisionSources(FSeinPlayerID Viewer) const
+{
+	TArray<FSeinPlayerID> Sources;
+	Sources.Add(Viewer);
+	const UWorld* World = GetWorld();
+	if (!World) return Sources;
+	const USeinWorldSubsystem* Sim = World->GetSubsystem<USeinWorldSubsystem>();
+	if (!Sim) return Sources;
+	// Walk pairs granting SharedVision toward the viewer. Index is O(tag-count)
+	// at worst; for RTS scale (≤ 8 players) it's trivial.
+	const TArray<FSeinDiplomacyKey> Pairs =
+		Sim->GetPairsWithDiplomacyTag(SeinARTSTags::Diplomacy_Permission_SharedVision);
+	for (const FSeinDiplomacyKey& Pair : Pairs)
+	{
+		if (Pair.ToPlayer == Viewer && Pair.FromPlayer != Viewer)
+		{
+			Sources.AddUnique(Pair.FromPlayer);
+		}
+	}
+	return Sources;
+}
+
 bool USeinVisionSubsystem::IsLocationVisible(FSeinPlayerID Player, const FVector& WorldPos) const
 {
-	const FSeinVisionGroup* Group = FindGroupForPlayer(Player);
-	if (!Group) { return false; }
 	USeinNavigationGrid* Grid = GetNavGrid();
 	if (!Grid) { return false; }
 
@@ -263,24 +285,26 @@ bool USeinVisionSubsystem::IsLocationVisible(FSeinPlayerID Player, const FVector
 		FFixedPoint::FromFloat(WorldPos.Z));
 	const FSeinCellAddress Addr = Grid->ResolveCellAddress(WorldFixed);
 	if (!Addr.IsValid()) { return false; }
-
-	if (!Group->Layers.IsValidIndex(Addr.Layer)) { return false; }
-	const FSeinVisionGroupLayer& L = Group->Layers[Addr.Layer];
-
-	// Cell X,Y from CellIndex.
 	if (!Grid->Layers.IsValidIndex(Addr.Layer)) { return false; }
 	const int32 NavWidth = Grid->Layers[Addr.Layer].Width;
 	const int32 CX = Addr.CellIndex % NavWidth;
 	const int32 CY = Addr.CellIndex / NavWidth;
-	if (!L.IsValid(CX, CY)) { return false; }
-	const int32 Idx = L.CellIndex(CX, CY);
-	return L.Visible.IsValidIndex(Idx) && L.Visible[Idx] > 0;
+
+	// OR across own vision + any player granting SharedVision toward this viewer (DESIGN §18).
+	for (const FSeinPlayerID& Src : CollectEffectiveVisionSources(Player))
+	{
+		const FSeinVisionGroup* Group = FindGroupForPlayer(Src);
+		if (!Group || !Group->Layers.IsValidIndex(Addr.Layer)) { continue; }
+		const FSeinVisionGroupLayer& L = Group->Layers[Addr.Layer];
+		if (!L.IsValid(CX, CY)) { continue; }
+		const int32 Idx = L.CellIndex(CX, CY);
+		if (L.Visible.IsValidIndex(Idx) && L.Visible[Idx] > 0) { return true; }
+	}
+	return false;
 }
 
 bool USeinVisionSubsystem::IsLocationExplored(FSeinPlayerID Player, const FVector& WorldPos) const
 {
-	const FSeinVisionGroup* Group = FindGroupForPlayer(Player);
-	if (!Group) { return false; }
 	USeinNavigationGrid* Grid = GetNavGrid();
 	if (!Grid) { return false; }
 
@@ -289,25 +313,38 @@ bool USeinVisionSubsystem::IsLocationExplored(FSeinPlayerID Player, const FVecto
 		FFixedPoint::FromFloat(WorldPos.Y),
 		FFixedPoint::FromFloat(WorldPos.Z));
 	const FSeinCellAddress Addr = Grid->ResolveCellAddress(WorldFixed);
-	if (!Addr.IsValid() || !Group->Layers.IsValidIndex(Addr.Layer)) { return false; }
-
-	const FSeinVisionGroupLayer& L = Group->Layers[Addr.Layer];
+	if (!Addr.IsValid() || !Grid->Layers.IsValidIndex(Addr.Layer)) { return false; }
 	const int32 NavWidth = Grid->Layers[Addr.Layer].Width;
 	const int32 CX = Addr.CellIndex % NavWidth;
 	const int32 CY = Addr.CellIndex / NavWidth;
-	if (!L.IsValid(CX, CY)) { return false; }
-	const int32 Idx = L.CellIndex(CX, CY);
-	return L.Explored.IsValidIndex(Idx) && L.Explored[Idx] > 0;
+
+	// Explored aggregates across shared-vision sources too — once any allied
+	// source has explored a cell, the viewer's fog-of-war shows it explored.
+	for (const FSeinPlayerID& Src : CollectEffectiveVisionSources(Player))
+	{
+		const FSeinVisionGroup* Group = FindGroupForPlayer(Src);
+		if (!Group || !Group->Layers.IsValidIndex(Addr.Layer)) { continue; }
+		const FSeinVisionGroupLayer& L = Group->Layers[Addr.Layer];
+		if (!L.IsValid(CX, CY)) { continue; }
+		const int32 Idx = L.CellIndex(CX, CY);
+		if (L.Explored.IsValidIndex(Idx) && L.Explored[Idx] > 0) { return true; }
+	}
+	return false;
 }
 
 TArray<FSeinEntityHandle> USeinVisionSubsystem::GetVisibleEntities(FSeinPlayerID Player) const
 {
-	TArray<FSeinEntityHandle> Out;
-	if (const TSet<FSeinEntityHandle>* Set = LastVisibleByPlayer.Find(Player))
+	TSet<FSeinEntityHandle> Combined;
+	for (const FSeinPlayerID& Src : CollectEffectiveVisionSources(Player))
 	{
-		Out.Reserve(Set->Num());
-		for (const FSeinEntityHandle& H : *Set) { Out.Add(H); }
-		Out.Sort([](const FSeinEntityHandle& A, const FSeinEntityHandle& B) { return A.Index < B.Index; });
+		if (const TSet<FSeinEntityHandle>* Set = LastVisibleByPlayer.Find(Src))
+		{
+			Combined.Append(*Set);
+		}
 	}
+	TArray<FSeinEntityHandle> Out;
+	Out.Reserve(Combined.Num());
+	for (const FSeinEntityHandle& H : Combined) { Out.Add(H); }
+	Out.Sort([](const FSeinEntityHandle& A, const FSeinEntityHandle& B) { return A.Index < B.Index; });
 	return Out;
 }

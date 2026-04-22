@@ -163,6 +163,115 @@ FSeinVisualEvent FSeinVisualEvent::MakeTerrainMutatedEvent(FFixedVector InLocati
 	return Event;
 }
 
+FSeinVisualEvent FSeinVisualEvent::MakeEntityEnteredContainerEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, int32 VisualSlotIndex)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::EntityEnteredContainer;
+	Event.PrimaryEntity = Container;
+	Event.SecondaryEntity = Occupant;
+	Event.Value = FFixedPoint::FromInt(VisualSlotIndex);
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeEntityExitedContainerEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FFixedVector ExitLocation)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::EntityExitedContainer;
+	Event.PrimaryEntity = Container;
+	Event.SecondaryEntity = Occupant;
+	Event.Location = ExitLocation;
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeAttachmentSlotFilledEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FGameplayTag SlotTag)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::AttachmentSlotFilled;
+	Event.PrimaryEntity = Container;
+	Event.SecondaryEntity = Occupant;
+	Event.Tag = SlotTag;
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeAttachmentSlotEmptiedEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FGameplayTag SlotTag)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::AttachmentSlotEmptied;
+	Event.PrimaryEntity = Container;
+	Event.SecondaryEntity = Occupant;
+	Event.Tag = SlotTag;
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakePlayPreRenderedCinematicEvent(FGameplayTag CinematicIDTag, int32 SkipMode, int32 VoteThreshold)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::PlayPreRenderedCinematic;
+	Event.Tag = CinematicIDTag;
+	const int32 PackedValue = (SkipMode & 0xFF) | (VoteThreshold << 8);
+	Event.Value = FFixedPoint::FromInt(PackedValue);
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeEndCinematicEvent(FGameplayTag CinematicIDTag)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::EndCinematic;
+	Event.Tag = CinematicIDTag;
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeMatchFlowEvent(ESeinVisualEventType Type, FSeinPlayerID Winner, FGameplayTag Reason)
+{
+	FSeinVisualEvent Event;
+	Event.Type = Type;
+	Event.PlayerID = Winner;
+	Event.Tag = Reason;
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeVoteStartedEvent(FGameplayTag VoteType, FSeinPlayerID Initiator, int32 RequiredThreshold)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::VoteStarted;
+	Event.Tag = VoteType;
+	Event.PlayerID = Initiator;
+	Event.Value = FFixedPoint::FromInt(RequiredThreshold);
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeVoteProgressEvent(FGameplayTag VoteType, int32 YesCount, int32 NoCount)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::VoteProgress;
+	Event.Tag = VoteType;
+	const int32 Packed = (YesCount & 0xFFFF) | ((NoCount & 0xFFFF) << 16);
+	Event.Value = FFixedPoint::FromInt(Packed);
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeVoteResolvedEvent(FGameplayTag VoteType, bool bPassed)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::VoteResolved;
+	Event.Tag = VoteType;
+	Event.Value = FFixedPoint::FromInt(bPassed ? 1 : 0);
+	return Event;
+}
+
+FSeinVisualEvent FSeinVisualEvent::MakeDiplomacyChangedEvent(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer, FGameplayTag RepresentativeTag)
+{
+	FSeinVisualEvent Event;
+	Event.Type = ESeinVisualEventType::DiplomacyChanged;
+	Event.PlayerID = FromPlayer;
+	// Encode the destination player via Value. FSeinPlayerID is a small struct;
+	// packing its integer payload into the fixed-point Value gives UI enough
+	// to do the reverse-lookup with FSeinPlayerID-constructed-from-int.
+	Event.Value = FFixedPoint::FromInt(static_cast<int32>(ToPlayer.Value));
+	Event.Tag = RepresentativeTag;
+	return Event;
+}
+
 // -----------------------------------------------------------------------------
 // FSeinVisualEventQueue
 // -----------------------------------------------------------------------------

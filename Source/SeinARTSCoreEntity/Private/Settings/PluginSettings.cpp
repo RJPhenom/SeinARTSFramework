@@ -10,10 +10,13 @@
  */
 
 #include "Settings/PluginSettings.h"
+#include "Brokers/SeinDefaultCommandBrokerResolver.h"
 
 USeinARTSCoreSettings::USeinARTSCoreSettings()
 	: SimulationTickRate(30)
 	, MaxTicksPerFrame(5)
+	// ResourceCatalog defaults-constructs via TArray's ctor.
+	, DefaultBrokerResolverClass(USeinDefaultCommandBrokerResolver::StaticClass())
 	, EffectCountWarningThreshold(256)
 	, DefaultCellSize(100.0f)
 	, DefaultElevationMode(ESeinElevationMode::None)

@@ -3,6 +3,8 @@
 #include "SeinNavigationGrid.h"
 #include "SeinFlowFieldPlanner.h"
 #include "Grid/SeinNavigationGridAsset.h"
+#include "Grid/SeinMapTile.h"
+#include "Grid/SeinNavigationLayer.h"
 #include "Volumes/SeinNavVolume.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "EngineUtils.h"
@@ -66,6 +68,45 @@ void USeinNavigationSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 					FFixedPoint::FromFloat(ToWorld.Y),
 					FFixedPoint::FromFloat(ToWorld.Z));
 				return Grid->IsLocationReachable(From, To, AgentTags);
+			});
+
+		// Spatial-grid (un)registration callbacks (§14 containment visibility
+		// transitions). Looks up the entity's current location on the fly so
+		// Hidden-mode occupants exit + re-enter the tile grid at the right cell.
+		TWeakObjectPtr<USeinWorldSubsystem> SimWeak = Sim;
+		Sim->SpatialGridRegisterCallback.BindWeakLambda(this,
+			[this, SimWeak](FSeinEntityHandle Handle)
+			{
+				if (!Grid || Grid->Layers.Num() == 0) return;
+				USeinWorldSubsystem* S = SimWeak.Get();
+				if (!S) return;
+				const FSeinEntity* E = S->GetEntity(Handle);
+				if (!E) return;
+				const FIntPoint Cell = Grid->WorldToGrid(E->Transform.GetLocation());
+				if (!Grid->IsValidCell(Cell)) return;
+				FSeinNavigationLayer& L = Grid->Layers[0];
+				const int32 TileIdx = (Cell.Y / L.TileSize) * L.GetTileWidth() + (Cell.X / L.TileSize);
+				if (L.Tiles.IsValidIndex(TileIdx))
+				{
+					L.Tiles[TileIdx].OccupyingEntities.AddUnique(Handle);
+				}
+			});
+		Sim->SpatialGridUnregisterCallback.BindWeakLambda(this,
+			[this, SimWeak](FSeinEntityHandle Handle)
+			{
+				if (!Grid || Grid->Layers.Num() == 0) return;
+				USeinWorldSubsystem* S = SimWeak.Get();
+				if (!S) return;
+				const FSeinEntity* E = S->GetEntity(Handle);
+				if (!E) return;
+				const FIntPoint Cell = Grid->WorldToGrid(E->Transform.GetLocation());
+				if (!Grid->IsValidCell(Cell)) return;
+				FSeinNavigationLayer& L = Grid->Layers[0];
+				const int32 TileIdx = (Cell.Y / L.TileSize) * L.GetTileWidth() + (Cell.X / L.TileSize);
+				if (L.Tiles.IsValidIndex(TileIdx))
+				{
+					L.Tiles[TileIdx].OccupyingEntities.RemoveSingleSwap(Handle);
+				}
 			});
 	}
 }

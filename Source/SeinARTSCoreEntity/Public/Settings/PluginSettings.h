@@ -17,6 +17,8 @@
 #include "Types/ElevationMode.h"
 #include "PluginSettings.generated.h"
 
+class USeinCommandBrokerResolver;
+
 /**
  * Global settings for SeinARTS.
  * Configure these in Project Settings > Plugins > SeinARTS.
@@ -64,6 +66,20 @@ public:
 
 	// Effects
 	// ====================================================================================================
+
+	// Command Brokers (DESIGN §5)
+	// ====================================================================================================
+
+	/**
+	 * Default resolver class instantiated for every spawned CommandBroker. Framework
+	 * ships `USeinDefaultCommandBrokerResolver` (capability-map filtered + uniform
+	 * grid positions); designers override here to ship a project-wide dispatch
+	 * policy (tight ranks, class clusters, wedge formations, etc.). If empty, the
+	 * framework default is used.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Command Brokers",
+		meta = (DisplayName = "Default Broker Resolver Class"))
+	TSoftClassPtr<USeinCommandBrokerResolver> DefaultBrokerResolverClass;
 
 	/**
 	 * Dev-mode warning threshold for per-entity active-effect count. When an

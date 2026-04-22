@@ -14,6 +14,7 @@
 #include "Core/SeinPlayerState.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinProductionData.h"
+#include "Brokers/SeinBrokerTypes.h"
 #include "Effects/SeinEffect.h"
 #include "Events/SeinVisualEvent.h"
 #include "Lib/SeinResourceBPFL.h"
@@ -102,27 +103,14 @@ public:
 			}
 			else if (Front.ActorClass)
 			{
-				// Determine spawn location from rally target (entity resolves to current
-				// transform; location falls back to building-offset if zero).
-				FFixedVector SpawnLocation;
-				if (ProdComp->RallyTarget.bIsEntityTarget && ProdComp->RallyTarget.EntityTarget.IsValid())
-				{
-					if (const FSeinEntity* RallyEntity = World.GetEntity(ProdComp->RallyTarget.EntityTarget))
-					{
-						SpawnLocation = RallyEntity->Transform.GetLocation();
-					}
-				}
-				else
-				{
-					SpawnLocation = ProdComp->RallyTarget.Location;
-				}
-				if (SpawnLocation == FFixedVector::ZeroVector)
-				{
-					SpawnLocation = Entity.Transform.GetLocation()
-						+ FFixedVector(FFixedPoint::FromInt(2), FFixedPoint::Zero, FFixedPoint::Zero);
-				}
+				// Spawn at a deploy offset beside the building. Rally auto-move
+				// (below) carries the unit from there to the configured rally
+				// target via a broker-dispatched Move order.
+				const FFixedVector SpawnLocation = Entity.Transform.GetLocation()
+					+ FFixedVector(FFixedPoint::FromInt(2), FFixedPoint::Zero, FFixedPoint::Zero);
 
-				World.SpawnEntity(Front.ActorClass, FFixedTransform(SpawnLocation), OwnerID);
+				const FSeinEntityHandle ProducedHandle =
+					World.SpawnEntity(Front.ActorClass, FFixedTransform(SpawnLocation), OwnerID);
 
 				if (const ASeinActor* CDO = GetDefault<ASeinActor>(Front.ActorClass))
 				{
@@ -138,10 +126,36 @@ public:
 					USeinStatsBPFL::SeinBumpStat(&World, OwnerID, SeinARTSTags::Stat_UnitsProduced, FFixedPoint::One);
 				}
 
-				// Rally auto-move: §5 CommandBroker integration pending (Session 4.1).
-				// Pre-broker placeholder: produced units spawn at the rally target; no
-				// broker-dispatched move command. When brokers land, issue an internal
-				// Move dispatch here routed through the default CommandBroker resolver.
+				// Rally auto-move (DESIGN §9 Q9 + §5 broker integration): if the
+				// production component carries a non-zero rally target, drop a
+				// single-member broker order on the produced unit to navigate
+				// there. Entity-targeted rallies resolve to the entity's current
+				// transform at dispatch time.
+				if (ProducedHandle.IsValid())
+				{
+					FFixedVector RallyLoc;
+					if (ProdComp->RallyTarget.bIsEntityTarget && ProdComp->RallyTarget.EntityTarget.IsValid())
+					{
+						if (const FSeinEntity* RallyEntity = World.GetEntity(ProdComp->RallyTarget.EntityTarget))
+						{
+							RallyLoc = RallyEntity->Transform.GetLocation();
+						}
+					}
+					else
+					{
+						RallyLoc = ProdComp->RallyTarget.Location;
+					}
+
+					if (RallyLoc != FFixedVector::ZeroVector && RallyLoc != SpawnLocation)
+					{
+						FSeinBrokerQueuedOrder Order;
+						Order.ContextTag = SeinARTSTags::Ability_Move;
+						Order.TargetLocation = RallyLoc;
+						Order.bIsInternalPrefix = true;
+						TArray<FSeinEntityHandle> Member = { ProducedHandle };
+						World.CreateBrokerForMembers(Member, OwnerID, Order);
+					}
+				}
 			}
 
 			// Fire ProductionCompleted for UI. For research uses the effect tag; for

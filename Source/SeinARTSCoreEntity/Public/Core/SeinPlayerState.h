@@ -63,6 +63,16 @@ struct SEINARTSCOREENTITY_API FSeinPlayerState
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
 	bool bReady = false;
 
+	/** If true, `ProcessCommands` rejects any sim-mutating command from this
+	 *  player — only observer commands (camera, chat, ping) are accepted (DESIGN §18). */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
+	bool bIsSpectator = false;
+
+	/** If true, this player slot is driven by an AI controller (DESIGN §16 / §18).
+	 *  Used by host-migration + dropped-player AI takeover plumbing. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
+	bool bIsAI = false;
+
 	// --- Player Tags (DESIGN §10 — refcounted, mirrors entity FSeinTagData) ---
 
 	/** Refcount per tag. A tag is present (in `PlayerTags`) iff its count > 0.

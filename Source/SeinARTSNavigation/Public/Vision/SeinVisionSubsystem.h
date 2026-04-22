@@ -59,6 +59,11 @@ private:
 	/** Resolve nav grid pointer (cached per tick). */
 	USeinNavigationGrid* GetNavGrid() const;
 
+	/** Collect all player IDs whose vision groups should aggregate INTO `Viewer`'s
+	 *  effective vision. Includes `Viewer` plus any player P that grants
+	 *  `SeinARTS.Diplomacy.Permission.SharedVision` toward `Viewer`. DESIGN §18. */
+	TArray<FSeinPlayerID> CollectEffectiveVisionSources(FSeinPlayerID Viewer) const;
+
 	/** Run a single vision tick — stamp all emitters into their groups; emit enter/exit events. */
 	void RunVisionTick();
 

@@ -25,6 +25,8 @@ namespace SeinARTSTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Build,      "SeinARTS.Ability.Build",      "Construct a building or structure");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Repair,     "SeinARTS.Ability.Repair",     "Repair a damaged friendly entity");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Garrison,   "SeinARTS.Ability.Garrison",   "Enter a garrisonable structure or transport");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Enter,      "SeinARTS.Ability.Enter",      "Generic container-entry ability (DESIGN §14)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Ability_Exit,       "SeinARTS.Ability.Exit",       "Generic container-exit ability (DESIGN §14)");
 
 	// --- Unit ---
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Unit,          "SeinARTS.Unit",          "Root tag for unit classifications");
@@ -57,13 +59,39 @@ namespace SeinARTSTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_CancelProduction,  "SeinARTS.Command.Type.CancelProduction",  "Cancel a specific item in the production queue");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_SetRallyPoint,     "SeinARTS.Command.Type.SetRallyPoint",     "Set a building's rally point");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Ping,              "SeinARTS.Command.Type.Ping",              "Ping a location (visible to all players)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_BrokerOrder,       "SeinARTS.Command.Type.BrokerOrder",       "Multi-unit dispatch routed through a CommandBroker (DESIGN §5)");
+
+	// Match flow (DESIGN §18).
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_StartMatch,          "SeinARTS.Command.Type.StartMatch",          "Transition Lobby → Starting");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_PauseMatchRequest,   "SeinARTS.Command.Type.PauseMatchRequest",   "Request a sim pause (may be a vote trigger)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_ResumeMatchRequest,  "SeinARTS.Command.Type.ResumeMatchRequest",  "Request resume after pause");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_EndMatch,            "SeinARTS.Command.Type.EndMatch",            "Scenario / victory-code ends the match");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_ConcedeMatch,        "SeinARTS.Command.Type.ConcedeMatch",        "Player concedes (triggers EndMatch if victory condition met)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_RestartMatch,        "SeinARTS.Command.Type.RestartMatch",        "Reset back to Lobby (requires vote or host authority)");
+
+	// Votes / diplomacy (Session 5.4).
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_StartVote,           "SeinARTS.Command.Type.StartVote",           "Initiate a vote (DESIGN §18)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_CastVote,            "SeinARTS.Command.Type.CastVote",            "Cast a yes/no vote");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_ModifyDiplomacy,     "SeinARTS.Command.Type.ModifyDiplomacy",     "Add/remove diplomacy tags from a directional pair");
 
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer,                        "SeinARTS.Command.Type.Observer",                        "Parent for observer-only commands (logged for replay, skipped by sim)");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_CameraUpdate,           "SeinARTS.Command.Type.Observer.CameraUpdate",           "Periodic camera position snapshot");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_SelectionChanged,       "SeinARTS.Command.Type.Observer.SelectionChanged",       "Player changed selection and/or active focus");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ChatMessage,            "SeinARTS.Command.Type.Observer.ChatMessage",            "Player sent a chat message");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_Emote,                  "SeinARTS.Command.Type.Observer.Emote",                  "Player triggered a quick-chat emote");
-	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroupAssigned,   "SeinARTS.Command.Type.Observer.ControlGroupAssigned",   "Player assigned a control group");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroupAssigned,   "SeinARTS.Command.Type.Observer.ControlGroupAssigned",   "Player assigned a control group (legacy monolithic tag — superseded by Selection.* / ControlGroup.* subtree)");
+
+	// Selection observer subtree (DESIGN §15).
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_Selection,          "SeinARTS.Command.Type.Observer.Selection",          "Parent for selection observer commands");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_Selection_Replaced, "SeinARTS.Command.Type.Observer.Selection.Replaced", "Full replacement (non-shift click / box-select)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_Selection_Added,    "SeinARTS.Command.Type.Observer.Selection.Added",    "Shift-click / shift-box additive selection");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_Selection_Removed,  "SeinARTS.Command.Type.Observer.Selection.Removed",  "Ctrl-click / ctrl-box subtractive selection");
+
+	// ControlGroup observer subtree.
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroup,           "SeinARTS.Command.Type.Observer.ControlGroup",           "Parent for control-group observer commands");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroup_Assigned,  "SeinARTS.Command.Type.Observer.ControlGroup.Assigned",  "Bind control group to the current selection");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroup_AddedTo,   "SeinARTS.Command.Type.Observer.ControlGroup.AddedTo",   "Shift-bind adds to existing control group");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Type_Observer_ControlGroup_Selected,  "SeinARTS.Command.Type.Observer.ControlGroup.Selected",  "Hotkey recalled a control group");
 
 	// --- Command.Reject ---
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject,                    "SeinARTS.Command.Reject",                    "Root for CommandRejected reason-tag vocabulary");
@@ -78,6 +106,23 @@ namespace SeinARTSTags
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_MissingComponent,   "SeinARTS.Command.Reject.MissingComponent",   "Entity lacks the component the command needs");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_QueueFull,          "SeinARTS.Command.Reject.QueueFull",          "Production queue is at capacity");
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_CanActivateFailed,  "SeinARTS.Command.Reject.CanActivateFailed",  "USeinAbility::CanActivate BP escape returned false");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_SimPaused,          "SeinARTS.Command.Reject.SimPaused",          "Sim is paused in Hard mode; command rejected");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_SpectatorForbidden, "SeinARTS.Command.Reject.SpectatorForbidden", "Spectator tried to emit a sim-mutating command");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_MatchStateInvalid,  "SeinARTS.Command.Reject.MatchStateInvalid",  "Match is not in a state that accepts this command (e.g., commands during Starting countdown)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Command_Reject_DiplomacyLocked,    "SeinARTS.Command.Reject.DiplomacyLocked",    "bAllowMidMatchDiplomacy=false rejects mid-match diplomacy changes");
+
+	// Diplomacy (DESIGN §18).
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy,                          "SeinARTS.Diplomacy",                          "Root for diplomacy-tag vocabulary");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_State,                    "SeinARTS.Diplomacy.State",                    "Parent for baseline relation states");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_State_AtWar,               "SeinARTS.Diplomacy.State.AtWar",              "Mutually hostile; default-targetable");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_State_Peace,               "SeinARTS.Diplomacy.State.Peace",              "Neutral, no conflict");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_State_Truce,               "SeinARTS.Diplomacy.State.Truce",              "Temporary peace, may auto-expire (designer-managed)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission,                "SeinARTS.Diplomacy.Permission",               "Parent for cross-cutting permissions framework systems consult");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission_Allied,         "SeinARTS.Diplomacy.Permission.Allied",        "Treated as ally for combat / command (friendly-fire, broker-ownership)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission_SharedVision,   "SeinARTS.Diplomacy.Permission.SharedVision",  "Vision propagates (§12 TeamShared equivalent)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission_OpenBorders,    "SeinARTS.Diplomacy.Permission.OpenBorders",   "Units may traverse territory");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission_ResourceShare,  "SeinARTS.Diplomacy.Permission.ResourceShare", "Resource transfers permitted (§6 SeinTransfer gate)");
+	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Diplomacy_Permission_CommandSharing, "SeinARTS.Diplomacy.Permission.CommandSharing","Gates §5 allied-command broker invariant loosening");
 
 	// --- Environment ---
 	UE_DEFINE_GAMEPLAY_TAG_COMMENT(Environment_Default, "SeinARTS.Environment.Default", "Default terrain environment tag (designers extend the namespace with biome/surface tags).");

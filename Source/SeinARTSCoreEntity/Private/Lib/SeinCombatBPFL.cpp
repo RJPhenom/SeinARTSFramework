@@ -84,6 +84,26 @@ void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEn
 	FSeinCombatData* Combat = Subsystem->GetComponent<FSeinCombatData>(TargetHandle);
 	if (!Combat) return;
 
+	// Friendly-fire filter (DESIGN §11 / §18). When `bFriendlyFire` is false in
+	// the active match settings, damage between players sharing
+	// `Diplomacy.Permission.Allied` is suppressed. Designer ability code that
+	// wants accidental-fire mechanics (e.g., errant artillery) routes through
+	// `SeinMutateAttribute` to bypass this gate.
+	const FSeinPlayerID TargetOwner = Subsystem->GetEntityOwner(TargetHandle);
+	const FSeinPlayerID SourceOwner = Subsystem->GetEntityOwner(SourceHandle);
+	if (!Subsystem->GetMatchSettings().bFriendlyFire &&
+		SourceOwner.IsValid() && TargetOwner.IsValid() && SourceOwner != TargetOwner)
+	{
+		const bool bAlliedForward = Subsystem->GetDiplomacyTags(SourceOwner, TargetOwner)
+			.HasTagExact(SeinARTSTags::Diplomacy_Permission_Allied);
+		const bool bAlliedReverse = Subsystem->GetDiplomacyTags(TargetOwner, SourceOwner)
+			.HasTagExact(SeinARTSTags::Diplomacy_Permission_Allied);
+		if (bAlliedForward && bAlliedReverse)
+		{
+			return;
+		}
+	}
+
 	// Clamp damage to non-negative so "negative damage" (which would heal) must go
 	// through SeinApplyHeal instead.
 	if (Amount < FFixedPoint::Zero) Amount = FFixedPoint::Zero;
@@ -96,15 +116,13 @@ void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEn
 	// Visual event + attribution.
 	Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeDamageAppliedEvent(TargetHandle, SourceHandle, ActualDelta, DamageType));
 
-	const FSeinPlayerID TargetPlayer = Subsystem->GetEntityOwner(TargetHandle);
-	const FSeinPlayerID SourcePlayer = Subsystem->GetEntityOwner(SourceHandle);
-	if (SourcePlayer.IsValid())
+	if (SourceOwner.IsValid())
 	{
-		USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourcePlayer, SeinARTSTags::Stat_TotalDamageDealt, ActualDelta);
+		USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourceOwner, SeinARTSTags::Stat_TotalDamageDealt, ActualDelta);
 	}
-	if (TargetPlayer.IsValid())
+	if (TargetOwner.IsValid())
 	{
-		USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_TotalDamageReceived, ActualDelta);
+		USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetOwner, SeinARTSTags::Stat_TotalDamageReceived, ActualDelta);
 	}
 
 	// Death flow — Health hit zero this call.
@@ -112,15 +130,15 @@ void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEn
 	{
 		// Fan out kill + death attribution before any ability fires so stat bumps
 		// are guaranteed even if the death-handler destroys state we'd read.
-		if (TargetPlayer.IsValid())
+		if (TargetOwner.IsValid())
 		{
-			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_UnitDeathCount, FFixedPoint::One);
-			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetPlayer, SeinARTSTags::Stat_UnitsLost, FFixedPoint::One);
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetOwner, SeinARTSTags::Stat_UnitDeathCount, FFixedPoint::One);
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, TargetOwner, SeinARTSTags::Stat_UnitsLost, FFixedPoint::One);
 		}
-		if (SourcePlayer.IsValid() && SourcePlayer != TargetPlayer)
+		if (SourceOwner.IsValid() && SourceOwner != TargetOwner)
 		{
-			USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourcePlayer, SeinARTSTags::Stat_UnitKillCount, FFixedPoint::One);
-			Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeKillEvent(SourceHandle, TargetHandle, SourcePlayer));
+			USeinStatsBPFL::SeinBumpStat(WorldContextObject, SourceOwner, SeinARTSTags::Stat_UnitKillCount, FFixedPoint::One);
+			Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeKillEvent(SourceHandle, TargetHandle, SourceOwner));
 		}
 
 		Subsystem->EnqueueVisualEvent(FSeinVisualEvent::MakeDeathEvent(TargetHandle, SourceHandle));

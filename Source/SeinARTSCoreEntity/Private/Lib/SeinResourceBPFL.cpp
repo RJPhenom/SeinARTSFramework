@@ -9,6 +9,7 @@
 #include "Core/SeinSimContext.h"
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Tags/SeinARTSGameplayTags.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 
@@ -227,10 +228,28 @@ bool USeinResourceBPFL::SeinTransfer(const UObject* WorldContextObject, FSeinPla
 	if (Amount.IsEmpty()) { return true; }
 	if (FromPlayer == ToPlayer) { return true; }
 
-	// Pre-§18: permissive. Once match settings land, gate cross-player transfers on
-	// USeinMatchSettings::bAllowMidMatchDiplomacy + diplomacy permission tags.
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) { return false; }
+
+	// DESIGN §18: cross-player transfer gated on (1) match-settings permissiveness
+	// while the match is Playing/Paused, and (2) mutual ResourceShare diplomacy
+	// permission between sender and receiver. Lobby/Starting/Ended bypass both
+	// gates so campaign scripting + faction-swap UX remain permissive pre-start.
+	const ESeinMatchState State = Subsystem->GetMatchState();
+	const bool bMidMatch = (State == ESeinMatchState::Playing || State == ESeinMatchState::Paused);
+	if (bMidMatch)
+	{
+		if (!Subsystem->GetMatchSettings().bAllowMidMatchDiplomacy)
+		{
+			return false;
+		}
+		const bool bHasPermission =
+			Subsystem->GetDiplomacyTags(FromPlayer, ToPlayer).HasTagExact(SeinARTSTags::Diplomacy_Permission_ResourceShare);
+		if (!bHasPermission)
+		{
+			return false;
+		}
+	}
 
 	FSeinPlayerState* FromState = Subsystem->GetPlayerState(FromPlayer);
 	FSeinPlayerState* ToState = Subsystem->GetPlayerState(ToPlayer);

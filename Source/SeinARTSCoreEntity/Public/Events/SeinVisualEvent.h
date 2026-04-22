@@ -45,6 +45,22 @@ enum class ESeinVisualEventType : uint8
 	EntityEnteredVision,
 	EntityExitedVision,
 	TerrainMutated,
+	EntityEnteredContainer,
+	EntityExitedContainer,
+	AttachmentSlotFilled,
+	AttachmentSlotEmptied,
+	PlayPreRenderedCinematic,
+	EndCinematic,
+	MatchStarting,
+	MatchStarted,
+	MatchPaused,
+	MatchResumed,
+	MatchEnding,
+	MatchEnded,
+	VoteStarted,
+	VoteProgress,
+	VoteResolved,
+	DiplomacyChanged,
 };
 
 /**
@@ -152,6 +168,53 @@ struct SEINARTSCOREENTITY_API FSeinVisualEvent
 	 *  (shelling, footprint register/unregister, nav-tag stamping). `Location` =
 	 *  mutation anchor; `Value` = affected-cell count (debug / render hints). */
 	static FSeinVisualEvent MakeTerrainMutatedEvent(FFixedVector Location, int32 CellCount);
+
+	/** Create an EntityEnteredContainer event (DESIGN §14). `PrimaryEntity` is
+	 *  the container, `SecondaryEntity` the new occupant, `Value` the assigned
+	 *  visual-slot index (-1 if tracking off). */
+	static FSeinVisualEvent MakeEntityEnteredContainerEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, int32 VisualSlotIndex);
+
+	/** Create an EntityExitedContainer event. `Location` = exit world position. */
+	static FSeinVisualEvent MakeEntityExitedContainerEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FFixedVector ExitLocation);
+
+	/** Create an AttachmentSlotFilled event. `Tag` carries the slot tag. */
+	static FSeinVisualEvent MakeAttachmentSlotFilledEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FGameplayTag SlotTag);
+
+	/** Create an AttachmentSlotEmptied event. `Tag` carries the slot tag. */
+	static FSeinVisualEvent MakeAttachmentSlotEmptiedEvent(FSeinEntityHandle Container, FSeinEntityHandle Occupant, FGameplayTag SlotTag);
+
+	/** Create a PlayPreRenderedCinematic event (DESIGN §17). Renderer reads
+	 *  `Tag` as the cinematic ID (an FName packed into tag-string form), and
+	 *  `Value` encodes `(SkipMode & 0xFF) | (VoteThreshold << 8)` as a compact
+	 *  combined parameter carrier. Soft-object-ptr payloads are carried through
+	 *  designer-side binding; V1 keeps the event struct fixed-shape. */
+	static FSeinVisualEvent MakePlayPreRenderedCinematicEvent(FGameplayTag CinematicIDTag, int32 SkipMode, int32 VoteThreshold);
+
+	/** Create an EndCinematic event. `Tag` = cinematic ID (same mapping as
+	 *  PlayPreRenderedCinematic). */
+	static FSeinVisualEvent MakeEndCinematicEvent(FGameplayTag CinematicIDTag);
+
+	/** Create a match flow event (DESIGN §18). `Type` supplied by caller.
+	 *  Optional `Winner` / `Reason` carried on the primary-entity / tag slots. */
+	static FSeinVisualEvent MakeMatchFlowEvent(ESeinVisualEventType Type, FSeinPlayerID Winner = FSeinPlayerID(), FGameplayTag Reason = FGameplayTag());
+
+	/** Create a VoteStarted event (DESIGN §18). `Tag` = VoteType; `PlayerID` = Initiator;
+	 *  `Value` = RequiredThreshold (fixed-point-encoded int). */
+	static FSeinVisualEvent MakeVoteStartedEvent(FGameplayTag VoteType, FSeinPlayerID Initiator, int32 RequiredThreshold);
+
+	/** Create a VoteProgress event. `Tag` = VoteType; `Value` encodes
+	 *  `(YesCount & 0xFFFF) | (NoCount << 16)`. */
+	static FSeinVisualEvent MakeVoteProgressEvent(FGameplayTag VoteType, int32 YesCount, int32 NoCount);
+
+	/** Create a VoteResolved event. `Tag` = VoteType; `Value` = 1 if passed, 0 if failed. */
+	static FSeinVisualEvent MakeVoteResolvedEvent(FGameplayTag VoteType, bool bPassed);
+
+	/** Create a DiplomacyChanged event (DESIGN §18). `PlayerID` = From; primary entity
+	 *  slot carries the "to player" encoded as a handle with `Index = ToPlayer.Value`.
+	 *  `Tag` carries one representative added/removed tag — UI queries the full
+	 *  container via `USeinDiplomacyBPFL::SeinGetDiplomacyTags(From, To)` for the
+	 *  authoritative post-change state. */
+	static FSeinVisualEvent MakeDiplomacyChangedEvent(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer, FGameplayTag RepresentativeTag);
 };
 
 /**

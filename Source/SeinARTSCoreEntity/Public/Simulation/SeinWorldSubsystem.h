@@ -21,12 +21,17 @@
 #include "Simulation/ComponentStorage.h"
 #include "Input/SeinCommand.h"
 #include "Events/SeinVisualEvent.h"
+#include "Components/SeinContainmentTypes.h"
+#include "Data/SeinMatchSettings.h"
+#include "Data/SeinVoteState.h"
+#include "Data/SeinDiplomacyTypes.h"
 #include "SeinWorldSubsystem.generated.h"
 
 class ASeinActor;
 class USeinArchetypeDefinition;
 class USeinFaction;
 class USeinAbility;
+class USeinAIController;
 class USeinEffect;
 class USeinLatentActionManager;
 struct FSeinModifier;
@@ -74,6 +79,16 @@ DECLARE_DELEGATE_RetVal_TwoParams(bool, FSeinLineOfSightResolver,
 	FSeinPlayerID /*ObserverPlayer*/, const FVector& /*TargetWorld*/);
 
 /**
+ * Delegates sim uses to (un)register entities in the spatial tile grid
+ * (DESIGN §13 broadphase). Bound by USeinNavigationSubsystem at
+ * OnWorldBeginPlay. Invoked by containment (DESIGN §14) when visibility-
+ * mode transitions take an entity off the grid (`Hidden`) or put it back on.
+ * Unbound delegates are no-ops — tests and nav-less games skip.
+ */
+DECLARE_DELEGATE_OneParam(FSeinSpatialGridRegister,   FSeinEntityHandle /*Entity*/);
+DECLARE_DELEGATE_OneParam(FSeinSpatialGridUnregister, FSeinEntityHandle /*Entity*/);
+
+/**
  * World subsystem that owns and ticks the deterministic simulation.
  * Manages entity pool, component storage, phase-based tick loop,
  * player states, command processing, and visual event dispatch.
@@ -97,6 +112,99 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
 	bool IsSimulationRunning() const { return bIsRunning; }
+
+	/** True iff the sim is paused (DESIGN §17). Paused sim halts the tick
+	 *  system loop; commands continue to accumulate in the pending buffer
+	 *  (Tactical mode — §18 adds a Hard mode that rejects during pause).
+	 *  Visual events still flush so UI can respond to scenario-driven pauses. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
+	bool IsSimulationPaused() const { return bSimPaused; }
+
+	/** Sim-pause setter (DESIGN §17 + §18). Pause mode defaults to the match
+	 *  settings' `DefaultPauseMode`; pass an explicit value to override. Hard
+	 *  pause also sets `bSimPausedHard` so `ProcessCommands` rejects sim-
+	 *  mutating commands with `Command.Reject.SimPaused`. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Simulation")
+	void SetSimPaused(bool bPaused, ESeinPauseMode PauseMode = ESeinPauseMode::Tactical);
+
+	// ========== Match Flow (DESIGN §18) ==========
+
+	/** Current match-state-machine state. `Lobby` on Initialize, transitions
+	 *  via `StartMatch` / `EndMatch` / pause / etc. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Match")
+	ESeinMatchState GetMatchState() const { return MatchState; }
+
+	/** Snapshotted match settings (immutable after StartMatch). Reads return
+	 *  the captured value so mid-match mutation is impossible by construction. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Match")
+	const FSeinMatchSettings& GetMatchSettings() const { return CurrentMatchSettings; }
+
+	/**
+	 * Start a match with the given settings. Snapshots settings into the
+	 * subsystem, transitions state Lobby → Starting, kicks off the
+	 * PreMatchCountdown. Calling from any state other than Lobby / Ended
+	 * logs a warning + no-ops.
+	 *
+	 * On countdown completion the subsystem auto-transitions to Playing and
+	 * fires `MatchStarted`. Scenarios / UI subscribe to the visual event
+	 * stream for those transitions.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Match")
+	void StartMatch(const FSeinMatchSettings& Settings);
+
+	/** End the match with a declared winner + reason tag. Transitions
+	 *  Playing / Paused → Ending → Ended. Scenarios call this when their
+	 *  game-specific victory condition fires (DESIGN §18). `Reason` lives
+	 *  under designer-authored `MyGame.Victory.*` by convention. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Match")
+	void EndMatch(FSeinPlayerID Winner, FGameplayTag Reason);
+
+	// ========== Voting (DESIGN §18) ==========
+
+	/** Open a new vote. No-op (+ warning) if a vote with that tag is already
+	 *  active. `ExpiresInTicks <= 0` means no expiration (designer-resolved). */
+	void StartVote(FGameplayTag VoteType, ESeinVoteResolution Resolution, int32 RequiredThreshold, int32 ExpiresInTicks, FSeinPlayerID Initiator);
+
+	/** Register a vote. Re-casts overwrite the prior value. */
+	void CastVote(FGameplayTag VoteType, FSeinPlayerID Voter, int32 VoteValue);
+
+	/** Status lookup for UI / scenario gating. */
+	ESeinVoteStatus GetVoteStatus(FGameplayTag VoteType) const;
+
+	/** Snapshot of all active votes (for UI listing). */
+	TArray<FSeinVoteState> GetActiveVotes() const;
+
+	// ========== Diplomacy (DESIGN §18) ==========
+
+	/** Apply the given add/remove delta to the (From, To) pair. Bypasses the
+	 *  match-settings `bAllowMidMatchDiplomacy` gate — intended for framework
+	 *  code (ProcessCommands handler checks the gate); direct callers carry
+	 *  the responsibility. Updates the parallel tag index + fires the
+	 *  DiplomacyChanged event. */
+	void ApplyDiplomacyDelta(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer, const FGameplayTagContainer& TagsToAdd, const FGameplayTagContainer& TagsToRemove);
+
+	/** Directional read — empty container if the pair has no authored relation. */
+	FGameplayTagContainer GetDiplomacyTags(FSeinPlayerID FromPlayer, FSeinPlayerID ToPlayer) const;
+
+	/** Every pair holding this tag (parallel-index O(1) lookup). */
+	TArray<FSeinDiplomacyKey> GetPairsWithDiplomacyTag(FGameplayTag Tag) const;
+
+	// ========== CommandBroker helpers (DESIGN §5 — public entry points) ==========
+
+	/** Find or build a broker for a member set + first order. Evicts members
+	 *  from any prior broker (one-broker-per-member invariant). Returns the
+	 *  broker's entity handle, invalid if post-filter member list is empty.
+	 *  Public so framework systems (production rally auto-move, scenario
+	 *  orchestration) can dispatch internal broker orders without routing
+	 *  through the command buffer. */
+	FSeinEntityHandle CreateBrokerForMembers(
+		const TArray<FSeinEntityHandle>& FilteredMembers,
+		FSeinPlayerID OwnerPlayerID,
+		const struct FSeinBrokerQueuedOrder& FirstOrder);
+
+	/** If every member already shares a single broker, return it; else invalid.
+	 *  Used to append shift-queued orders to the existing group's broker. */
+	FSeinEntityHandle FindSharedBroker(const TArray<FSeinEntityHandle>& Members) const;
 
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Simulation")
 	int32 GetCurrentTick() const { return CurrentTick; }
@@ -125,6 +233,12 @@ public:
 	 *  by USeinVisionSubsystem at OnWorldBeginPlay. If unbound, LOS checks permit. */
 	FSeinLineOfSightResolver LineOfSightResolver;
 
+	/** Cross-module spatial-grid register/unregister callbacks (§13 + §14).
+	 *  USeinNavigationSubsystem binds these; containment calls them on
+	 *  enter/exit transitions for Hidden-visibility containers. Unbound = no-op. */
+	FSeinSpatialGridRegister   SpatialGridRegisterCallback;
+	FSeinSpatialGridUnregister SpatialGridUnregisterCallback;
+
 	// ========== Entity Management ==========
 
 	/**
@@ -140,6 +254,15 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Entity")
 	FSeinEntityHandle SpawnEntity(TSubclassOf<ASeinActor> ActorClass, const FFixedTransform& SpawnTransform, FSeinPlayerID OwnerPlayerID);
+
+	/**
+	 * Spawn an abstract sim entity (no BP class, no render actor). Used for
+	 * command brokers, scenario owners, squad containers — anything that needs
+	 * pooled handle + component storage but zero render presence. The caller is
+	 * responsible for adding whatever sim components it needs via `AddComponent`.
+	 * The actor bridge skips handles without a `EntityActorClassMap` entry.
+	 */
+	FSeinEntityHandle SpawnAbstractEntity(const FFixedTransform& SpawnTransform, FSeinPlayerID OwnerPlayerID);
 
 	/**
 	 * Queue entity for deferred destruction (processed in PostTick).
@@ -334,6 +457,68 @@ public:
 	 *  ProcessDeferredDestroys before the pool releases the handle. */
 	void RemoveEffectsFromDeadSource(FSeinEntityHandle DeadHandle);
 
+	// ========== Relationships (DESIGN §14) ==========
+
+	/**
+	 * Move `Entity` into `Container` as a plain occupant.
+	 *
+	 * Validates: both handles alive; entity has `FSeinContainmentMemberData`;
+	 * container has `FSeinContainmentData`; entity not already contained;
+	 * accepted-query match; capacity + Size fits. On success: updates
+	 * occupant list, bumps `CurrentLoad`, assigns visual slot if tracking
+	 * enabled, unregisters from spatial grid if `Visibility == Hidden`,
+	 * emits `EntityEnteredContainer` event.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Containment")
+	bool EnterContainer(FSeinEntityHandle Entity, FSeinEntityHandle Container);
+
+	/**
+	 * Remove `Entity` from its current container. `ExitLocation` zero means
+	 * the container's transform + `FSeinTransportSpec::DeployOffset` (if any);
+	 * a non-zero vector uses that as the exit world position directly.
+	 * Writes the entity's new transform, clears container back-ref, decrements
+	 * load, re-registers in spatial grid, emits `EntityExitedContainer`.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Containment")
+	bool ExitContainer(FSeinEntityHandle Entity, FFixedVector ExitLocation = FFixedVector());
+
+	/**
+	 * Attach `Entity` to `Container`'s named `SlotTag` slot. Container must
+	 * carry both `FSeinContainmentData` and `FSeinAttachmentSpec`; the slot
+	 * must exist in the spec's `Slots` array; the slot must be unfilled; and
+	 * the slot's own `AcceptedEntityQuery` must match the entity's tags.
+	 * Succeeds after a normal containment enter has been performed (attach
+	 * implies containment — the entity occupies both slots + occupant list).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Containment")
+	bool AttachToSlot(FSeinEntityHandle Entity, FSeinEntityHandle Container, FGameplayTag SlotTag);
+
+	/**
+	 * Detach `Entity` from its attachment slot (and exit the container). This
+	 * is a combined attachment-detach + container-exit; designers who want to
+	 * detach without exiting containment handle that via their own BP logic.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Containment")
+	bool DetachFromSlot(FSeinEntityHandle Entity);
+
+	/**
+	 * Propagate container death per DESIGN §14 rules. Called by
+	 * `ProcessDeferredDestroys` when a dying entity has `FSeinContainmentData`.
+	 *   bEjectOnContainerDeath=true: eject each occupant at container's last
+	 *     transform; apply `OnEjectEffect` to each if set; occupants survive.
+	 *   bEjectOnContainerDeath=false: apply `OnContainerDeathEffect` to each;
+	 *     enqueue each occupant for destroy (recursive — their containments
+	 *     propagate too on the next sweep of ProcessDeferredDestroys).
+	 */
+	void PropagateContainerDeath(FSeinEntityHandle DyingContainer);
+
+	// Introspection — C++ read-only helpers; BPFL wraps.
+	FSeinEntityHandle GetImmediateContainer(FSeinEntityHandle Entity) const;
+	FSeinEntityHandle GetRootContainer(FSeinEntityHandle Entity) const;
+	bool IsContained(FSeinEntityHandle Entity) const;
+	TArray<FSeinEntityHandle> GetAllNestedOccupants(FSeinEntityHandle Container) const;
+	FSeinContainmentTree BuildContainmentTree(FSeinEntityHandle Container) const;
+
 	// ========== Player Tags (refcounted, DESIGN §10) ==========
 
 	/** Grant a tag to a player (refcount++). Adds to `FSeinPlayerState::PlayerTags`
@@ -345,6 +530,34 @@ public:
 	 *  1→0 edge. Safe to call on tags the player never received (no-op). */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Tags")
 	void UngrantPlayerTag(FSeinPlayerID PlayerID, FGameplayTag Tag);
+
+	// ========== AI (DESIGN §16) ==========
+
+	/**
+	 * Register an AI controller on this world's host. Stamps `OwnedPlayerID` +
+	 * `WorldSubsystem`, calls `OnRegistered`, and adds to the tick list. Ticks
+	 * fire during CommandProcessing phase so AI-emitted commands process
+	 * same-tick.
+	 *
+	 * In multiplayer, only the designated host should call this — other
+	 * clients receive the AI's emitted commands via the lockstep buffer.
+	 * V1 does not enforce host-only; designer-side gating. Host migration /
+	 * dropped-player takeover plumbing lands with §18 match flow.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|AI")
+	void RegisterAIController(USeinAIController* Controller, FSeinPlayerID OwnedPlayer);
+
+	/** Unregister an AI controller (calls `OnUnregistered`). Safe to call on
+	 *  a null / already-unregistered controller. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|AI")
+	void UnregisterAIController(USeinAIController* Controller);
+
+	/** Get the registered AI controller driving `PlayerID`, or nullptr. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|AI")
+	USeinAIController* GetAIControllerForPlayer(FSeinPlayerID PlayerID) const;
+
+	/** Read-only view over every registered AI controller. */
+	const TArray<TObjectPtr<USeinAIController>>& GetAIControllers() const { return AIControllers; }
 
 	// ========== Command System ==========
 
@@ -432,14 +645,49 @@ private:
 	// Pending-apply queue for effects applied during tick hooks. Drained at PreTick.
 	TArray<FSeinPendingEffectApply> PendingEffectApplies;
 
+	// AI controller registry (DESIGN §16). Ticked in CommandProcessing phase.
+	UPROPERTY()
+	TArray<TObjectPtr<USeinAIController>> AIControllers;
+
+	// Tick the registered AI controllers. Called from TickSystems at
+	// CommandProcessing phase, right before ProcessCommands.
+	void TickAIControllers(FFixedPoint DeltaTime);
+
 	// Commit an apply synchronously (used by ApplyEffect when not in a tick, and
 	// by ProcessPendingEffectApplies when draining). Returns instance ID or 0.
 	uint32 ApplyEffectInternal(FSeinEntityHandle Target, TSubclassOf<USeinEffect> EffectClass, FSeinEntityHandle Source);
 
 	// Simulation state
 	bool bIsRunning = false;
+	bool bSimPaused = false;     // DESIGN §17 — scenario-driven pause gate
+	bool bSimPausedHard = false; // DESIGN §18 — true = reject sim-mutating commands while paused
 	int32 CurrentTick = 0;
 	FTSTicker::FDelegateHandle TickerHandle;
+
+	// Match state (DESIGN §18). State machine drives pre-match countdown, end-match
+	// cleanup, spectator + pause filters in ProcessCommands.
+	ESeinMatchState MatchState = ESeinMatchState::Lobby;
+	FSeinMatchSettings CurrentMatchSettings;
+	int32 StartingStateDeadlineTick = 0;   // tick at which Starting → Playing
+	int32 MatchStartTick = 0;              // tick at which Playing was entered
+	// Advance match state each tick (poll Starting countdown → Playing transition).
+	void TickMatchState();
+
+	// Votes (DESIGN §18). Keyed by VoteType. Drained on resolution.
+	UPROPERTY()
+	TMap<FGameplayTag, FSeinVoteState> ActiveVotes;
+	// Tick votes — resolves expired ones at the head of each sim tick.
+	void TickVotes();
+	// Evaluate a single vote's pass/fail condition and resolve if satisfied.
+	// Returns true if the vote was resolved (removed).
+	bool EvaluateAndResolveVote(FGameplayTag VoteType);
+
+	// Diplomacy (DESIGN §18). Directional per-pair tag storage + parallel tag→pair
+	// index. Maintained together by `ApplyDiplomacyDelta`.
+	UPROPERTY()
+	TMap<FSeinDiplomacyKey, FGameplayTagContainer> DiplomacyRelations;
+	UPROPERTY()
+	TMap<FGameplayTag, FSeinDiplomacyIndexBucket> DiplomacyTagIndex;
 
 	// Wall-clock scheduling (NOT sim state — do not "fix" these to FFixedPoint).
 	// TimeAccumulator is the render-frame wall-clock budget waiting to be drained
