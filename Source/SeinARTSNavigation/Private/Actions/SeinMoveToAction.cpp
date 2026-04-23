@@ -1,32 +1,27 @@
+/**
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinMoveToAction.cpp
+ */
+
 #include "Actions/SeinMoveToAction.h"
-#include "SeinPathfinder.h"
+#include "Abilities/SeinMoveToProxy.h"
+#include "SeinNavigation.h"
 #include "SeinNavigationSubsystem.h"
-#include "SeinNavigationGrid.h"
-#include "SeinFlowFieldPlanner.h"
-#include "Grid/SeinAbstractGraph.h"
-#include "Grid/SeinFlowFieldPlan.h"
+
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinMovementData.h"
-#include "Components/SeinTagData.h"
-#include "Movement/SeinMovementProfile.h"
-#include "Movement/SeinInfantryMovementProfile.h"
-#include "Components/SeinMovementProfileComponent.h"
-#include "Abilities/SeinMoveToProxy.h"
-#include "Abilities/SeinAbility.h"
-#include "Events/SeinVisualEvent.h"
-#include "Engine/World.h"
 #include "Types/Entity.h"
+#include "Engine/World.h"
 
-void USeinMoveToAction::Initialize(const FFixedVector& InDestination, USeinPathfinder* InPathfinder, FFixedPoint InAcceptanceRadius)
+DEFINE_LOG_CATEGORY_STATIC(LogSeinMove, Log, All);
+
+void USeinMoveToAction::Initialize(const FFixedVector& InDestination, FFixedPoint InAcceptanceRadius)
 {
 	Destination = InDestination;
-	Pathfinder = InPathfinder;
 	AcceptanceRadiusSq = InAcceptanceRadius * InAcceptanceRadius;
 	CurrentWaypointIndex = 0;
-	CurrentStepIndex = 0;
-	Path.bIsValid = false;
-	FlowPlan = FSeinFlowFieldPlan();
-	KinState = FSeinMovementKinematicState();
+	bPathResolved = false;
+	Path.Clear();
 }
 
 bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World)
@@ -45,192 +40,88 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		return true;
 	}
 
-	// Resolve profile on first tick
-	if (!ResolvedProfile)
+	// Resolve nav + query path once.
+	if (!bPathResolved)
 	{
-		UClass* ProfileClass = nullptr;
-		if (const FSeinMovementProfileComponent* ProfileComp = World.GetComponent<FSeinMovementProfileComponent>(OwnerEntity))
+		USeinNavigation* Nav = USeinNavigationSubsystem::GetNavigationForWorld(&World);
+		if (!Nav)
 		{
-			ProfileClass = ProfileComp->Profile.Get();
-		}
-		if (!ProfileClass)
-		{
-			ProfileClass = USeinInfantryMovementProfile::StaticClass();
-		}
-		ResolvedProfile = NewObject<USeinMovementProfile>(this, ProfileClass);
-	}
-
-	// Build a flow-field plan on first tick (if a planner + grid are available).
-	if (!FlowPlan.bValid && !Path.bIsValid)
-	{
-		UWorld* OuterWorld = GetWorld() ? GetWorld() : (World.GetWorld() ? World.GetWorld() : nullptr);
-		USeinNavigationSubsystem* Nav = OuterWorld ? OuterWorld->GetSubsystem<USeinNavigationSubsystem>() : nullptr;
-		USeinNavigationGrid* Grid = Nav ? Nav->GetGrid() : nullptr;
-		USeinFlowFieldPlanner* Planner = Nav ? Nav->GetFlowFieldPlanner() : nullptr;
-
-		if (Grid && Planner && Grid->Layers.Num() > 0)
-		{
-			const FSeinCellAddress StartAddr = Grid->ResolveCellAddress(Entity->Transform.GetLocation());
-			const FSeinCellAddress GoalAddr = Grid->ResolveCellAddress(Destination);
-
-			FGameplayTagContainer AgentTags;
-			if (const FSeinTagData* TagComp = World.GetComponent<FSeinTagData>(OwnerEntity))
-			{
-				AgentTags = TagComp->CombinedTags;
-			}
-
-			const FGuid Key = USeinFlowFieldPlanner::KeyForCells(StartAddr, GoalAddr);
-			FlowPlan = Planner->GetOrBuild(Key, StartAddr, GoalAddr, AgentTags);
-			CurrentStepIndex = 0;
-		}
-
-		// Legacy A* fallback: if no planner available OR plan is invalid, fall back.
-		if (!FlowPlan.bValid)
-		{
-			if (!Pathfinder)
-			{
-				Fail(static_cast<uint8>(ESeinMoveFailureReason::NoPathfinder));
-				return true;
-			}
-
-			FSeinPathRequest Request;
-			Request.Start = Entity->Transform.GetLocation();
-			Request.End = Destination;
-			Request.Requester = OwnerEntity;
-			ResolvedProfile->BuildPath(Pathfinder, Request, Path);
-
-			if (!Path.bIsValid || Path.GetWaypointCount() == 0)
-			{
-				Fail(static_cast<uint8>(ESeinMoveFailureReason::PathNotFound));
-				return true;
-			}
-			CurrentWaypointIndex = 0;
-		}
-	}
-
-	// Flow-plan-driven advancement.
-	if (FlowPlan.bValid)
-	{
-		UWorld* OuterWorld = GetWorld() ? GetWorld() : (World.GetWorld() ? World.GetWorld() : nullptr);
-		USeinNavigationSubsystem* Nav = OuterWorld ? OuterWorld->GetSubsystem<USeinNavigationSubsystem>() : nullptr;
-		USeinNavigationGrid* Grid = Nav ? Nav->GetGrid() : nullptr;
-		if (!Grid || !FlowPlan.Steps.IsValidIndex(CurrentStepIndex))
-		{
-			NotifyCompleted();
+			Fail(static_cast<uint8>(ESeinMoveFailureReason::NoNavigation));
 			return true;
 		}
 
-		const FSeinAbstractPathStep& Step = FlowPlan.Steps[CurrentStepIndex];
+		FSeinPathRequest Req;
+		Req.Start = Entity->Transform.GetLocation();
+		Req.End = Destination;
+		Req.Requester = OwnerEntity;
 
-		// Navlink steps: deterministic inline traversal (designer visuals via the
-		// link's TraversalAbility hook are deferred to Session 3.5 polish).
-		if (Step.NavLinkID != INDEX_NONE && Grid->NavLinks.IsValidIndex(Step.NavLinkID))
+		if (!Nav->FindPath(Req, Path) || Path.Waypoints.Num() == 0)
 		{
-			const FSeinNavLinkRecord& Link = Grid->NavLinks[Step.NavLinkID];
-			const FSeinCellAddress EndAddr =
-				(Link.StartCell.Layer == Step.Layer) ? Link.EndCell : Link.StartCell;
-
-			if (Grid->IsValidCellAddr(EndAddr))
-			{
-				const int32 LayerIdx = EndAddr.Layer;
-				const FIntPoint XY = Grid->IndexToXY(EndAddr.CellIndex);
-				const FFixedVector EndWorld = Grid->GridToWorldCenter(XY);
-				FFixedVector FinalEndWorld = EndWorld;
-				if (Grid->Layers.IsValidIndex(LayerIdx))
-				{
-					FinalEndWorld.Z = FFixedPoint::FromFloat(Grid->Layers[LayerIdx].GetCellWorldZ(EndAddr.CellIndex));
-				}
-				Entity->Transform.SetLocation(FinalEndWorld);
-			}
-
-			// Fire an AbilityActivated/Ended pair on the traversal ability tag so designers
-			// can bind VFX / audio without blocking sim-side advancement.
-			if (Link.TraversalAbility)
-			{
-				if (const USeinAbility* CDO = GetDefault<USeinAbility>(Link.TraversalAbility.Get()))
-				{
-					const FGameplayTag TraversalTag = CDO->AbilityTag;
-					World.EnqueueVisualEvent(FSeinVisualEvent::MakeAbilityEvent(OwnerEntity, TraversalTag, /*bActivated=*/true));
-					World.EnqueueVisualEvent(FSeinVisualEvent::MakeAbilityEvent(OwnerEntity, TraversalTag, /*bActivated=*/false));
-				}
-			}
-
-			++CurrentStepIndex;
-			if (!FlowPlan.Steps.IsValidIndex(CurrentStepIndex))
-			{
-				NotifyCompleted();
-				return true;
-			}
-			return false;
-		}
-
-		if (!FlowPlan.PerClusterFields.IsValidIndex(Step.FlowFieldIndex))
-		{
-			NotifyCompleted();
+			Fail(static_cast<uint8>(ESeinMoveFailureReason::PathNotFound));
 			return true;
 		}
-		const FSeinClusterFlowField& Field = FlowPlan.PerClusterFields[Step.FlowFieldIndex];
+		bPathResolved = true;
+		CurrentWaypointIndex = 0;
+	}
 
-		// Step goal in world space.
-		const FIntPoint GoalXY = Grid->IndexToXY(Step.GoalCellIndex);
-		FFixedVector StepGoalWorld = Grid->GridToWorldCenter(GoalXY);
-		if (Grid->Layers.IsValidIndex(Step.Layer))
+	// Advance along path: seek toward current waypoint at MoveSpeed. Pop waypoints
+	// we reach within one step; complete when the final waypoint is within
+	// AcceptanceRadius of the entity.
+	FFixedVector Pos = Entity->Transform.GetLocation();
+	FFixedPoint RemainingStep = MoveComp->MoveSpeed * DeltaTime;
+
+	while (RemainingStep > FFixedPoint::Zero && CurrentWaypointIndex < Path.Waypoints.Num())
+	{
+		const FFixedVector Target = Path.Waypoints[CurrentWaypointIndex];
+		FFixedVector Delta = Target - Pos;
+		// Planar distance (ignore Z drift so ramps don't bump the unit up/down
+		// via steering — the cell's baked Height is authoritative).
+		Delta.Z = FFixedPoint::Zero;
+		const FFixedPoint DistSq = Delta.SizeSquared();
+
+		const bool bIsFinalWaypoint = (CurrentWaypointIndex == Path.Waypoints.Num() - 1);
+		const FFixedPoint ArriveRadiusSq = bIsFinalWaypoint ? AcceptanceRadiusSq : (MoveComp->MoveSpeed * DeltaTime) * (MoveComp->MoveSpeed * DeltaTime);
+
+		if (DistSq <= ArriveRadiusSq)
 		{
-			StepGoalWorld.Z = FFixedPoint::FromFloat(Grid->Layers[Step.Layer].GetCellWorldZ(Step.GoalCellIndex));
+			// Arrived at this waypoint.
+			Pos.X = Target.X;
+			Pos.Y = Target.Y;
+			Pos.Z = Target.Z;
+			NotifyWaypointReached(CurrentWaypointIndex, Path.Waypoints.Num());
+			++CurrentWaypointIndex;
+			continue;
 		}
 
-		const bool bArrivedStep = ResolvedProfile->AdvanceViaFlowField(
-			Grid, *Entity, *MoveComp, Field, StepGoalWorld, AcceptanceRadiusSq, DeltaTime, KinState);
+		// Step toward target, bounded by remaining movement budget this tick.
+		const FFixedPoint Dist = Delta.Size();
+		const FFixedPoint StepLen = (Dist < RemainingStep) ? Dist : RemainingStep;
+		const FFixedVector Dir = FFixedVector::GetSafeNormal(Delta);
+		Pos.X = Pos.X + Dir.X * StepLen;
+		Pos.Y = Pos.Y + Dir.Y * StepLen;
+		Pos.Z = Target.Z; // snap Z to the baked cell height
 
-		MoveComp->TargetLocation = StepGoalWorld;
-		MoveComp->bHasTarget = true;
+		RemainingStep = RemainingStep - StepLen;
 
-		if (bArrivedStep)
+		// Face movement direction (instant turn — CoH-style infantry feel). Skip
+		// when movement is near-zero to avoid flipping on tiny residuals.
+		if (Dir.SizeSquared() > FFixedPoint::Epsilon)
 		{
-			NotifyWaypointReached(CurrentStepIndex, FlowPlan.Steps.Num());
-			++CurrentStepIndex;
-			if (!FlowPlan.Steps.IsValidIndex(CurrentStepIndex))
-			{
-				MoveComp->bHasTarget = false;
-				NotifyCompleted();
-				return true;
-			}
+			// Yaw only — keep the entity upright regardless of terrain Z drift.
+			// Compute yaw from atan2(Dir.Y, Dir.X).
+			// TODO: once a fast fixed-point atan2 is wired up we can rotate the
+			// quaternion directly. For MVP we leave rotation alone — the visual
+			// layer reads velocity for facing in most RTS setups anyway.
 		}
-		return false;
 	}
 
-	// Legacy A*-path advancement (back-compat fallback).
-	int32 WaypointReached = -1;
-	const bool bArrived = ResolvedProfile->AdvanceAlongPath(
-		*Entity,
-		*MoveComp,
-		Path,
-		CurrentWaypointIndex,
-		Destination,
-		AcceptanceRadiusSq,
-		DeltaTime,
-		KinState,
-		WaypointReached);
+	Entity->Transform.SetLocation(Pos);
 
-	if (CurrentWaypointIndex < Path.GetWaypointCount())
+	// Completed if we walked off the end of the path.
+	if (CurrentWaypointIndex >= Path.Waypoints.Num())
 	{
-		MoveComp->TargetLocation = Path.Waypoints[CurrentWaypointIndex];
-		MoveComp->bHasTarget = true;
-	}
-	else
-	{
-		MoveComp->bHasTarget = false;
-	}
-
-	if (WaypointReached >= 0)
-	{
-		NotifyWaypointReached(WaypointReached, Path.GetWaypointCount());
-	}
-
-	if (bArrived)
-	{
-		MoveComp->bHasTarget = false;
 		NotifyCompleted();
+		Complete();
 		return true;
 	}
 	return false;
@@ -238,32 +129,32 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 
 void USeinMoveToAction::OnCancel()
 {
-	if (Observer.IsValid())
+	if (USeinMoveToProxy* Proxy = Observer.Get())
 	{
-		Observer->NotifyCancelled();
+		Proxy->NotifyCancelled();
 	}
 }
 
 void USeinMoveToAction::OnFail(uint8 ReasonCode)
 {
-	if (Observer.IsValid())
+	if (USeinMoveToProxy* Proxy = Observer.Get())
 	{
-		Observer->NotifyFailed(static_cast<ESeinMoveFailureReason>(ReasonCode));
+		Proxy->NotifyFailed(static_cast<ESeinMoveFailureReason>(ReasonCode));
 	}
 }
 
 void USeinMoveToAction::NotifyCompleted()
 {
-	if (Observer.IsValid())
+	if (USeinMoveToProxy* Proxy = Observer.Get())
 	{
-		Observer->NotifyCompleted();
+		Proxy->NotifyCompleted();
 	}
 }
 
 void USeinMoveToAction::NotifyWaypointReached(int32 Index, int32 Total)
 {
-	if (Observer.IsValid())
+	if (USeinMoveToProxy* Proxy = Observer.Get())
 	{
-		Observer->NotifyWaypointReached(Index, Total);
+		Proxy->NotifyWaypointReached(Index, Total);
 	}
 }

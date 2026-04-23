@@ -43,17 +43,29 @@ private:
 	{
 		// Handle signs
 		bool ResultNegative = (NumeratorHigh < 0) != (Divisor < 0);
-		
-		// Work with absolute values
-		uint64 AbsHigh = NumeratorHigh < 0 ? (NumeratorHigh == INT64_MIN ? (uint64)INT64_MAX + 1 : -NumeratorHigh) : NumeratorHigh;
-		uint64 AbsLow = NumeratorLow;
+
+		// Take the absolute value of the FULL 128-bit numerator. The 128-bit value
+		// is (NumeratorHigh << 64) | NumeratorLow interpreted as int128. Negation
+		// is a 128-bit two's complement: bitwise-NOT the unsigned bit pattern of
+		// both halves, then add 1 to the low half with carry into the high half.
+		// (The previous version mistakenly started AbsHigh at -NumeratorHigh and
+		// then re-negated, producing a wrong unsigned magnitude for negative
+		// numerators — every negative-numerator divide returned garbage, which
+		// is what made the X component of normalized direction vectors explode
+		// when the click was W/SW/NW of the unit.)
+		uint64 AbsHigh;
+		uint64 AbsLow;
 		if (NumeratorHigh < 0)
 		{
-			// Two's complement of 128-bit number
-			AbsLow = ~AbsLow + 1;
-			AbsHigh = ~AbsHigh + (AbsLow == 0 ? 1 : 0);
+			AbsLow  = (~static_cast<uint64>(NumeratorLow)) + 1;
+			AbsHigh = (~static_cast<uint64>(NumeratorHigh)) + (AbsLow == 0 ? 1 : 0);
 		}
-		
+		else
+		{
+			AbsHigh = static_cast<uint64>(NumeratorHigh);
+			AbsLow  = NumeratorLow;
+		}
+
 		uint64 AbsDivisor = Divisor < 0 ? (Divisor == INT64_MIN ? (uint64)INT64_MAX + 1 : -Divisor) : Divisor;
 		
 		// Binary long division (128-bit by 64-bit)

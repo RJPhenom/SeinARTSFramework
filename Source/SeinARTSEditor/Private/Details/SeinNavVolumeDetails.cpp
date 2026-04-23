@@ -1,7 +1,7 @@
 #include "Details/SeinNavVolumeDetails.h"
 
 #include "Volumes/SeinNavVolume.h"
-#include "Bake/SeinNavBaker.h"
+#include "SeinNavigationSubsystem.h"
 
 #include "DetailCategoryBuilder.h"
 #include "DetailLayoutBuilder.h"
@@ -77,14 +77,15 @@ FReply FSeinNavVolumeDetails::OnRebuildClicked()
 {
 	if (UWorld* World = CachedWorld.Get())
 	{
-		USeinNavBaker::BeginBake(World);
+		USeinNavigationSubsystem::BeginBake(World);
 	}
 	return FReply::Handled();
 }
 
 bool FSeinNavVolumeDetails::IsRebuildEnabled() const
 {
-	return CachedWorld.IsValid() && !USeinNavBaker::IsBaking();
+	UWorld* World = CachedWorld.Get();
+	return World && !USeinNavigationSubsystem::IsBaking(World);
 }
 
 #undef LOCTEXT_NAMESPACE

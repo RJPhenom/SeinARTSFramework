@@ -15,6 +15,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include "GameplayTagContainer.h"
 #include "Core/SeinEntityHandle.h"
 #include "Types/Vector.h"
 #include "Types/Quat.h"
@@ -42,12 +43,37 @@ class SEINARTSCOREENTITY_API USeinCommandBrokerResolver : public UObject
 
 public:
 	/**
+	 * Per-member tag resolution hook — "which ability does THIS member want to
+	 * run for THIS click context?" The default implementation delegates to the
+	 * member's own `FSeinAbilityData::ResolveCommandContext` (walks the unit's
+	 * DefaultCommands table, picks highest-priority match, falls back to
+	 * FallbackAbilityTag). Override this when you want faction / state /
+	 * relationship-based overrides without reimplementing the full dispatch
+	 * plan — e.g. "workers prefer Repair over Move when right-clicking a
+	 * damaged ally."
+	 *
+	 * Return an invalid tag to tell the broker this member cannot service
+	 * this context — the member will be silently skipped for this order.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "SeinARTS|Broker", meta = (DisplayName = "Resolve Member Ability"))
+	FGameplayTag ResolveMemberAbility(
+		USeinWorldSubsystem* World,
+		FSeinEntityHandle Member,
+		const FGameplayTagContainer& Context);
+	virtual FGameplayTag ResolveMemberAbility_Implementation(
+		USeinWorldSubsystem* World,
+		FSeinEntityHandle Member,
+		const FGameplayTagContainer& Context);
+
+	/**
 	 * Resolve a broker order into per-member dispatches.
 	 *
-	 * Implementations read the broker's cached CapabilityMap + Members list
-	 * (via `World->GetComponent<FSeinCommandBrokerData>(BrokerHandle)`) and
-	 * decide which member runs which ability. Members that don't appear in
-	 * the returned plan are silently skipped for this order.
+	 * Implementations iterate `Order.EffectiveMembers` (NOT the broker's full
+	 * Members list — EffectiveMembers is subset-aware, honoring the queued
+	 * order's TargetMembers field). For each effective member, call
+	 * `ResolveMemberAbility` to pick the ability, decide target + position,
+	 * and emit a dispatch tuple. Members that don't appear in the returned
+	 * plan are silently skipped for this order.
 	 */
 	UFUNCTION(BlueprintNativeEvent, Category = "SeinARTS|Broker", meta = (DisplayName = "Resolve Dispatch"))
 	FSeinBrokerDispatchPlan ResolveDispatch(

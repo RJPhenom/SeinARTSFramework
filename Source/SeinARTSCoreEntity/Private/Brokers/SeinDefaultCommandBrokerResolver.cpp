@@ -3,12 +3,17 @@
  * @file    SeinDefaultCommandBrokerResolver.cpp
  * @brief   Framework-default CommandBroker resolver (DESIGN §5).
  *
- *          Dispatch rule:
- *            - If ContextTag is valid and the member has an ability with that
- *              tag, dispatch it against the order's target.
- *            - Otherwise fall back to SeinARTS.Ability.Move toward the
- *              member's formation-assigned world position (non-combatants
- *              tagging along with an attack order, etc.).
+ *          Dispatch rule, per effective member:
+ *            1. Delegate to ResolveMemberAbility (virtual — reads the member's
+ *               own DefaultCommands / FallbackAbilityTag by default, or
+ *               whatever a subclass overrides it to do).
+ *            2. If the returned ability tag is valid and the member owns that
+ *               ability, dispatch it against the order's target entity/location.
+ *            3. Otherwise (invalid tag OR member doesn't have the ability): if
+ *               TagAlongAbility is set and the member owns it, dispatch it
+ *               toward the formation slot. Non-combatants tagging along with
+ *               an attack order, etc.
+ *            4. Else silently skip — member stays idle for this order.
  *
  *          Positions: uniform-spaced square-ish grid centered on the anchor,
  *          facing-rotated. Good-enough MVP; designer resolvers replace for
@@ -30,42 +35,53 @@ FSeinBrokerDispatchPlan USeinDefaultCommandBrokerResolver::ResolveDispatch_Imple
 	if (!World) return Plan;
 
 	const FSeinCommandBrokerData* Broker = World->GetComponent<FSeinCommandBrokerData>(BrokerHandle);
-	if (!Broker || Broker->Members.Num() == 0) return Plan;
+	if (!Broker) return Plan;
 
-	// Per-member positions around the order anchor (target location).
-	const TArray<FFixedVector> Positions = ResolvePositions_Implementation(
-		World, Broker->Members, Order.TargetLocation, FFixedQuaternion::Identity);
+	// Iterate the EFFECTIVE members — the subset this order targets (or the full
+	// member list if the order is unrestricted). Formation positions are computed
+	// over the effective set so subset orders layout around the target sensibly
+	// (a 1-member "go repair that wall" order places that member at the target,
+	// not at slot 3 of a 5-unit grid).
+	const TArray<FSeinEntityHandle>& Effective = Order.EffectiveMembers;
+	if (Effective.Num() == 0) return Plan;
 
-	Plan.MemberDispatches.Reserve(Broker->Members.Num());
+	const TArray<FFixedVector> Positions = ResolvePositions(
+		World, Effective, Order.TargetLocation, FFixedQuaternion::Identity);
 
-	for (int32 i = 0; i < Broker->Members.Num(); ++i)
+	Plan.MemberDispatches.Reserve(Effective.Num());
+
+	for (int32 i = 0; i < Effective.Num(); ++i)
 	{
-		const FSeinEntityHandle Member = Broker->Members[i];
+		const FSeinEntityHandle Member = Effective[i];
 		const FFixedVector MemberGoal = Positions.IsValidIndex(i) ? Positions[i] : Order.TargetLocation;
 
 		const FSeinAbilityData* AC = World->GetComponent<FSeinAbilityData>(Member);
 		if (!AC) continue;
 
-		// Primary: dispatch ContextTag if available on this member.
-		const bool bHasContextAbility = Order.ContextTag.IsValid() && AC->HasAbilityWithTag(Order.ContextTag);
-		if (bHasContextAbility)
+		// Layer 1: per-member tag resolution. Virtual, so subclass overrides
+		// apply here. Default impl reads FSeinAbilityData::ResolveCommandContext.
+		const FGameplayTag ResolvedTag = ResolveMemberAbility(World, Member, Order.Context);
+
+		// Primary: dispatch the resolved tag if the member owns that ability.
+		if (ResolvedTag.IsValid() && AC->HasAbilityWithTag(ResolvedTag))
 		{
 			FSeinBrokerMemberDispatch MD;
 			MD.Member = Member;
-			MD.AbilityTag = Order.ContextTag;
+			MD.AbilityTag = ResolvedTag;
 			MD.TargetEntity = Order.TargetEntity;
 			MD.TargetLocation = Order.TargetLocation;
 			Plan.MemberDispatches.Add(MD);
 			continue;
 		}
 
-		// Fallback: move toward the formation-assigned goal if this member
-		// has a Move ability. Non-combatant tag-along keeps formations cohesive.
-		if (AC->HasAbilityWithTag(SeinARTSTags::Ability_Move))
+		// Tag-along: resolver-level fallback for members whose own tables didn't
+		// map this context. Dispatches against the formation slot (cohesion),
+		// not the order target. Opt-in — empty TagAlongAbility disables.
+		if (TagAlongAbility.IsValid() && AC->HasAbilityWithTag(TagAlongAbility))
 		{
 			FSeinBrokerMemberDispatch MD;
 			MD.Member = Member;
-			MD.AbilityTag = SeinARTSTags::Ability_Move;
+			MD.AbilityTag = TagAlongAbility;
 			MD.TargetLocation = MemberGoal;
 			Plan.MemberDispatches.Add(MD);
 			continue;
@@ -88,9 +104,8 @@ TArray<FFixedVector> USeinDefaultCommandBrokerResolver::ResolvePositions_Impleme
 	Out.Reserve(N);
 
 	// Uniform square-ish grid: compute side length = ceil(sqrt(N)), then iterate
-	// row/column centered on anchor with fixed inter-unit spacing. Units = world
-	// units (cm under UE's convention); 150cm is a reasonable infantry spread.
-	const FFixedPoint Spacing = FFixedPoint::FromInt(150);
+	// row/column centered on anchor with InterUnitSpacing. Units = UE world cm.
+	const FFixedPoint Spacing = InterUnitSpacing;
 	int32 Side = 1;
 	while (Side * Side < N) ++Side;
 

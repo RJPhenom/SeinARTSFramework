@@ -132,7 +132,6 @@ void ASeinGameMode::HandleStartingNewPlayer_Implementation(APlayerController* Ne
 
 	// Assign to controller
 	SeinPC->SeinPlayerID = NewPlayerID;
-	SeinPC->DispatchMode = DefaultDispatchMode;
 
 	// Determine faction and team from the player start (if it's a SeinPlayerStart)
 	FSeinFactionID FactionForPlayer = DefaultFactionID;

@@ -89,9 +89,12 @@ struct SEINARTSCOREENTITY_API FSeinCommandBrokerData : public FSeinComponent
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Broker")
 	bool bIsExecuting = false;
 
-	/** ContextTag of the currently-executing order (empty if !bIsExecuting). */
+	/** Click context of the currently-executing order (empty if !bIsExecuting).
+	 *  Container, not a single tag — resolvers get the raw player intent and
+	 *  interpret per-member. UI / diagnostics can read e.g. a dominant tag
+	 *  out of this for display. */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Broker")
-	FGameplayTag CurrentOrderTag;
+	FGameplayTagContainer CurrentOrderContext;
 
 	/** FIFO queue of shift-chained orders. The front entry drives dispatch
 	 *  when `bIsExecuting` is false. */

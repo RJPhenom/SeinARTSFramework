@@ -9,6 +9,8 @@
 
 #include "SeinARTSEditorStyle.h"
 #include "Styling/SlateStyleRegistry.h"
+#include "Styling/AppStyle.h"
+#include "Styling/SlateStyle.h"
 #include "Interfaces/IPluginManager.h"
 #include "ImageUtils.h"
 
@@ -159,6 +161,22 @@ void FSeinARTSEditorStyle::Initialize()
 	);
 
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet);
+
+	// ==================== Custom Show Flag Icons ====================
+	// UE's FShowFlagMenuCommands::GetShowFlagIcon resolves icons as
+	// `FSlateIcon(FAppStyle::GetAppStyleSetName(), "ShowFlagsMenu.<FlagName>")`,
+	// so plugin-authored show flags need their icons registered INTO the app
+	// style set — not our own. Starship's app style is an FSlateStyleSet, so
+	// casting the const registry result back to mutable is safe.
+	if (const ISlateStyle* AppStyleBase = FSlateStyleRegistry::FindSlateStyle(FAppStyle::GetAppStyleSetName()))
+	{
+		FSlateStyleSet* AppStyle = const_cast<FSlateStyleSet*>(static_cast<const FSlateStyleSet*>(AppStyleBase));
+		// SVG brushes auto-tint to the theme's foreground colour — matches how UE's
+		// own Navigation / Collision / etc. show-flag icons render.
+		AppStyle->Set(
+			"ShowFlagsMenu.FogOfWar",
+			new FSlateVectorImageBrush(BrandKitDir / TEXT("SeinGrayIcon16.svg"), FVector2D(16.0f, 16.0f)));
+	}
 
 	// Load PNG files as UTexture2D for thumbnail renderers (FCanvas can't use Slate file brushes)
 	LoadAndCacheIcon(FName(TEXT("SeinEntityIcon92")),     TEXT("SeinEntityIcon92.png"));

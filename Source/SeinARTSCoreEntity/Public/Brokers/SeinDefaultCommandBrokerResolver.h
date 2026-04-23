@@ -15,6 +15,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
+#include "Types/FixedPoint.h"
 #include "Brokers/SeinCommandBrokerResolver.h"
 #include "SeinDefaultCommandBrokerResolver.generated.h"
 
@@ -24,6 +26,21 @@ class SEINARTSCOREENTITY_API USeinDefaultCommandBrokerResolver : public USeinCom
 	GENERATED_BODY()
 
 public:
+	/** World-space spacing between units in the uniform grid formation. Scale in
+	 *  UE world units (cm). 150 ≈ one infantryman's personal-space radius. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|Broker|Formation")
+	FFixedPoint InterUnitSpacing = FFixedPoint::FromInt(150);
+
+	/** Ability tag dispatched for members whose own DefaultCommands table doesn't
+	 *  resolve the click context (ResolveMemberAbility returned invalid). Targets
+	 *  the formation slot, not the order target — "tag along with the group" for
+	 *  non-combatants on an attack order, unmapped click types, etc. Set to an
+	 *  invalid tag to disable the tag-along behavior entirely (those members
+	 *  stay idle for the order). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|Broker|Dispatch",
+		meta = (Categories = "SeinARTS.Ability"))
+	FGameplayTag TagAlongAbility;
+
 	virtual FSeinBrokerDispatchPlan ResolveDispatch_Implementation(
 		USeinWorldSubsystem* World,
 		FSeinEntityHandle BrokerHandle,

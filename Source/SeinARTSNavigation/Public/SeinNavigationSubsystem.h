@@ -1,29 +1,25 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinNavigationSubsystem.h
- * @brief   World subsystem owning the runtime pathfinder + navigation grid.
+ * @brief   Thin world subsystem that owns the active USeinNavigation instance.
  *
- * SeinARTSNavigation is a sim-parallel module that cannot be referenced from
- * SeinARTSCoreEntity (which owns USeinWorldSubsystem). We therefore bootstrap
- * the pathfinder from a separate UWorldSubsystem that lives in this module.
+ *          Reads `USeinARTSCoreSettings::NavigationClass` on Initialize, new's
+ *          up that class, and re-exposes it to the rest of the engine (move-to
+ *          action, editor bake button, ability validation delegate).
  *
- * Usage:
- *   USeinNavigationSubsystem* Nav = World->GetSubsystem<USeinNavigationSubsystem>();
- *   USeinPathfinder* PF = Nav->GetPathfinder();
+ *          The subsystem does NOT know what a "grid" or "navmesh" is — it only
+ *          knows a USeinNavigation exists. All nav semantics live on the active
+ *          subclass.
  */
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "Types/FixedPoint.h"
-#include "Types/Vector.h"
 #include "SeinNavigationSubsystem.generated.h"
 
-class USeinPathfinder;
-class USeinNavigationGrid;
-class USeinNavigationGridAsset;
-class USeinFlowFieldPlanner;
+class USeinNavigation;
+class USeinNavigationAsset;
 
 UCLASS()
 class SEINARTSNAVIGATION_API USeinNavigationSubsystem : public UWorldSubsystem
@@ -35,37 +31,37 @@ public:
 	virtual void Deinitialize() override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
-	/** Get the runtime pathfinder. Never null after Initialize(). */
-	USeinPathfinder* GetPathfinder() const { return Pathfinder; }
+	/** The active navigation instance. Never null after Initialize. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation")
+	USeinNavigation* GetNavigation() const { return Navigation; }
 
-	/** Get the active navigation grid. Never null after Initialize(). */
-	USeinNavigationGrid* GetGrid() const { return Grid; }
+	/** Convenience accessor for BP and external callers that only have a
+	 *  UObject-with-world. Returns null if the world has no nav subsystem. */
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (WorldContext = "WorldContextObject"))
+	static USeinNavigation* GetNavigationForWorld(const UObject* WorldContextObject);
 
-	/**
-	 * Re-initialize the grid at a different size/origin. Called by level scripts or
-	 * editor tools to match a specific map. Default grid is a 256x256 empty field
-	 * centered on the origin with CellSize 1 — suitable for basic test maps.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation")
-	void RebuildGrid(int32 Width, int32 Height, float CellSize, FVector Origin);
+	/** Kick off a bake for every ASeinNavVolume in `World`. Returns true if
+	 *  the bake started. Routes to `Nav->BeginBake(World)`. */
+	static bool BeginBake(UWorld* World);
 
-	/** Apply a baked grid asset to the runtime grid (used by level-load path). */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation")
-	void ApplyGridAsset(USeinNavigationGridAsset* Asset);
+	/** Returns true if the active nav in `World` is currently baking. */
+	static bool IsBaking(UWorld* World);
 
-	/** Find the first baked grid asset referenced by any ASeinNavVolume in the world. */
-	USeinNavigationGridAsset* FindBakedGridAssetInWorld() const;
-
-	/** Flow-field planner (HPA* + Dijkstra + per-broker plan cache). */
-	USeinFlowFieldPlanner* GetFlowFieldPlanner() const { return FlowPlanner; }
+	/** Request bake cancellation for `World`'s active nav. */
+	static void RequestCancelBake(UWorld* World);
 
 private:
-	UPROPERTY()
-	TObjectPtr<USeinNavigationGrid> Grid;
 
-	UPROPERTY()
-	TObjectPtr<USeinPathfinder> Pathfinder;
+	/** The active nav for this world. Instantiated from
+	 *  `USeinARTSCoreSettings::NavigationClass` during Initialize. */
+	UPROPERTY(Transient)
+	TObjectPtr<USeinNavigation> Navigation;
 
-	UPROPERTY()
-	TObjectPtr<USeinFlowFieldPlanner> FlowPlanner;
+	/** Called in OnWorldBeginPlay — scans NavVolumes for a baked asset and
+	 *  hands it to the nav. Idempotent. */
+	void LoadBakedAssetIntoNav(UWorld& World);
+
+	/** Binds cross-module delegates on USeinWorldSubsystem so sim code can
+	 *  query nav reachability without importing nav headers. */
+	void BindSimDelegates(UWorld& World);
 };

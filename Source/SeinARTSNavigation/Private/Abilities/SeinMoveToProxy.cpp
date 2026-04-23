@@ -1,12 +1,16 @@
+/**
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinMoveToProxy.cpp
+ */
+
 #include "Abilities/SeinMoveToProxy.h"
 #include "Actions/SeinMoveToAction.h"
 #include "SeinNavigationSubsystem.h"
-#include "SeinPathfinder.h"
+
 #include "Abilities/SeinAbility.h"
 #include "Abilities/SeinLatentActionManager.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Engine/World.h"
-#include "Engine/Engine.h"
 
 USeinMoveToProxy* USeinMoveToProxy::SeinMoveTo(USeinAbility* Ability, FFixedVector Destination, FFixedPoint AcceptanceRadius)
 {
@@ -21,7 +25,7 @@ void USeinMoveToProxy::Activate()
 {
 	if (!CachedAbility)
 	{
-		BroadcastFailure(ESeinMoveFailureReason::NoMovementComponent);
+		BroadcastFailure(ESeinMoveFailureReason::EntityDestroyed);
 		return;
 	}
 
@@ -33,23 +37,15 @@ void USeinMoveToProxy::Activate()
 	}
 
 	USeinWorldSubsystem* SimWorld = World->GetSubsystem<USeinWorldSubsystem>();
-	USeinNavigationSubsystem* NavSubsystem = World->GetSubsystem<USeinNavigationSubsystem>();
-	if (!SimWorld || !NavSubsystem)
+	if (!SimWorld || !SimWorld->LatentActionManager)
 	{
-		BroadcastFailure(ESeinMoveFailureReason::NoPathfinder);
+		BroadcastFailure(ESeinMoveFailureReason::NoNavigation);
 		return;
 	}
 
-	USeinPathfinder* Pathfinder = NavSubsystem->GetPathfinder();
-	if (!Pathfinder)
+	if (!USeinNavigationSubsystem::GetNavigationForWorld(World))
 	{
-		BroadcastFailure(ESeinMoveFailureReason::NoPathfinder);
-		return;
-	}
-
-	if (!SimWorld->LatentActionManager)
-	{
-		BroadcastFailure(ESeinMoveFailureReason::NoPathfinder);
+		BroadcastFailure(ESeinMoveFailureReason::NoNavigation);
 		return;
 	}
 
@@ -57,7 +53,7 @@ void USeinMoveToProxy::Activate()
 	Action->OwningAbility = CachedAbility;
 	Action->OwnerEntity = CachedAbility->OwnerEntity;
 	Action->Observer = this;
-	Action->Initialize(CachedDestination, Pathfinder, CachedAcceptanceRadius);
+	Action->Initialize(CachedDestination, CachedAcceptanceRadius);
 
 	SimWorld->LatentActionManager->RegisterAction(Action);
 	RunningAction = Action;

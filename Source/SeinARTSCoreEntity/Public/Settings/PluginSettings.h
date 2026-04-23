@@ -13,8 +13,9 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "UObject/SoftObjectPath.h"
 #include "Data/SeinResourceTypes.h"
-#include "Types/ElevationMode.h"
+#include "Data/SeinVisionLayerDefinition.h"
 #include "PluginSettings.generated.h"
 
 class USeinCommandBrokerResolver;
@@ -91,69 +92,92 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Effects", meta = (ClampMin = "1", UIMin = "32", UIMax = "1024"))
 	int32 EffectCountWarningThreshold;
 
-	// Navigation Settings — consolidated from the old USeinARTSNavigationSettings.
+	// Navigation Settings (DESIGN §13)
 	// ====================================================================================================
 
 	/**
-	 * Default cell edge size in world units for ASeinNavVolume bakes (can be
-	 * overridden per-volume). Pick a value matching your smallest agent scale —
-	 * infantry-centric RTS: ~100 (1 m); massive-unit RTS: ~800 (8 m).
+	 * Active navigation implementation. The framework's MoveTo action, editor
+	 * bake button, and ability validation all route through this class — the
+	 * rest of the plugin is wholly decoupled from nav semantics.
+	 *
+	 * Ships with `USeinNavigationAStar` as the default: single-layer 2D grid +
+	 * synchronous A* + line-of-sight smoothing, suitable as a minimal reference
+	 * and for small-to-medium RTS maps. Game teams can subclass or replace
+	 * entirely without touching any framework code.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Navigation",
+		meta = (DisplayName = "Navigation Class", MetaClass = "/Script/SeinARTSNavigation.SeinNavigation"))
+	FSoftClassPath NavigationClass;
+
+	/**
+	 * Default cell edge size in world units for ASeinNavVolume bakes (per-
+	 * volume overrides supported). Pick a value matching your smallest agent
+	 * scale — infantry-centric RTS: ~100 (1 m); massive-unit RTS: ~800 (8 m).
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "800"))
 	float DefaultCellSize;
 
-	/**
-	 * Default elevation mode for new NavVolumes. `None` is the cheapest (4 bytes /
-	 * cell); HeightOnly adds a discrete tier; HeightSlope stores quantized slope.
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation")
-	ESeinElevationMode DefaultElevationMode;
+	// Vision / Fog of War Settings (DESIGN.md §12)
+	// ====================================================================================================
 
 	/**
-	 * Default Z separation in world units between stacked layers on multi-layer maps
-	 * (overpass + underpass). Per-volume override available. Two walkable-surface hits
-	 * closer than this on the same XY column collapse into one layer. Down-facing
-	 * hits (ceilings, bridge undersides) are always filtered out before this runs,
-	 * so the value only governs *walkable* surface stacking — small thresholds (e.g.
-	 * 10 cm) are safe for modern geometry; larger (e.g. 300 cm) helps if you don't
-	 * want thin carpet/lip meshes to spawn extra layers on top of a floor.
+	 * Vision grid cell edge in world units. Independent of nav cell size — the
+	 * vision grid is typically coarser than nav (default 400 cm = 4 m) because
+	 * fog of war doesn't need sub-meter granularity. Smaller values = crisper
+	 * fog edges + higher memory; larger = cheaper stamps + chunkier edges. Can
+	 * be overridden per-volume on `ASeinFogOfWarVolume`.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "1.0", UIMin = "10", UIMax = "1000"))
-	float DefaultLayerSeparation;
+	UPROPERTY(Config, EditAnywhere, Category = "Vision", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "1600"))
+	float VisionCellSize;
 
 	/**
-	 * Tile size (cells per tile, per axis) for the broadphase tile grid. 32 is a
-	 * good balance between summary granularity and skipping benefit. Used by
-	 * vision, spatial queries, and HPA* cluster partitioning.
+	 * Designer-configurable N-layers for the EVNNNNNN cell bitfield. Slot 0 →
+	 * bit 2 (N0), slot 5 → bit 7 (N5). Exactly 6 slots, framework-enforced.
+	 *
+	 * The framework-default "Normal" layer is NOT in this array — it's reserved
+	 * as the V bit (bit 1) and always present. These 6 slots are exclusively
+	 * for additional channels a game needs beyond generic visibility: Stealth,
+	 * Thermal, Radar, DetectorPerception, Acoustic, Infrared, etc. All 6 ship
+	 * disabled — opt in by naming + enabling the slots your game uses.
+	 *
+	 * Layer semantics (DESIGN §12):
+	 *  - Vision source perceives layer L iff its PerceptionLayers contains
+	 *    L's name. "Normal" is always accepted and maps to V.
+	 *  - Entity is emitted on layer L iff its EmissionLayers contains L's name.
+	 *  - Entity E is visible to observer O iff ∃ source S owned by O such that
+	 *    S's PerceptionLayers ∩ E's EmissionLayers ≠ ∅ AND E's cell has the
+	 *    corresponding bit set in O's VisionGroup bitfield (V for Normal,
+	 *    N(k-1) for designer slot k).
+	 *
+	 * Renaming a slot is safe. Reordering / inserting mid-array shifts every
+	 * higher-slot bit → breaks replays + saves. Only append or rename.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "8", ClampMax = "128"))
-	int32 NavTileSize;
+	UPROPERTY(Config, EditAnywhere, EditFixedSize, Category = "Vision",
+		meta = (TitleProperty = "LayerName"))
+	TArray<FSeinVisionLayerDefinition> VisionLayers;
 
 	/**
-	 * World-unit step between progress toast updates during an async bake.
-	 * Coarser = fewer game-thread hops but less responsive UI feedback.
-	 * Default 16 tiles per update.
+	 * Vision tick cadence in sim-ticks. `VisionTickInterval = N` means vision
+	 * recomputes every N-th sim tick (e.g. N=3 at 30 Hz sim → 10 Hz fog).
+	 * Higher values = cheaper (vision stamp math runs less often) but more
+	 * perceptual latency on units entering/exiting vision. Below ~15 Hz the
+	 * latency is imperceptible; above ~5 Hz it starts to feel stuttery. Must
+	 * be deterministic across clients, so this is plugin-scoped — never
+	 * per-machine.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation|Editor", meta = (ClampMin = "1"))
-	int32 BakeTilesPerProgressStep;
+	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+		meta = (ClampMin = "1", ClampMax = "60", UIMin = "1", UIMax = "10"))
+	int32 VisionTickInterval;
 
 	/**
-	 * Optional size bins for mixed-scale pathing. When empty, bake produces a
-	 * single clearance field and the pathfinder compares `Clearance >= AgentRadius`
-	 * for every entity. When populated, bake produces one clearance field per bin
-	 * and entities select via `FSeinFootprintData::AgentClass` index.
-	 * Values are agent radii in world units.
+	 * Render-side fog tick rate in Hz. Independent of `VisionTickInterval` —
+	 * this governs only the debug-viz + UI readback cadence, not sim state.
+	 * The sim-tick path is always deterministic; the render path runs on
+	 * wall-clock and can lag freely.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation|Agent Classes")
-	TArray<float> AgentRadiusClasses;
-
-	/**
-	 * Maximum walkable slope angle in degrees for auto-blocking from level
-	 * geometry. Hits on surfaces steeper than this are treated as blocked.
-	 * Default 45°.
-	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation|Geometry", meta = (ClampMin = "0.0", ClampMax = "89.0"))
-	float MaxWalkableSlopeDegrees;
+	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+		meta = (ClampMin = "1.0", ClampMax = "60.0", UIMin = "5.0", UIMax = "30.0"))
+	float FogRenderTickRate;
 
 	// Editor Settings — Content Browser Factory Visibility
 	// ====================================================================================================

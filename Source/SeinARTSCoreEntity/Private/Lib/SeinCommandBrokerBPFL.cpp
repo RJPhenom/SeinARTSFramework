@@ -6,8 +6,10 @@
 #include "Lib/SeinCommandBrokerBPFL.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinBrokerMembershipData.h"
+#include "Brokers/SeinBrokerTypes.h"
 #include "Input/SeinCommand.h"
 #include "Tags/SeinARTSGameplayTags.h"
+#include "StructUtils/InstancedStruct.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinBroker, Log, All);
@@ -58,12 +60,12 @@ FFixedVector USeinCommandBrokerBPFL::SeinGetBrokerCentroid(const UObject* WorldC
 	return Data ? Data->Centroid : FFixedVector();
 }
 
-FGameplayTag USeinCommandBrokerBPFL::SeinGetBrokerActiveOrderTag(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle)
+FGameplayTagContainer USeinCommandBrokerBPFL::SeinGetBrokerActiveOrderContext(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle)
 {
 	USeinWorldSubsystem* Sub = GetWorldSubsystem(WorldContextObject);
-	if (!Sub) return FGameplayTag();
+	if (!Sub) return FGameplayTagContainer();
 	const FSeinCommandBrokerData* Data = Sub->GetComponent<FSeinCommandBrokerData>(BrokerHandle);
-	return Data ? Data->CurrentOrderTag : FGameplayTag();
+	return Data ? Data->CurrentOrderContext : FGameplayTagContainer();
 }
 
 int32 USeinCommandBrokerBPFL::SeinGetBrokerQueueLength(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle)
@@ -78,7 +80,7 @@ void USeinCommandBrokerBPFL::SeinIssueBrokerOrder(
 	const UObject* WorldContextObject,
 	FSeinPlayerID PlayerID,
 	const TArray<FSeinEntityHandle>& Members,
-	FGameplayTag ContextTag,
+	const FGameplayTagContainer& CommandContext,
 	FSeinEntityHandle TargetEntity,
 	FFixedVector TargetLocation,
 	bool bQueueCommand,
@@ -96,15 +98,18 @@ void USeinCommandBrokerBPFL::SeinIssueBrokerOrder(
 		return;
 	}
 
+	FSeinBrokerOrderPayload Payload;
+	Payload.CommandContext = CommandContext;
+	Payload.FormationEnd = FormationEnd;
+
 	FSeinCommand Cmd;
 	Cmd.PlayerID = PlayerID;
 	Cmd.CommandType = SeinARTSTags::Command_Type_BrokerOrder;
-	Cmd.AbilityTag = ContextTag;
 	Cmd.TargetEntity = TargetEntity;
 	Cmd.TargetLocation = TargetLocation;
 	Cmd.EntityList = Members;
 	Cmd.bQueueCommand = bQueueCommand;
-	Cmd.AuxLocation = FormationEnd;
+	Cmd.Payload = FInstancedStruct::Make(Payload);
 
 	Sub->EnqueueCommand(Cmd);
 }

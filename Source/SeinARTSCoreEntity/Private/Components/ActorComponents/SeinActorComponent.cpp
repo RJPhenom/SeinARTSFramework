@@ -4,7 +4,6 @@
  */
 
 #include "Components/ActorComponents/SeinActorComponent.h"
-#include "Engine/DataTable.h"
 
 USeinActorComponent::USeinActorComponent()
 	: bOverrideFlagsResolved(0)
@@ -16,26 +15,6 @@ USeinActorComponent::USeinActorComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 	bWantsInitializeComponent = false;
-}
-
-FInstancedStruct USeinActorComponent::Resolve() const
-{
-	// Balance-sheet override takes precedence when valid.
-	if (TableOverride.IsValid())
-	{
-		const UScriptStruct* RowStruct = TableOverride.DataTable->GetRowStruct();
-		if (RowStruct)
-		{
-			if (const uint8* RowData = TableOverride.DataTable->FindRowUnchecked(TableOverride.RowName))
-			{
-				FInstancedStruct Row;
-				Row.InitializeAs(const_cast<UScriptStruct*>(RowStruct), RowData);
-				return Row;
-			}
-		}
-	}
-
-	return GetSimComponent();
 }
 
 void USeinActorComponent::ResolveOverrideFlags()

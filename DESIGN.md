@@ -997,9 +997,9 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
 
 - **Cell bitfield: u8 EVNNNNNN per cell per VisionGroup** (on the vision grid, not the nav grid).
   - Bit 0: **E** (Explored, sticky historical — once set, stays set).
-  - Bit 1: **V** (Visible, derived from "any layer refcount > 0").
-  - Bits 2-7: **N0-N5** (designer-configurable layer visibility bits).
-  - Width extensible to u16 (EV + 14 layer bits) via plugin settings if a game needs more than 6 layers.
+  - Bit 1: **V** (Normal-layer visibility — the framework-default / generic-sight channel. Has its own dedicated refcount; independent of the N bits. V=1 means "a source perceiving on the Normal layer covers this cell.").
+  - Bits 2-7: **N0-N5** (designer-configurable layer visibility bits — e.g. Stealth, Thermal, Radar. Each has its own dedicated refcount; independent of V and of each other. A cell can have V=1 without any N set, N(k)=1 without V, or any combination.).
+  - Total 7 layer channels (1 reserved V + 6 designer N). Width extensible to u16 (EV + 14 layer bits) via plugin settings if a game needs more than 6 designer layers.
 
 - **Plugin-settings-declared vision layers.** Designers register layers via:
   ```cpp
@@ -1015,8 +1015,8 @@ Per-player or per-team fog-of-war with multi-layer stealth/detection. Determinis
 - **Per-layer refcounts per vision-cell per VisionGroup — 4-bit packed nibbles.**
   - Refcount width: **u4 (4 bits) by default, packed 2 refcounts per byte**. Caps at 15 sources per cell per layer — virtually always sufficient for RTS density.
   - Plugin-settings override to u8 (255 cap) if a game genuinely hits the 15 limit.
-  - Refcount arrays sized to declared layer count only — 2-layer games don't pay for 6 layers.
-  - Bitfield bits V and N0..N5 are **derived** from refcount-layers crossing 0↔1 boundaries. Refcounts are authoritative; bitfield is a cached view for fast reads.
+  - Refcount arrays sized to active-slot count only. Slot 0 = Normal (always active, drives V). Slots 1..6 = designer layers (each opted in via plugin settings, drives one N bit). A game declaring two designer layers allocates 3 refcount arrays per VisionGroup per nav-layer; a game declaring zero allocates 1 (Normal only).
+  - Each bit in EVNNNNNN is **derived from its own layer's refcount** crossing 0↔1 boundaries: V latches off Normal's refcount, N(k) latches off designer slot k's refcount. Bits are independent. Refcounts are authoritative; bitfield is a cached view for fast reads.
 
 - **Batch-tick update — 4-tick default.** The vision system declares `TickInterval = 4` (runs every 4 sim ticks = 7.5 Hz at 30 Hz sim). Stamp deltas from moved sources are processed in batches, not per-tick. Responsive enough for RTS (below perceptual latency for non-critical UI); saves CPU substantially. Plugin-configurable per-game via `VisionTickInterval`.
 

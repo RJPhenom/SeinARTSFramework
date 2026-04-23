@@ -29,30 +29,35 @@ namespace SeinMath
 		check(X >= 0 && "Sqrt of negative number");
 		if (X <= 0) return FFixedPoint::Zero;
 		if (X == FFixedPoint::One) return FFixedPoint::One;
-		
-		// Initial guess using bit manipulation (find highest bit)
+
+		// Initial guess using bit manipulation (find highest bit of the raw 32.32
+		// value, then take 2^(HighBit/2) as a starting point near sqrt(X)).
 		int64 Val = static_cast<int64>(X);
 		int32 HighBit = 63;
 		while (HighBit >= 0 && ((Val >> HighBit) & 1) == 0)
 		{
 			HighBit--;
 		}
-		
-		// Initial guess: 2^(highBit/2)
-		int64 Guess = 1LL << ((HighBit + 32) / 2);
-		
-		// Newton-Raphson: x_new = (x + n/x) / 2
-		// Iterate 4 times for convergence (sufficient for 32.32 format)
+		FFixedPoint Guess(1LL << ((HighBit + 32) / 2));
+
+		// Newton-Raphson: x_new = (x + N/x) / 2.
+		// Route the divide through FFixedPoint::operator/, which uses the
+		// deterministic 128-bit divide. The previous implementation used
+		// `(Val << 32) / Guess` in raw int64 — that overflows for any X >= 0.5
+		// (Val << 32 needs 96+ bits for distance-squared values), producing
+		// garbage Quotient and a useless converged "guess" that's nowhere near
+		// sqrt(X). For values in the 25..1e9 range (typical squared distances
+		// in cm world units) the function returned values 100x to 10000x off.
+		// Bit-shift halving still works on the FFixedPoint raw int64 because
+		// halving the raw representation halves the represented value.
 		for (int32 i = 0; i < 4; ++i)
 		{
-			if (Guess == 0) break;
-			// Division needs to account for fixed-point format
-			// n/x in fixed-point: (n << 32) / x
-			int64 Quotient = (Val << 32) / Guess;
-			Guess = (Guess + Quotient) >> 1;
+			if (static_cast<int64>(Guess) == 0) break;
+			const FFixedPoint Quotient = X / Guess;
+			Guess = FFixedPoint((static_cast<int64>(Guess) + static_cast<int64>(Quotient)) >> 1);
 		}
-		
-		return FFixedPoint(Guess);
+
+		return Guess;
 	}
 	
 	// Inverse square root (1/sqrt(x)) - useful for fast normalization

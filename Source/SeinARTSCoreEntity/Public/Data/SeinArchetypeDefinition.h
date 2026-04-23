@@ -13,7 +13,6 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Engine/DataTable.h"
 #include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
 #include "Data/SeinResourceTypes.h"
@@ -21,27 +20,6 @@
 #include "SeinArchetypeDefinition.generated.h"
 
 class USeinEffect;
-
-/**
- * Reference to a row in a DataTable that holds component default data.
- * Used by USeinActorComponent::TableOverride to A/B-tune component values
- * across many archetypes via a spreadsheet without leaving the per-component UX.
- */
-USTRUCT(BlueprintType, meta = (SeinDeterministic))
-struct SEINARTSCOREENTITY_API FSeinComponentTableRef
-{
-	GENERATED_BODY()
-
-	/** The DataTable containing the component data (row struct must inherit FTableRowBase). */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Component")
-	TObjectPtr<UDataTable> DataTable;
-
-	/** Row name within the DataTable (e.g., "Rifleman", "Scout"). */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Component")
-	FName RowName;
-
-	bool IsValid() const { return DataTable != nullptr && RowName != NAME_None; }
-};
 
 /**
  * Component that defines an entity's archetype data.

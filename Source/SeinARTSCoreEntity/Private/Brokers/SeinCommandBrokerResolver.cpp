@@ -6,6 +6,19 @@
  */
 
 #include "Brokers/SeinCommandBrokerResolver.h"
+#include "Components/SeinAbilityData.h"
+#include "Simulation/SeinWorldSubsystem.h"
+
+FGameplayTag USeinCommandBrokerResolver::ResolveMemberAbility_Implementation(
+	USeinWorldSubsystem* World,
+	FSeinEntityHandle Member,
+	const FGameplayTagContainer& Context)
+{
+	if (!World) return FGameplayTag();
+	const FSeinAbilityData* AC = World->GetComponent<FSeinAbilityData>(Member);
+	if (!AC) return FGameplayTag();
+	return AC->ResolveCommandContext(Context);
+}
 
 FSeinBrokerDispatchPlan USeinCommandBrokerResolver::ResolveDispatch_Implementation(
 	USeinWorldSubsystem* /*World*/,

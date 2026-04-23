@@ -102,6 +102,16 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
+	/**
+	 * GC reference walker. Component payloads live as raw bytes inside
+	 * FSeinGenericComponentStorage, so the collector cannot see TObjectPtr /
+	 * reflected UObject refs nested in those structs by default. Without this,
+	 * ability instances (FSeinAbilityData), broker resolvers (FSeinCommandBrokerData),
+	 * and any other designer-authored component holding a UObject ref get
+	 * garbage-collected mid-play, leaving dangling pointers that crash on tick.
+	 */
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
+
 	// ========== Simulation Control ==========
 
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Simulation")

@@ -121,6 +121,20 @@ void USeinWorldSubsystem::Deinitialize()
 	UE_LOG(LogSeinSim, Log, TEXT("SeinWorldSubsystem deinitialized"));
 }
 
+void USeinWorldSubsystem::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InThis, Collector);
+
+	USeinWorldSubsystem* Self = CastChecked<USeinWorldSubsystem>(InThis);
+	for (auto& Pair : Self->ComponentStorages)
+	{
+		if (ISeinComponentStorage* Storage = Pair.Value)
+		{
+			Storage->CollectReferences(Collector, Self);
+		}
+	}
+}
+
 // ==================== Simulation Control ====================
 
 void USeinWorldSubsystem::StartSimulation()
@@ -449,15 +463,27 @@ void USeinWorldSubsystem::ProcessCommands()
 				continue;
 			}
 
+			// Extract the typed BrokerOrder payload — smart-resolution context +
+			// drag-order endpoint. Missing payload is a malformed command.
+			const FSeinBrokerOrderPayload* Payload = Cmd.Payload.GetPtr<FSeinBrokerOrderPayload>();
+			if (!Payload)
+			{
+				RejectCommand(SeinARTSTags::Command_Reject_InvalidTarget);
+				continue;
+			}
+
 			FSeinBrokerQueuedOrder Order;
-			Order.ContextTag = Cmd.AbilityTag;
+			Order.Context = Payload->CommandContext;
 			Order.TargetEntity = Cmd.TargetEntity;
 			Order.TargetLocation = Cmd.TargetLocation;
-			Order.FormationEnd = Cmd.AuxLocation;
+			Order.FormationEnd = Payload->FormationEnd;
 
 			// If shift-queued and every member already shares a broker, append to
-			// that broker's queue; else evict + spawn a fresh broker (which inline-
-			// dispatches the first order).
+			// that broker's queue. If the shift-click targets a strict subset of
+			// the broker's live member list, mark the appended order as
+			// subset-targeted so only those members dispatch for it — non-target
+			// members keep doing whatever they were doing (DESIGN §5 queue
+			// semantics, shift-click-on-subset UX).
 			FSeinEntityHandle ExistingBroker;
 			if (Cmd.bQueueCommand)
 			{
@@ -467,11 +493,18 @@ void USeinWorldSubsystem::ProcessCommands()
 			{
 				if (FSeinCommandBrokerData* Broker = GetComponent<FSeinCommandBrokerData>(ExistingBroker))
 				{
+					// Strict subset? Order is TargetMembers-scoped. Full match? All-members.
+					if (Filtered.Num() < Broker->Members.Num())
+					{
+						Order.TargetMembers = Filtered;
+					}
 					Broker->OrderQueue.Add(Order);
 				}
 			}
 			else
 			{
+				// Non-shared (or non-queued) — create/reuse broker for the filtered
+				// set. Order applies to all members of the new broker by default.
 				CreateBrokerForMembers(Filtered, Cmd.PlayerID, Order);
 			}
 			continue;
@@ -580,17 +613,50 @@ void USeinWorldSubsystem::ProcessCommands()
 						}
 					}
 
+					const TArray<FSeinEntityHandle> SingleMember = { Cmd.EntityHandle };
+
+					// Move-prefix + follow-up targeted at just this member. Both
+					// orders carry the one-broker-per-member invariant and the
+					// subset-targeting machinery so non-target members (if this
+					// folds into an existing multi-member broker) stay untouched.
 					FSeinBrokerQueuedOrder MovePrefix;
-					MovePrefix.ContextTag = SeinARTSTags::Ability_Move;
+					MovePrefix.Context.AddTag(SeinARTSTags::Ability_Move);
 					MovePrefix.TargetLocation = MoveDest;
+					MovePrefix.TargetMembers = SingleMember;
 					MovePrefix.bIsInternalPrefix = true;
 
 					FSeinBrokerQueuedOrder Followup;
-					Followup.ContextTag = Cmd.AbilityTag;
+					Followup.Context.AddTag(Cmd.AbilityTag);
 					Followup.TargetEntity = Cmd.TargetEntity;
 					Followup.TargetLocation = Cmd.TargetLocation;
+					Followup.TargetMembers = SingleMember;
+					Followup.bIsInternalPrefix = true;
 
-					TArray<FSeinEntityHandle> SingleMember = { Cmd.EntityHandle };
+					// Prefer the member's existing broker if it has one — inject the
+					// [Move, Follow-up] pair right after the currently-executing
+					// order. One-broker-per-member preserved, shift-queue on the
+					// existing broker preserved, non-target members unaffected.
+					FSeinEntityHandle ExistingBroker;
+					if (const FSeinBrokerMembershipData* Memb = GetComponent<FSeinBrokerMembershipData>(Cmd.EntityHandle))
+					{
+						ExistingBroker = Memb->CurrentBrokerHandle;
+					}
+					if (ExistingBroker.IsValid() && EntityPool.IsValid(ExistingBroker))
+					{
+						if (FSeinCommandBrokerData* Broker = GetComponent<FSeinCommandBrokerData>(ExistingBroker))
+						{
+							// Insert position: right after current order if executing
+							// (index 1), else at front (index 0) so it runs next tick.
+							const int32 InsertAt = Broker->bIsExecuting ? 1 : 0;
+							Broker->OrderQueue.Insert(Followup, FMath::Min(InsertAt, Broker->OrderQueue.Num()));
+							Broker->OrderQueue.Insert(MovePrefix, FMath::Min(InsertAt, Broker->OrderQueue.Num()));
+							continue;
+						}
+					}
+
+					// No existing broker — spawn one for this single member with the
+					// Move+Follow-up queued. CreateBrokerForMembers takes a first
+					// order and pre-queues it; append follow-up after.
 					FSeinEntityHandle BrokerHandle = CreateBrokerForMembers(SingleMember, Cmd.PlayerID, MovePrefix);
 					if (BrokerHandle.IsValid())
 					{
@@ -662,18 +728,32 @@ void USeinWorldSubsystem::ProcessCommands()
 			// 6. Deduct cost (cleared on cancel-with-refund via USeinAbility::DeactivateAbility)
 			USeinResourceBPFL::SeinDeduct(this, Cmd.PlayerID, Ability->ResourceCost);
 
-			// 7. Cancel conflicting abilities. Self-cancelling reissue when an
-			// ability lists one of its own OwnedTags here.
+			// 7a. Cancel OTHER abilities whose OwnedTags intersect this ability's
+			// CancelAbilitiesWithTag. Explicitly skip self — matching self here
+			// would cancel-then-reactivate on every duplicate command (e.g. a
+			// broker dispatching the same move twice in one command frame), and
+			// nothing actually moves. Self-cancelling-reissue is handled below.
 			if (!Ability->CancelAbilitiesWithTag.IsEmpty())
 			{
 				for (USeinAbility* Other : AbilityComp->AbilityInstances)
 				{
-					if (Other && Other->bIsActive &&
+					if (Other && Other != Ability && Other->bIsActive &&
 						Other->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
 					{
 						Other->CancelAbility();
 					}
 				}
+			}
+
+			// 7b. Self-cancelling reissue: if this ability is already running and
+			// lists any of its own OwnedTags in CancelAbilitiesWithTag, the
+			// designer is asking "re-issuing me should kill the previous run
+			// before the new one starts" — so cancel the prior activation
+			// before ActivateAbility spins up a fresh one.
+			if (Ability->bIsActive &&
+				Ability->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
+			{
+				Ability->CancelAbility();
 			}
 
 			// 8. Stamp the deducted snapshot and commit activation.
@@ -909,7 +989,7 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 	for (const USeinActorComponent* AC : SimACs)
 	{
 		if (!AC) continue;
-		const FInstancedStruct Payload = AC->Resolve();
+		const FInstancedStruct Payload = AC->GetSimComponent();
 		if (!Payload.IsValid()) continue;
 
 		UScriptStruct* ComponentType = const_cast<UScriptStruct*>(Payload.GetScriptStruct());
@@ -2501,6 +2581,20 @@ void USeinWorldSubsystem::TickAIControllers(FFixedPoint DeltaTime)
 	// Snapshot the list so Tick callbacks that register/unregister don't crash
 	// the iteration; pending removals take effect next tick.
 	TArray<TObjectPtr<USeinAIController>> Snapshot = AIControllers;
+
+	// DETERMINISM: sort by OwnedPlayerID before ticking. Registration order depends
+	// on actor spawn order + BeginPlay sequencing, which can differ across clients.
+	// PlayerIDs are globally agreed (registered via RegisterPlayer); sorting by
+	// PlayerID.Value pins tick order network-wide. If two controllers somehow share
+	// a PlayerID, we fall back to pointer-index stability — indeterminate but rare
+	// (would be a misconfiguration; log as warning).
+	Snapshot.StableSort([](const TObjectPtr<USeinAIController>& A, const TObjectPtr<USeinAIController>& B)
+	{
+		if (!A) return false;
+		if (!B) return true;
+		return A->OwnedPlayerID < B->OwnedPlayerID;
+	});
+
 	for (const TObjectPtr<USeinAIController>& Ctrl : Snapshot)
 	{
 		if (!Ctrl) continue;

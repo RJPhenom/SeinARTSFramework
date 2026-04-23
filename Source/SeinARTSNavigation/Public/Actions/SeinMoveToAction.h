@@ -1,75 +1,70 @@
+/**
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinMoveToAction.h
+ * @brief   Latent action that moves a sim entity along a USeinNavigation-
+ *          produced path. Implementation-agnostic: the action never touches
+ *          grids, pathfinders, or A* internals — it only consumes FSeinPath.
+ *
+ *          Kinematics are read from FSeinMovementData (MoveSpeed / Acceleration
+ *          / TurnRate). Steering is minimal: seek toward next waypoint with an
+ *          arrive radius at the final waypoint.
+ */
+
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Abilities/SeinLatentAction.h"
 #include "SeinPathTypes.h"
-#include "Movement/SeinMovementKinematicState.h"
-#include "Grid/SeinFlowFieldPlan.h"
+#include "Types/FixedPoint.h"
+#include "Types/Vector.h"
 #include "SeinMoveToAction.generated.h"
 
-class USeinPathfinder;
-class USeinMovementProfile;
 class USeinMoveToProxy;
 
 /** Reasons a move can fail. Passed via USeinLatentAction::Fail() reason code. */
 UENUM(BlueprintType)
 enum class ESeinMoveFailureReason : uint8
 {
-	None                 UMETA(DisplayName = "None"),
-	PathNotFound         UMETA(DisplayName = "Path Not Found"),
-	EntityDestroyed      UMETA(DisplayName = "Entity Destroyed"),
-	NoMovementComponent  UMETA(DisplayName = "No Movement Component"),
-	NoPathfinder         UMETA(DisplayName = "No Pathfinder"),
-	Cancelled            UMETA(DisplayName = "Cancelled")
+	None                UMETA(DisplayName = "None"),
+	PathNotFound        UMETA(DisplayName = "Path Not Found"),
+	EntityDestroyed     UMETA(DisplayName = "Entity Destroyed"),
+	NoMovementComponent UMETA(DisplayName = "No Movement Component"),
+	NoNavigation        UMETA(DisplayName = "No Navigation"),
+	Cancelled           UMETA(DisplayName = "Cancelled")
 };
 
-/**
- * Latent action that moves an entity along a pathfound route.
- * Delegates path construction + path advancement to a USeinMovementProfile
- * (Infantry / Tracked / Wheeled). Reports completion/failure/waypoint/cancel
- * events to an optional observer (USeinMoveToProxy).
- */
 UCLASS()
 class SEINARTSNAVIGATION_API USeinMoveToAction : public USeinLatentAction
 {
 	GENERATED_BODY()
 
 public:
-	void Initialize(const FFixedVector& InDestination, USeinPathfinder* InPathfinder, FFixedPoint InAcceptanceRadius = FFixedPoint::One);
+
+	void Initialize(const FFixedVector& InDestination, FFixedPoint InAcceptanceRadius = FFixedPoint::One);
 
 	virtual bool TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World) override;
 	virtual void OnCancel() override;
 	virtual void OnFail(uint8 ReasonCode) override;
 
-	/** Observer proxy (optional) — receives Completed/Failed/Waypoint/Cancelled callbacks. */
+	/** Optional observer — receives Completed/Failed/Waypoint/Cancelled events. */
 	TWeakObjectPtr<USeinMoveToProxy> Observer;
 
 	UPROPERTY()
 	FSeinPath Path;
 
-	/** Flow-field plan for the move. Built on first tick; cached by PlanID. */
-	UPROPERTY()
-	FSeinFlowFieldPlan FlowPlan;
+	bool IsPathValid() const { return Path.bIsValid; }
 
-	bool IsPathValid() const { return Path.bIsValid || FlowPlan.bValid; }
+	/** Index of the waypoint the entity is currently heading toward. Public so
+	 *  debug rendering can draw "entity → current waypoint → remaining path". */
+	int32 GetCurrentWaypointIndex() const { return CurrentWaypointIndex; }
 
 private:
+
 	FFixedVector Destination;
 	FFixedPoint AcceptanceRadiusSq;
 
-	/** Legacy A*-path waypoint cursor (only used when FlowPlan.bValid == false). */
 	int32 CurrentWaypointIndex = 0;
-
-	/** Flow-plan step cursor (the step the entity is currently traversing). */
-	int32 CurrentStepIndex = 0;
-
-	UPROPERTY()
-	TObjectPtr<USeinPathfinder> Pathfinder;
-
-	UPROPERTY()
-	TObjectPtr<USeinMovementProfile> ResolvedProfile;
-
-	FSeinMovementKinematicState KinState;
+	bool bPathResolved = false;
 
 	void NotifyCompleted();
 	void NotifyWaypointReached(int32 Index, int32 Total);

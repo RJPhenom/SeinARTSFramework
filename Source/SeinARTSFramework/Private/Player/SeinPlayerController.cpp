@@ -12,9 +12,11 @@
 #include "Actor/SeinActorBridge.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Components/SeinAbilityData.h"
+#include "Brokers/SeinBrokerTypes.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Input/SeinCommand.h"
 #include "Tags/SeinARTSGameplayTags.h"
+#include "StructUtils/InstancedStruct.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/World.h"
@@ -904,9 +906,7 @@ FGameplayTagContainer ASeinPlayerController::BuildCommandContext_Implementation(
 
 void ASeinPlayerController::IssueSmartCommand(const FVector& WorldLocation, ASeinActor* TargetActor)
 {
-	// Thin delegate to the Ex form — no queue, no formation endpoint. Both
-	// paths now funnel through IssueSmartCommandEx's branch on DispatchMode
-	// so broker-dispatch vs per-entity logic lives in one place.
+	// Thin delegate to the Ex form — no queue, no formation endpoint.
 	IssueSmartCommandEx(WorldLocation, TargetActor, /*bQueue=*/false, FVector::ZeroVector);
 }
 
@@ -953,86 +953,57 @@ void ASeinPlayerController::IssueSmartCommandEx(
 		? FFixedVector()
 		: FFixedVector::FromVector(FormationEnd);
 
-	// Command resolution now lives on FSeinAbilityData (DESIGN §7 Q9).
-	auto ResolveForActorEx = [&](ASeinActor* Actor) -> const FSeinAbilityData*
-	{
-		if (!Actor || !Actor->HasValidEntity()) return nullptr;
-		return Subsystem->GetComponent<FSeinAbilityData>(Actor->GetEntityHandle());
-	};
-
-	// LeaderDriven dispatch — one BrokerOrder carries the full selection per
-	// DESIGN §5. Txn log gets one entry per click regardless of selection size;
-	// the default resolver fans out to per-member ActivateAbility calls, with
-	// Move fallback for members that can't service the leader's ContextTag.
-	if (DispatchMode == ESeinCommandDispatchMode::LeaderDriven && CommandTargets.Num() >= 2)
-	{
-		FGameplayTag LeaderAbilityTag;
-		if (const FSeinAbilityData* LeaderAbilities = ResolveForActorEx(CommandTargets[0]))
-		{
-			LeaderAbilityTag = LeaderAbilities->ResolveCommandContext(Context);
-		}
-		if (LeaderAbilityTag.IsValid())
-		{
-			TArray<FSeinEntityHandle> MemberHandles;
-			MemberHandles.Reserve(CommandTargets.Num());
-			for (ASeinActor* Actor : CommandTargets)
-			{
-				if (Actor && Actor->HasValidEntity())
-				{
-					MemberHandles.Add(Actor->GetEntityHandle());
-				}
-			}
-
-			FSeinCommand BrokerCmd;
-			BrokerCmd.PlayerID = SeinPlayerID;
-			BrokerCmd.CommandType = SeinARTSTags::Command_Type_BrokerOrder;
-			BrokerCmd.AbilityTag = LeaderAbilityTag;
-			BrokerCmd.TargetEntity = TargetEntityHandle;
-			BrokerCmd.TargetLocation = FixedLocation;
-			BrokerCmd.EntityList = MemberHandles;
-			BrokerCmd.bQueueCommand = bQueue;
-			BrokerCmd.AuxLocation = FixedFormationEnd;
-			BrokerCmd.Tick = Subsystem->GetCurrentTick();
-			Subsystem->EnqueueCommand(BrokerCmd);
-			OnCommandIssued.Broadcast(LeaderAbilityTag, WorldLocation);
-			return;
-		}
-	}
-
-	// PerEntity dispatch (or single-unit / focused): one ActivateAbility command
-	// per member so each entity resolves its own DefaultCommands. Preserves the
-	// heterogeneous-mix behavior (medics heal, infantry attack on the same click).
-	FGameplayTag LastIssuedTag;
+	// ONE unified path (DESIGN §5 line 325 "Wraps even size-1 selections"). The PC
+	// emits a single BrokerOrder carrying the raw click context; the broker
+	// spawns / reuses + its resolver does per-member smart-resolution sim-side.
+	// No more leader/per-entity/single-unit branches — that drift is resolved.
+	//
+	// Heterogeneous selections keep working because the default resolver's
+	// ResolveMemberAbility hook delegates to each member's own DefaultCommands
+	// table (sim-side equivalent of the old per-entity loop).
+	TArray<FSeinEntityHandle> MemberHandles;
+	MemberHandles.Reserve(CommandTargets.Num());
 	for (ASeinActor* Actor : CommandTargets)
 	{
-		if (!Actor || !Actor->HasValidEntity())
+		if (Actor && Actor->HasValidEntity())
 		{
-			continue;
+			MemberHandles.Add(Actor->GetEntityHandle());
 		}
-
-		const FSeinAbilityData* AbilityData = ResolveForActorEx(Actor);
-		if (!AbilityData) continue;
-		const FGameplayTag AbilityTag = AbilityData->ResolveCommandContext(Context);
-		if (!AbilityTag.IsValid()) continue;
-
-		FSeinCommand Cmd = FSeinCommand::MakeAbilityCommandEx(
-			SeinPlayerID,
-			Actor->GetEntityHandle(),
-			AbilityTag,
-			TargetEntityHandle,
-			FixedLocation,
-			bQueue,
-			FixedFormationEnd
-		);
-		Cmd.Tick = Subsystem->GetCurrentTick();
-
-		Subsystem->EnqueueCommand(Cmd);
-		LastIssuedTag = AbilityTag;
+	}
+	if (MemberHandles.Num() == 0)
+	{
+		return;
 	}
 
-	if (LastIssuedTag.IsValid())
+	FSeinBrokerOrderPayload Payload;
+	Payload.CommandContext = Context;
+	Payload.FormationEnd = FixedFormationEnd;
+
+	FSeinCommand BrokerCmd;
+	BrokerCmd.PlayerID = SeinPlayerID;
+	BrokerCmd.CommandType = SeinARTSTags::Command_Type_BrokerOrder;
+	BrokerCmd.TargetEntity = TargetEntityHandle;
+	BrokerCmd.TargetLocation = FixedLocation;
+	BrokerCmd.EntityList = MemberHandles;
+	BrokerCmd.bQueueCommand = bQueue;
+	BrokerCmd.Payload = FInstancedStruct::Make(Payload);
+	BrokerCmd.Tick = Subsystem->GetCurrentTick();
+
+	Subsystem->EnqueueCommand(BrokerCmd);
+
+	// OnCommandIssued broadcasts a representative ability tag for VFX/audio —
+	// the sim-side resolver picks the actual per-member ability, but UI wants
+	// something immediate. Use the leader's resolved tag as a preview hint.
+	// Non-critical; drives a render-side ping effect only.
+	FGameplayTag PreviewTag;
+	if (const FSeinAbilityData* LeaderAbilities =
+		Subsystem->GetComponent<FSeinAbilityData>(MemberHandles[0]))
 	{
-		OnCommandIssued.Broadcast(LastIssuedTag, WorldLocation);
+		PreviewTag = LeaderAbilities->ResolveCommandContext(Context);
+	}
+	if (PreviewTag.IsValid())
+	{
+		OnCommandIssued.Broadcast(PreviewTag, WorldLocation);
 	}
 }
 

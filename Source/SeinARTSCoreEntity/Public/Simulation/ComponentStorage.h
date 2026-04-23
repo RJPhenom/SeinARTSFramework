@@ -13,6 +13,7 @@
 #include "Containers/BitArray.h"
 #include "Core/SeinEntityHandle.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectGlobals.h"
 
 /**
  * Abstract interface for entity-handle-keyed component storage.
@@ -36,6 +37,17 @@ public:
 
 	/** Grow internal arrays to accommodate a larger entity pool. */
 	virtual void Grow(int32 NewCapacity) = 0;
+
+	/**
+	 * Walk every alive slot's payload and report its reflected UObject references
+	 * to the GC. Without this, any TObjectPtr / UPROPERTY-tagged object ref stored
+	 * inside a component struct is invisible to the collector (the backing buffer
+	 * is a raw byte array) and the referenced UObject gets collected mid-play,
+	 * leaving dangling pointers in ActiveAbility / AbilityInstances / Resolver / etc.
+	 *
+	 * Owner is the UObject the subsystem passes through for diagnostic attribution.
+	 */
+	virtual void CollectReferences(FReferenceCollector& Collector, UObject* Owner) = 0;
 };
 
 /**
@@ -206,6 +218,15 @@ public:
 		}
 		HasComponentBits.Init(false, HasComponentBits.Num());
 		ComponentCount = 0;
+	}
+
+	virtual void CollectReferences(FReferenceCollector& Collector, UObject* Owner) override
+	{
+		if (!StructType) return;
+		for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
+		{
+			Collector.AddPropertyReferencesWithStructARO(StructType, GetSlotPtr(It.GetIndex()), Owner);
+		}
 	}
 
 	UScriptStruct* GetStructType() const { return StructType; }

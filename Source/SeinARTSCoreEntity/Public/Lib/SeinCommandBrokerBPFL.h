@@ -51,11 +51,11 @@ public:
 		meta = (WorldContext = "WorldContextObject", DisplayName = "Get Broker Centroid"))
 	static FFixedVector SeinGetBrokerCentroid(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle);
 
-	/** Returns the ContextTag of the currently-dispatched order. Empty if the broker
-	 *  is idle or invalid. */
+	/** Returns the click context of the currently-dispatched order. Empty container
+	 *  if the broker is idle or invalid. */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Broker",
-		meta = (WorldContext = "WorldContextObject", DisplayName = "Get Broker Active Order Tag"))
-	static FGameplayTag SeinGetBrokerActiveOrderTag(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle);
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Get Broker Active Order Context"))
+	static FGameplayTagContainer SeinGetBrokerActiveOrderContext(const UObject* WorldContextObject, FSeinEntityHandle BrokerHandle);
 
 	/** Number of orders queued (including the active one). */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Broker",
@@ -70,21 +70,25 @@ public:
 	 *  from their prior brokers). All txn logging goes through the command buffer:
 	 *  this helper builds the command, invokes `World->EnqueueCommand`, and returns.
 	 *  If `bQueueCommand` is true and the members already share a broker, the order
-	 *  is appended to that broker's queue without spawning a new one.
+	 *  is appended to that broker's queue without spawning a new one — the new
+	 *  order is subset-targeted at `Members` if `Members` is a strict subset of
+	 *  the shared broker's live member list.
 	 *
-	 *  @param ContextTag   — which kind of order (Ability.Move / Attack / …). Resolver
-	 *                        uses this to decide per-member dispatch.
-	 *  @param TargetEntity — optional target entity for the order.
+	 *  @param CommandContext — raw click context (RightClick + Target.* + designer
+	 *                          tags). Resolver interprets per-member to pick which
+	 *                          ability to activate. For direct "everyone does X"
+	 *                          dispatch, include the ability tag in the container.
+	 *  @param TargetEntity   — optional target entity for the order.
 	 *  @param TargetLocation — target world location (move destination, etc.).
-	 *  @param bQueueCommand — true = shift-chained (append), false = replace queue.
-	 *  @param FormationEnd — optional second endpoint for drag orders. */
+	 *  @param bQueueCommand  — true = shift-chained (append), false = replace queue.
+	 *  @param FormationEnd   — optional second endpoint for drag orders. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Broker",
 		meta = (WorldContext = "WorldContextObject", DisplayName = "Issue Broker Order"))
 	static void SeinIssueBrokerOrder(
 		const UObject* WorldContextObject,
 		FSeinPlayerID PlayerID,
 		const TArray<FSeinEntityHandle>& Members,
-		FGameplayTag ContextTag,
+		const FGameplayTagContainer& CommandContext,
 		FSeinEntityHandle TargetEntity,
 		FFixedVector TargetLocation,
 		bool bQueueCommand = false,

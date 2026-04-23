@@ -1,15 +1,8 @@
 /**
- * ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
- * ██░▄▄▄░█░▄▄██▄██░▄▄▀█░▄▄▀██░▄▄▀█▄▄░▄▄██░▄▄▄░
- * ██▄▄▄▀▀█░▄▄██░▄█░██░█░▀▀░██░▀▀▄███░████▄▄▄▀▀
- * ██░▀▀▀░█▄▄▄█▄▄▄█▄██▄█░██░██░██░███░████░▀▀▀░
- * ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
- * Copyright (c) 2026 Phenom Studios, Inc.
- *
- * @file:		SeinNavigationBPFL.h
- * @date:		3/27/2026
- * @author:		RJ Macklem
- * @brief:		Blueprint Function Library for deterministic pathfinding and navigation queries.
+ * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
+ * @file    SeinNavigationBPFL.h
+ * @brief   Blueprint API for navigation queries. Routes through the active
+ *          USeinNavigation instance; impl-agnostic.
  */
 
 #pragma once
@@ -23,9 +16,6 @@
 #include "SeinPathTypes.h"
 #include "SeinNavigationBPFL.generated.h"
 
-class USeinPathfinder;
-class USeinNavigationGrid;
-
 UCLASS(meta = (DisplayName = "SeinARTS Navigation Library"))
 class SEINARTSNAVIGATION_API USeinNavigationBPFL : public UBlueprintFunctionLibrary
 {
@@ -33,38 +23,18 @@ class SEINARTSNAVIGATION_API USeinNavigationBPFL : public UBlueprintFunctionLibr
 
 public:
 
-	// Pathfinding
-	// ====================================================================================================
+	/** Request a path from Start to End for an entity with BlockedTerrainTags.
+	 *  Check `bIsValid` on the result before consuming waypoints. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation",
+		meta = (WorldContext = "WorldContextObject", DisplayName = "Find Path"))
+	static FSeinPath SeinFindPath(
+		const UObject* WorldContextObject,
+		FFixedVector Start,
+		FFixedVector End,
+		FSeinEntityHandle Requester,
+		FGameplayTagContainer BlockedTerrainTags);
 
-	/** Request a path from start to end. Returns a path result (check bIsValid). */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation", meta = (DisplayName = "Request Path"))
-	static FSeinPath SeinRequestPath(USeinPathfinder* Pathfinder, FFixedVector Start, FFixedVector End, FSeinEntityHandle Requester, FGameplayTagContainer BlockedTerrainTags);
-
-	/** Check whether a path result is valid */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Is Path Valid"))
-	static bool SeinIsPathValid(const FSeinPath& Path);
-
-	/** Get the waypoints of a computed path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Waypoints"))
-	static TArray<FFixedVector> SeinGetPathWaypoints(const FSeinPath& Path);
-
-	/** Get the total cost of a computed path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Cost"))
-	static FFixedPoint SeinGetPathCost(const FSeinPath& Path);
-
-	/** Get the number of waypoints in a path */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Length"))
-	static int32 SeinGetPathLength(const FSeinPath& Path);
-
-	// Reachability + NavLink runtime mutation (DESIGN §13)
-	// ====================================================================================================
-
-	/**
-	 * Fast reachability query via HPA* abstract graph. Returns true if a path
-	 * exists from `From` to `To` for an entity with `AgentTags` (empty tag set
-	 * accepts all navlinks). Used by path-reject plumbing to early-reject Move
-	 * commands targeting unreachable cells.
-	 */
+	/** Fast reachability query via the active navigation implementation. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation",
 		meta = (WorldContext = "WorldContextObject", DisplayName = "Is Location Reachable"))
 	static bool SeinIsLocationReachable(
@@ -73,20 +43,15 @@ public:
 		FFixedVector To,
 		FGameplayTagContainer AgentTags);
 
-	/**
-	 * Toggle a navlink's enabled flag at runtime (bridge destroyed / re-enabled).
-	 * Fires a NavLinkChanged visual event on change. Returns false if the
-	 * navlink ID is invalid.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Navigation",
-		meta = (WorldContext = "WorldContextObject", DisplayName = "Set Nav Link Enabled"))
-	static bool SeinSetNavLinkEnabled(
-		const UObject* WorldContextObject,
-		int32 NavLinkID,
-		bool bEnabled);
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Is Path Valid"))
+	static bool SeinIsPathValid(const FSeinPath& Path) { return Path.bIsValid; }
 
-	/** Number of baked navlinks on the current level's grid. */
-	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation",
-		meta = (WorldContext = "WorldContextObject", DisplayName = "Get Nav Link Count"))
-	static int32 SeinGetNavLinkCount(const UObject* WorldContextObject);
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Waypoints"))
+	static TArray<FFixedVector> SeinGetPathWaypoints(const FSeinPath& Path) { return Path.Waypoints; }
+
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Length"))
+	static int32 SeinGetPathLength(const FSeinPath& Path) { return Path.Waypoints.Num(); }
+
+	UFUNCTION(BlueprintPure, Category = "SeinARTS|Navigation", meta = (DisplayName = "Get Path Cost"))
+	static FFixedPoint SeinGetPathCost(const FSeinPath& Path) { return Path.TotalCost; }
 };

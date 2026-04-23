@@ -38,7 +38,7 @@ namespace
 		for (USeinActorComponent* AC : ACs)
 		{
 			if (!AC) continue;
-			const FInstancedStruct Resolved = AC->Resolve();
+			const FInstancedStruct Resolved = AC->GetSimComponent();
 			if (Resolved.IsValid() && Resolved.GetScriptStruct() == StructType)
 			{
 				return AC;

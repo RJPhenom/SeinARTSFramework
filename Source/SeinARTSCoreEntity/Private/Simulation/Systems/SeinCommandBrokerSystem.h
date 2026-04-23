@@ -45,13 +45,23 @@ namespace SeinCommandBrokerDispatch
 		// through ProcessCommands validation; per-member cost duplication is not
 		// well-defined at V1. Designers can add per-member cost via their ability
 		// OnActivate logic if they need it.
+		// Cancel OTHER abilities with matching tags; explicitly skip self so a
+		// duplicate broker dispatch doesn't cancel-then-reactivate on every
+		// command frame (see the matching block in SeinWorldSubsystem::ProcessCommands).
 		for (USeinAbility* Other : AC->AbilityInstances)
 		{
-			if (Other && Other->bIsActive &&
+			if (Other && Other != Ability && Other->bIsActive &&
 				Other->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
 			{
 				Other->CancelAbility();
 			}
+		}
+		// Self-cancelling reissue: re-firing an already-active ability that
+		// names its own tag cancels the prior run before the new one starts.
+		if (Ability->bIsActive &&
+			Ability->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
+		{
+			Ability->CancelAbility();
 		}
 		Ability->ActivateAbility(MD.TargetEntity, MD.TargetLocation);
 		if (!Ability->bIsPassive)
@@ -78,6 +88,29 @@ namespace SeinCommandBrokerDispatch
 		Broker.bCapabilityMapDirty = false;
 	}
 
+	/** Build the effective member set for a queued order — TargetMembers if
+	 *  non-empty (subset-targeted), else the broker's full Members. Subset
+	 *  entries are also filtered for liveness (dead handles skipped). */
+	static TArray<FSeinEntityHandle> BuildEffectiveMembers(const USeinWorldSubsystem& World,
+		const FSeinCommandBrokerData& Broker,
+		const FSeinBrokerQueuedOrder& Order)
+	{
+		if (Order.TargetMembers.Num() == 0)
+		{
+			return Broker.Members;
+		}
+		TArray<FSeinEntityHandle> Out;
+		Out.Reserve(Order.TargetMembers.Num());
+		for (const FSeinEntityHandle& H : Order.TargetMembers)
+		{
+			if (World.GetEntityPool().IsValid(H) && Broker.Members.Contains(H))
+			{
+				Out.Add(H);
+			}
+		}
+		return Out;
+	}
+
 	/** Dispatch the front queued order via the broker's resolver. Returns true if
 	 *  the order was dispatched (broker.bIsExecuting was flipped on). */
 	static bool DispatchFrontOrder(USeinWorldSubsystem& World,
@@ -94,15 +127,26 @@ namespace SeinCommandBrokerDispatch
 
 		const FSeinBrokerQueuedOrder& Front = Broker.OrderQueue[0];
 
+		// Build the effective member set. If subset-targeted and the targets are
+		// all dead / no longer in the broker, pop the order and bail — nothing to
+		// dispatch. The system tick will re-enter and dispatch the next order.
+		const TArray<FSeinEntityHandle> Effective = BuildEffectiveMembers(World, Broker, Front);
+		if (Effective.Num() == 0)
+		{
+			Broker.OrderQueue.RemoveAt(0);
+			return false;
+		}
+
 		FSeinBrokerOrderInput Input;
-		Input.ContextTag = Front.ContextTag;
+		Input.Context = Front.Context;
 		Input.TargetEntity = Front.TargetEntity;
 		Input.TargetLocation = Front.TargetLocation;
 		Input.FormationEnd = Front.FormationEnd;
+		Input.EffectiveMembers = Effective;
 
 		const FSeinBrokerDispatchPlan Plan = Broker.Resolver->ResolveDispatch(&World, BrokerHandle, Input);
 
-		Broker.CurrentOrderTag = Front.ContextTag;
+		Broker.CurrentOrderContext = Front.Context;
 		Broker.Anchor = Front.TargetLocation;
 		Broker.bIsExecuting = true;
 
@@ -132,7 +176,10 @@ public:
 
 			// 1. Strip dead members (belt-and-suspenders — ProcessDeferredDestroys
 			// already evicts on death, but members whose handle was released through
-			// a non-destroy path would slip through without this).
+			// a non-destroy path would slip through without this). Also strip dead
+			// handles from each queued order's TargetMembers — subset-targeted
+			// orders whose every target died fall through to the empty-subset
+			// guard in DispatchFrontOrder and get popped silently.
 			const int32 NumBefore = Broker->Members.Num();
 			Broker->Members.RemoveAll([&](const FSeinEntityHandle& M)
 			{
@@ -141,6 +188,14 @@ public:
 			if (Broker->Members.Num() != NumBefore)
 			{
 				Broker->bCapabilityMapDirty = true;
+			}
+			for (FSeinBrokerQueuedOrder& Order : Broker->OrderQueue)
+			{
+				if (Order.TargetMembers.Num() == 0) continue;
+				Order.TargetMembers.RemoveAll([&](const FSeinEntityHandle& M)
+				{
+					return !World.GetEntityPool().IsValid(M);
+				});
 			}
 
 			// 2. Update centroid from live members.
@@ -162,14 +217,22 @@ public:
 				}
 			}
 
-			// 3. Completion check: if executing, see if every member's primary
-			// ability has ended. Passive abilities aren't tracked as "active" for
-			// completion purposes — DESIGN §5 "Members only ever execute one active
-			// ability at a time (dispatched from the current broker order)."
-			if (Broker->bIsExecuting)
+			// 3. Completion check: if executing, see if every EFFECTIVE member's
+			// primary ability has ended. Subset-targeted orders only wait on
+			// their target members — non-target members can stay idle (or be
+			// running something else from a prior order) without blocking the
+			// current order's completion. Passive abilities aren't tracked as
+			// "active" for completion purposes — DESIGN §5 "Members only ever
+			// execute one active ability at a time (dispatched from the current
+			// broker order)."
+			if (Broker->bIsExecuting && Broker->OrderQueue.Num() > 0)
 			{
+				const FSeinBrokerQueuedOrder& Front = Broker->OrderQueue[0];
+				const TArray<FSeinEntityHandle> Effective =
+					SeinCommandBrokerDispatch::BuildEffectiveMembers(World, *Broker, Front);
+
 				bool bAllDone = true;
-				for (const FSeinEntityHandle& M : Broker->Members)
+				for (const FSeinEntityHandle& M : Effective)
 				{
 					const FSeinAbilityData* AC = World.GetComponent<FSeinAbilityData>(M);
 					if (AC && AC->ActiveAbility && AC->ActiveAbility->bIsActive)
@@ -181,11 +244,8 @@ public:
 				if (bAllDone)
 				{
 					Broker->bIsExecuting = false;
-					Broker->CurrentOrderTag = FGameplayTag();
-					if (Broker->OrderQueue.Num() > 0)
-					{
-						Broker->OrderQueue.RemoveAt(0);
-					}
+					Broker->CurrentOrderContext = FGameplayTagContainer();
+					Broker->OrderQueue.RemoveAt(0);
 				}
 			}
 

@@ -22,27 +22,6 @@ class USeinSelectionComponent;
 class USeinArchetypeDefinition;
 struct FInputActionValue;
 
-/**
- * How multi-selection command dispatch behaves.
- * Configurable per-GameMode or per-project.
- */
-UENUM(BlueprintType)
-enum class ESeinCommandDispatchMode : uint8
-{
-	/**
-	 * Each selected entity resolves its own command from its own DefaultCommandMap.
-	 * Mixed selections produce mixed behaviors (e.g., medics heal, infantry attack).
-	 */
-	PerEntity,
-
-	/**
-	 * The active/leader entity resolves the command. All other selected entities
-	 * attempt the same ability; if they can't, they fall back to movement.
-	 * Produces coherent group behavior.
-	 */
-	LeaderDriven,
-};
-
 // ==================== Delegates ====================
 
 /** Broadcast when the selection changes. */
@@ -86,10 +65,6 @@ public:
 	/** Input configuration data asset. Must be assigned (e.g., on the CDO or GameMode). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Input")
 	TObjectPtr<USeinInputConfig> InputConfig;
-
-	/** How multi-entity command dispatch works. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|Command")
-	ESeinCommandDispatchMode DispatchMode = ESeinCommandDispatchMode::LeaderDriven;
 
 	/** Trace channel for selection and command line traces. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|Selection")

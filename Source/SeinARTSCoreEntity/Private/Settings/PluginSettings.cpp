@@ -18,12 +18,12 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// ResourceCatalog defaults-constructs via TArray's ctor.
 	, DefaultBrokerResolverClass(USeinDefaultCommandBrokerResolver::StaticClass())
 	, EffectCountWarningThreshold(256)
+	// NavigationClass left empty — subsystem falls back to USeinNavigationAStar
+	// when unset. Games pin the desired impl in Project Settings.
 	, DefaultCellSize(100.0f)
-	, DefaultElevationMode(ESeinElevationMode::None)
-	, DefaultLayerSeparation(100.0f)
-	, NavTileSize(32)
-	, BakeTilesPerProgressStep(16)
-	, MaxWalkableSlopeDegrees(45.0f)
+	, VisionCellSize(400.0f)
+	, VisionTickInterval(3)
+	, FogRenderTickRate(10.0f)
 #if WITH_EDITORONLY_DATA
 	, bShowAbilityInBasicCategory(true)
 	, bShowComponentInBasicCategory(false)
@@ -32,6 +32,12 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	, bShowWidgetInBasicCategory(false)
 #endif
 {
+	// Vision layers: exactly 6 designer-configurable slots (N0..N5). All start
+	// disabled + unnamed — the framework-default "Normal" layer is reserved as
+	// the V bit and is always present without needing a slot here. Designers
+	// opt in by naming + enabling slots for game-specific channels (Stealth,
+	// Thermal, etc.). EditFixedSize prevents add/remove — rename or toggle only.
+	VisionLayers.SetNum(6);
 }
 
 FName USeinARTSCoreSettings::GetCategoryName() const

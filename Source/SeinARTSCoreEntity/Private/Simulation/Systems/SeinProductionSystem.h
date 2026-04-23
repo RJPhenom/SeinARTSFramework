@@ -149,7 +149,7 @@ public:
 					if (RallyLoc != FFixedVector::ZeroVector && RallyLoc != SpawnLocation)
 					{
 						FSeinBrokerQueuedOrder Order;
-						Order.ContextTag = SeinARTSTags::Ability_Move;
+						Order.Context.AddTag(SeinARTSTags::Ability_Move);
 						Order.TargetLocation = RallyLoc;
 						Order.bIsInternalPrefix = true;
 						TArray<FSeinEntityHandle> Member = { ProducedHandle };

@@ -8,12 +8,10 @@ public class SeinARTSNavigation : ModuleRules
             "Core", "CoreUObject", "Engine",
             "SeinARTSCore", "SeinARTSCoreEntity",
             "GameplayTags",
-            "PhysicsCore",
             "RenderCore", "RHI"
         });
 
-        // Editor-only dependencies for the nav bake pipeline (toast notifications,
-        // asset registry, package save) + debug actor's editor-viewport camera pick.
+        // Editor-only deps for the bake pipeline (slow-task progress + asset save).
         // Stripped from shipping builds.
         if (Target.bBuildEditor)
         {

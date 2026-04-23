@@ -38,7 +38,14 @@ public:
 	UPROPERTY(BlueprintAssignable) FSeinMoveToWaypointDelegate OnWaypointReached;
 	UPROPERTY(BlueprintAssignable) FSeinMoveToSimpleDelegate   OnCancelled;
 
-	/** Move the ability's owning entity to Destination using its movement profile. */
+	/** Move the ability's owning entity to Destination using its movement profile.
+	 *  AcceptanceRadius is in world units (cm under UE's convention). The action
+	 *  clamps it at runtime to >= half the nav-grid's cell size — values smaller
+	 *  than that are practically impossible to reach (the unit's per-tick step
+	 *  is bigger than the radius), so they get bumped with a warning. Reasonable
+	 *  starting point for most grids is around half a cell; designers should set
+	 *  this per ability based on the unit's footprint and how forgiving the
+	 *  "arrived" semantics should feel. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Ability|Movement",
 	          meta = (BlueprintInternalUseOnly = "true", DefaultToSelf = "Ability",
 	                  DisplayName = "Move To"))

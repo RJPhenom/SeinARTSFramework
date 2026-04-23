@@ -43,22 +43,9 @@ public:
 	 * Returns the sim payload injected into deterministic storage at spawn.
 	 * Typed wrappers return their inline USTRUCT; the dynamic AC returns an
 	 * FInstancedStruct over its compile-synthesised UDS. Default: invalid.
-	 */
-	virtual FInstancedStruct GetSimComponent() const { return FInstancedStruct(); }
-
-	/**
-	 * Optional balance-sheet override. When valid, resolves from the referenced
-	 * DataTable row instead of GetSimComponent(). Lets designers A/B-tune many
-	 * units from a single spreadsheet without losing the per-component UX.
-	 */
-	UPROPERTY(EditAnywhere, Category = "SeinARTS|Balance")
-	FSeinComponentTableRef TableOverride;
-
-	/**
-	 * Resolves TableOverride if valid, otherwise falls back to GetSimComponent().
 	 * Called by USeinWorldSubsystem::SpawnEntity() on each attached AC.
 	 */
-	FInstancedStruct Resolve() const;
+	virtual FInstancedStruct GetSimComponent() const { return FInstancedStruct(); }
 
 	// ========== Render-side lifecycle (override in BP) ==========
 

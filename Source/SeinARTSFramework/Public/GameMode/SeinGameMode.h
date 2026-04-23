@@ -48,10 +48,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode")
 	FSeinFactionID DefaultFactionID = FSeinFactionID(1);
 
-	/** Default dispatch mode for the player controller. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode")
-	ESeinCommandDispatchMode DefaultDispatchMode = ESeinCommandDispatchMode::LeaderDriven;
-
 	/** Whether to auto-start the simulation when the first player joins. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode")
 	bool bAutoStartSimulation = true;
