@@ -49,10 +49,16 @@ void USeinFogOfWarSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void USeinFogOfWarSubsystem::Deinitialize()
 {
-	if (TickerHandle.IsValid())
+	if (SimTickHandle.IsValid())
 	{
-		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
-		TickerHandle.Reset();
+		if (UWorld* World = GetWorld())
+		{
+			if (USeinWorldSubsystem* Sim = World->GetSubsystem<USeinWorldSubsystem>())
+			{
+				Sim->OnSimTickCompleted.Remove(SimTickHandle);
+			}
+		}
+		SimTickHandle.Reset();
 	}
 	if (FogOfWar)
 	{
@@ -68,7 +74,7 @@ void USeinFogOfWarSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	LoadBakedAssetIntoFogOfWar(InWorld);
 	InitGridIfUnbaked(InWorld);
 	BindSimDelegates(InWorld);
-	StartStampTicker(InWorld);
+	BindStampTick(InWorld);
 }
 
 void USeinFogOfWarSubsystem::LoadBakedAssetIntoFogOfWar(UWorld& World)
@@ -93,33 +99,31 @@ void USeinFogOfWarSubsystem::InitGridIfUnbaked(UWorld& World)
 	FogOfWar->InitGridFromVolumes(&World);
 }
 
-void USeinFogOfWarSubsystem::StartStampTicker(UWorld& World)
+void USeinFogOfWarSubsystem::BindStampTick(UWorld& World)
 {
 	if (!FogOfWar) return;
-	if (TickerHandle.IsValid())
+	USeinWorldSubsystem* Sim = World.GetSubsystem<USeinWorldSubsystem>();
+	if (!Sim) return;
+	if (SimTickHandle.IsValid())
 	{
-		FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
-		TickerHandle.Reset();
+		Sim->OnSimTickCompleted.Remove(SimTickHandle);
+		SimTickHandle.Reset();
 	}
+	SimTickHandle = Sim->OnSimTickCompleted.AddUObject(this, &USeinFogOfWarSubsystem::HandleSimTickCompleted);
+}
 
-	TWeakObjectPtr<USeinFogOfWar> FogWeak = FogOfWar;
-	TWeakObjectPtr<UWorld> WorldWeak = &World;
+void USeinFogOfWarSubsystem::HandleSimTickCompleted(int32 CurrentTick)
+{
+	if (!FogOfWar) return;
 
-	// 10 Hz — matches FogRenderTickRate default; tune via setting later.
-	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(
-		FTickerDelegate::CreateLambda(
-			[FogWeak, WorldWeak](float /*DeltaTime*/) -> bool
-			{
-				USeinFogOfWar* Fog = FogWeak.Get();
-				UWorld* W = WorldWeak.Get();
-				if (Fog && W)
-				{
-					Fog->TickStamps(W);
-				}
-				// Keep ticker alive regardless; cleanup is by-handle in Deinitialize.
-				return true;
-			}),
-		0.1f);
+	// VisionTickInterval = N → recompute every Nth sim tick (e.g. 3 @ 30Hz
+	// sim = 10Hz stamps). All clients hit the same tick boundary, stamp the
+	// same source snapshot, produce the same bits — no wall-clock drift.
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	const int32 Interval = (Settings && Settings->VisionTickInterval > 0) ? Settings->VisionTickInterval : 1;
+	if ((CurrentTick % Interval) != 0) return;
+
+	FogOfWar->TickStamps(GetWorld());
 }
 
 void USeinFogOfWarSubsystem::BindSimDelegates(UWorld& World)
@@ -129,13 +133,14 @@ void USeinFogOfWarSubsystem::BindSimDelegates(UWorld& World)
 
 	TWeakObjectPtr<USeinFogOfWar> FogWeak = FogOfWar;
 
+	// Note: TargetWorld is FFixedVector end-to-end — sim callers pass fixed
+	// point directly; no FVector round-trip at the boundary.
 	Sim->LineOfSightResolver.BindWeakLambda(this,
-		[FogWeak](FSeinPlayerID ObserverPlayer, const FVector& TargetWorld) -> bool
+		[FogWeak](FSeinPlayerID ObserverPlayer, const FFixedVector& TargetWorld) -> bool
 		{
 			USeinFogOfWar* Fog = FogWeak.Get();
 			if (!Fog || !Fog->HasRuntimeData()) return true; // no data = permit (tests, fog-less games)
-			const FFixedVector Pos = FFixedVector::FromVector(TargetWorld);
-			return Fog->IsCellVisible(ObserverPlayer, Pos, SEIN_FOW_BIT_NORMAL);
+			return Fog->IsCellVisible(ObserverPlayer, TargetWorld, SEIN_FOW_BIT_NORMAL);
 		});
 }
 

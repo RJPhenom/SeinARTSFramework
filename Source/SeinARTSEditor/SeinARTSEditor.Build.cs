@@ -35,6 +35,7 @@ public class SeinARTSEditor : ModuleRules
             "SeinARTSCore",
             "SeinARTSCoreEntity",
             "SeinARTSNavigation",
+            "SeinARTSFogOfWar",
             "SeinARTSUIToolkit"
         });
     }

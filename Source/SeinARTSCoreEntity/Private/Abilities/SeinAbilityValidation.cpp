@@ -54,21 +54,22 @@ ESeinAbilityTargetValidationResult FSeinAbilityValidation::ValidateTarget(
 		}
 	}
 
-	// Line-of-sight (§12): consult the cross-module USeinWorldSubsystem::LineOfSightResolver
-	// delegate, bound by USeinVisionSubsystem at OnWorldBeginPlay. If unbound (tests,
-	// vision-less games), LOS check trivially passes.
+	// Line-of-sight: consult the cross-module USeinWorldSubsystem::LineOfSightResolver
+	// delegate, bound by USeinFogOfWarSubsystem at OnWorldBeginPlay. If unbound
+	// (tests, fog-less games), LOS check trivially passes. Target position stays
+	// FFixedVector end-to-end — no lossy FVector round-trip.
 	if (Ability.bRequiresLineOfSight && World.LineOfSightResolver.IsBound())
 	{
 		const FSeinEntity* OwnerEntity = World.GetEntity(Owner);
 		if (OwnerEntity)
 		{
 			const FSeinPlayerID OwnerPlayer = World.GetEntityOwner(Owner);
-			FVector TargetWorld = Location.ToVector();
+			FFixedVector TargetWorld = Location;
 			if (Target.IsValid())
 			{
 				if (const FSeinEntity* TargetEntity = World.GetEntity(Target))
 				{
-					TargetWorld = TargetEntity->Transform.GetLocation().ToVector();
+					TargetWorld = TargetEntity->Transform.GetLocation();
 				}
 			}
 			if (!World.LineOfSightResolver.Execute(OwnerPlayer, TargetWorld))

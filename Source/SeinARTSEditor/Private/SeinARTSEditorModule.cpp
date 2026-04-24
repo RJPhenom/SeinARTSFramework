@@ -30,7 +30,9 @@
 #include "Details/SeinFixedPointDetails.h"
 #include "Details/SeinInstancedStructDetails.h"
 #include "Details/SeinNavVolumeDetails.h"
+#include "Details/SeinFogOfWarVolumeDetails.h"
 #include "Volumes/SeinNavVolume.h"
+#include "Volumes/SeinFogOfWarVolume.h"
 #include "Brokers/SeinStructAssetBroker.h"
 #include "ComponentAssetBroker.h"
 #include "Components/ActorComponents/SeinStructComponent.h"
@@ -124,6 +126,10 @@ void FSeinARTSEditorModule::StartupModule()
 			ASeinNavVolume::StaticClass()->GetFName(),
 			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinNavVolumeDetails::MakeInstance));
 
+		PropertyModule.RegisterCustomClassLayout(
+			ASeinFogOfWarVolume::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinFogOfWarVolumeDetails::MakeInstance));
+
 		PropertyModule.NotifyCustomizationModuleChanged();
 	}
 }
@@ -136,6 +142,7 @@ void FSeinARTSEditorModule::ShutdownModule()
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("FixedPoint"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("InstancedStruct"));
 		PropertyModule.UnregisterCustomClassLayout(ASeinNavVolume::StaticClass()->GetFName());
+		PropertyModule.UnregisterCustomClassLayout(ASeinFogOfWarVolume::StaticClass()->GetFName());
 	}
 
 	if (SeinPinFactory.IsValid())

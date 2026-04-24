@@ -74,9 +74,13 @@ DECLARE_DELEGATE_RetVal_ThreeParams(bool, FSeinPathableTargetResolver,
  * Registered by USeinFogOfWarSubsystem (SeinARTSFogOfWar) at OnWorldBeginPlay so
  * SeinARTSCoreEntity code can consult it without a circular dependency.
  * Returns true = target is visible. False = reject with NoLineOfSight.
+ *
+ * Target position is FFixedVector (not FVector) to avoid a lossy float round-
+ * trip on the determinism-critical query path — sim callers already carry
+ * FFixedVector, and the fog impl's cell lookup is fixed-point throughout.
  */
 DECLARE_DELEGATE_RetVal_TwoParams(bool, FSeinLineOfSightResolver,
-	FSeinPlayerID /*ObserverPlayer*/, const FVector& /*TargetWorld*/);
+	FSeinPlayerID /*ObserverPlayer*/, const FFixedVector& /*TargetWorld*/);
 
 /**
  * Delegates sim uses to (un)register entities in the spatial tile grid

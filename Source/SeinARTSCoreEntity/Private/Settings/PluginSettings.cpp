@@ -18,8 +18,12 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// ResourceCatalog defaults-constructs via TArray's ctor.
 	, DefaultBrokerResolverClass(USeinDefaultCommandBrokerResolver::StaticClass())
 	, EffectCountWarningThreshold(256)
-	// NavigationClass left empty — subsystem falls back to USeinNavigationAStar
-	// when unset. Games pin the desired impl in Project Settings.
+	// NavigationClass defaults to the shipped A* reference. Hard-coded as a
+	// soft-class path string (not a StaticClass() call) because this module
+	// (SeinARTSCoreEntity) intentionally does NOT depend on SeinARTSNavigation —
+	// the decoupling is the whole point of the pluggable nav architecture.
+	, NavigationClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinNavigationAStar")))
+	, FogOfWarClass(FSoftClassPath(TEXT("/Script/SeinARTSFogOfWar.SeinFogOfWarDefault")))
 	, DefaultCellSize(100.0f)
 	, VisionCellSize(400.0f)
 	, VisionTickInterval(3)

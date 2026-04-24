@@ -1,11 +1,11 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinFogOfWarDefault.cpp
- * @brief   MVP stamp engine. Flat-circle stamp, no LOS, no layers, no
- *          ownership, no refcount — recomputes the whole bitfield each tick.
- *          Shadowcast + lampshade + per-player + refcount land in the next
- *          passes; the surface contract (RegisterSource etc.) is stable so
- *          only the internals change.
+ * @brief   MVP stamp engine + sync bake. Flat-circle stamp (shadowcast is
+ *          step 2); bake runs a two-trace-per-cell pass to detect static
+ *          blockers above terrain and serializes quantized uint8 heights
+ *          into a USeinFogOfWarDefaultAsset. Runtime dequantizes to
+ *          FFixedPoint on load.
  */
 
 #include "Default/SeinFogOfWarDefault.h"
@@ -23,13 +23,281 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "CollisionQueryParams.h"
+#include "Math/Box.h"
+#include "Misc/ScopedSlowTask.h"
+
+#if WITH_EDITOR
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "UObject/Package.h"
+#include "UObject/SavePackage.h"
+#include "Misc/PackageName.h"
+#endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinFogOfWarDefault, Log, All);
+
+// ============================================================================
+// Asset class
+// ============================================================================
 
 TSubclassOf<USeinFogOfWarAsset> USeinFogOfWarDefault::GetAssetClass() const
 {
 	return USeinFogOfWarDefaultAsset::StaticClass();
 }
+
+// ============================================================================
+// Bake
+// ============================================================================
+
+bool USeinFogOfWarDefault::BeginBake(UWorld* World)
+{
+	if (!World)
+	{
+		UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("BeginBake: null world"));
+		return false;
+	}
+	if (bBaking)
+	{
+		UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("BeginBake: already baking"));
+		return false;
+	}
+
+	bBaking = true;
+	bCancelRequested = false;
+	ON_SCOPE_EXIT { bBaking = false; bCancelRequested = false; };
+
+	USeinFogOfWarDefaultAsset* NewAsset = nullptr;
+	const bool bOk = DoSyncBake(World, NewAsset);
+	if (!bOk || !NewAsset)
+	{
+		UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("BeginBake: failed"));
+		return false;
+	}
+
+	// Point every fog volume at the new asset + load into this impl.
+	for (TActorIterator<ASeinFogOfWarVolume> It(World); It; ++It)
+	{
+		It->BakedAsset = NewAsset;
+		It->MarkPackageDirty();
+	}
+	LoadFromAsset(NewAsset);
+
+	UE_LOG(LogSeinFogOfWarDefault, Log,
+		TEXT("Bake complete: %dx%d cells, CellSize=%s"),
+		NewAsset->Width, NewAsset->Height, *NewAsset->CellSize.ToString());
+	return true;
+}
+
+bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*& OutAsset)
+{
+	OutAsset = nullptr;
+
+	// Gather volumes + union their bounds.
+	TArray<ASeinFogOfWarVolume*> Volumes;
+	FBox UnionBounds(ForceInit);
+	for (TActorIterator<ASeinFogOfWarVolume> It(World); It; ++It)
+	{
+		ASeinFogOfWarVolume* Vol = *It;
+		if (!Vol) continue;
+		Volumes.Add(Vol);
+		UnionBounds += Vol->GetVolumeWorldBounds();
+	}
+	if (Volumes.Num() == 0 || !UnionBounds.IsValid)
+	{
+		UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("DoSyncBake: no FogOfWarVolumes in world"));
+		return false;
+	}
+
+	// Resolve bake parameters from the first volume (MVP uses single global
+	// cell size; later volumes use their own for their region once bake
+	// supports per-region grids).
+	const float CellSizeF = Volumes[0]->GetResolvedCellSize();
+	const FFixedPoint BakedCellSize = FFixedPoint::FromFloat(CellSizeF);
+
+	const int32 GridW = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.X - UnionBounds.Min.X) / CellSizeF));
+	const int32 GridH = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.Y - UnionBounds.Min.Y) / CellSizeF));
+	const FVector OriginWorld(UnionBounds.Min.X, UnionBounds.Min.Y, UnionBounds.Min.Z);
+	const float TopZ = UnionBounds.Max.Z + BakeTraceHeadroom;
+	const float BottomZ = UnionBounds.Min.Z - 100.0f;
+
+	// Height quantization spans the volume's Z range over 255 steps (uint8).
+	// A +1 nudge on MinHeight prevents the highest-Z cell from rounding to
+	// 256 (out of uint8 range) at the top edge.
+	const float RangeZ = FMath::Max(1.0f, UnionBounds.Max.Z - UnionBounds.Min.Z + BakeTraceHeadroom);
+	const float QuantumF = FMath::Max(1.0f, RangeZ / 255.0f);
+
+#if WITH_EDITOR
+	FScopedSlowTask Task(GridW * GridH, NSLOCTEXT("SeinFogOfWarDefault", "Baking", "Baking SeinARTS Fog Of War..."));
+	Task.MakeDialog(/*bShowCancelButton*/ true);
+#endif
+
+	// Create asset (editor) or transient package (runtime bake).
+#if WITH_EDITOR
+	const FString AssetName = FString::Printf(TEXT("FogOfWarData_%s"), *World->GetMapName());
+	OutAsset = CreateOrLoadAsset(World, AssetName);
+#else
+	OutAsset = NewObject<USeinFogOfWarDefaultAsset>(GetTransientPackage());
+#endif
+	if (!OutAsset) return false;
+
+	OutAsset->Width = GridW;
+	OutAsset->Height = GridH;
+	OutAsset->CellSize = BakedCellSize;
+	OutAsset->Origin = FFixedVector(FFixedPoint::FromFloat(OriginWorld.X),
+	                                FFixedPoint::FromFloat(OriginWorld.Y),
+	                                FFixedPoint::FromFloat(OriginWorld.Z));
+	OutAsset->MinHeight = FFixedPoint::FromFloat(OriginWorld.Z);
+	OutAsset->HeightQuantum = FFixedPoint::FromFloat(QuantumF);
+	OutAsset->Cells.SetNum(GridW * GridH);
+
+	FCollisionQueryParams QP(SCENE_QUERY_STAT(SeinFogOfWarBake), /*bTraceComplex*/ true);
+	for (ASeinFogOfWarVolume* Vol : Volumes)
+	{
+		if (Vol) QP.AddIgnoredActor(Vol);
+	}
+
+	int32 BakeGroundHits = 0;
+	int32 BakeBlockerHits = 0;
+	int32 BakeMisses = 0;
+	int32 Processed = 0;
+
+	for (int32 Y = 0; Y < GridH; ++Y)
+	{
+		for (int32 X = 0; X < GridW; ++X)
+		{
+			if (bCancelRequested)
+			{
+				UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("Bake cancelled by user"));
+				OutAsset = nullptr;
+				return false;
+			}
+
+			const float CX = OriginWorld.X + (X + 0.5f) * CellSizeF;
+			const float CY = OriginWorld.Y + (Y + 0.5f) * CellSizeF;
+			const FVector Start(CX, CY, TopZ);
+			const FVector End  (CX, CY, BottomZ);
+
+			FSeinFogOfWarCell& Cell = OutAsset->Cells[Y * GridW + X];
+
+			// Trace 1: top-down for the topmost opaque surface in this column.
+			FHitResult TopHit;
+			if (!World->LineTraceSingleByChannel(TopHit, Start, End, BakeTraceChannel, QP))
+			{
+				// No geometry at all — no ground, no blocker. GroundHeight
+				// defaults to the volume's bottom (quantized 0).
+				Cell.GroundHeight = 0;
+				Cell.BlockerHeight = 0;
+				Cell.BlockerLayerMask = 0;
+				++BakeMisses;
+			}
+			else
+			{
+				const float TopHitZ = TopHit.ImpactPoint.Z;
+
+				// Trace 2: from the top hit downward, ignoring the top actor,
+				// for the ground beneath. If we miss, the top hit IS the
+				// ground (simple terrain). If we hit, the gap is a static
+				// blocker above the ground.
+				FCollisionQueryParams QP2 = QP;
+				if (AActor* TopActor = TopHit.GetActor())
+				{
+					QP2.AddIgnoredActor(TopActor);
+				}
+
+				FHitResult GroundHit;
+				const FVector Trace2Start(CX, CY, TopHitZ - 0.1f);
+				float GroundZ = TopHitZ;
+				float BlockerRelZ = 0.0f;
+				if (World->LineTraceSingleByChannel(GroundHit, Trace2Start, End, BakeTraceChannel, QP2))
+				{
+					const float GroundHitZ = GroundHit.ImpactPoint.Z;
+					const float Gap = TopHitZ - GroundHitZ;
+					if (Gap >= StaticBlockerMinHeight)
+					{
+						GroundZ = GroundHitZ;
+						BlockerRelZ = Gap;
+						++BakeBlockerHits;
+					}
+					// else: top hit is walkable (terrain noise gap is negligible)
+				}
+
+				// Quantize. Ground stored relative to MinHeight; Blocker
+				// stored as height above Ground (both uint8).
+				const float GroundStepsF = (GroundZ - OriginWorld.Z) / QuantumF;
+				const float BlockerStepsF = BlockerRelZ / QuantumF;
+				Cell.GroundHeight = (uint8)FMath::Clamp(FMath::RoundToInt(GroundStepsF), 0, 255);
+				Cell.BlockerHeight = (uint8)FMath::Clamp(FMath::RoundToInt(BlockerStepsF), 0, 255);
+				Cell.BlockerLayerMask = (BlockerRelZ >= StaticBlockerMinHeight) ? SEIN_FOW_MASK_VISIBLE : 0;
+				++BakeGroundHits;
+			}
+
+			++Processed;
+#if WITH_EDITOR
+			if ((Processed & 255) == 0)
+			{
+				Task.EnterProgressFrame(256.0f);
+				if (Task.ShouldCancel())
+				{
+					bCancelRequested = true;
+				}
+			}
+#endif
+		}
+	}
+
+	UE_LOG(LogSeinFogOfWarDefault, Log,
+		TEXT("Bake stats: %dx%d=%d cells — ground=%d blockers=%d no_hit=%d"),
+		GridW, GridH, GridW * GridH, BakeGroundHits, BakeBlockerHits, BakeMisses);
+
+#if WITH_EDITOR
+	if (!SaveAssetToDisk(OutAsset))
+	{
+		UE_LOG(LogSeinFogOfWarDefault, Warning, TEXT("Bake: failed to save asset to disk"));
+		// Asset still usable in-memory this session.
+	}
+#endif
+
+	return true;
+}
+
+#if WITH_EDITOR
+USeinFogOfWarDefaultAsset* USeinFogOfWarDefault::CreateOrLoadAsset(UWorld* World, const FString& AssetName) const
+{
+	const FString PackagePath = FString::Printf(TEXT("/Game/FogOfWarData/%s"), *AssetName);
+	UPackage* Package = CreatePackage(*PackagePath);
+	if (!Package) return nullptr;
+
+	USeinFogOfWarDefaultAsset* Existing = FindObject<USeinFogOfWarDefaultAsset>(Package, *AssetName);
+	if (Existing) return Existing;
+
+	USeinFogOfWarDefaultAsset* Asset = NewObject<USeinFogOfWarDefaultAsset>(
+		Package, USeinFogOfWarDefaultAsset::StaticClass(), FName(*AssetName),
+		RF_Public | RF_Standalone);
+	FAssetRegistryModule::AssetCreated(Asset);
+	return Asset;
+}
+
+bool USeinFogOfWarDefault::SaveAssetToDisk(USeinFogOfWarDefaultAsset* Asset) const
+{
+	if (!Asset) return false;
+	UPackage* Pkg = Asset->GetOutermost();
+	if (!Pkg) return false;
+
+	Pkg->MarkPackageDirty();
+
+	const FString Filename = FPackageName::LongPackageNameToFilename(
+		Pkg->GetName(), FPackageName::GetAssetPackageExtension());
+
+	FSavePackageArgs Args;
+	Args.TopLevelFlags = RF_Public | RF_Standalone;
+	Args.SaveFlags = SAVE_None;
+	Args.Error = GError;
+	return UPackage::SavePackage(Pkg, Asset, *Filename, Args);
+}
+#endif
+
+// ============================================================================
+// Load
+// ============================================================================
 
 void USeinFogOfWarDefault::LoadFromAsset(USeinFogOfWarAsset* Asset)
 {
@@ -43,6 +311,8 @@ void USeinFogOfWarDefault::LoadFromAsset(USeinFogOfWarAsset* Asset)
 		Width = 0;
 		Height = 0;
 		GroundHeight.Reset();
+		BlockerHeight.Reset();
+		BlockerLayerMask.Reset();
 		CellBitfield.Reset();
 	}
 	OnFogOfWarMutated.Broadcast();
@@ -64,18 +334,29 @@ void USeinFogOfWarDefault::ApplyAssetData(const USeinFogOfWarDefaultAsset* Asset
 
 	const int32 NumCells = Width * Height;
 	GroundHeight.SetNumUninitialized(NumCells);
+	BlockerHeight.SetNumUninitialized(NumCells);
+	BlockerLayerMask.SetNumUninitialized(NumCells);
 	CellBitfield.SetNumZeroed(NumCells);
 
-	// Dequantize baked uint8 GroundHeight → FFixedPoint.
-	// quantized * HeightQuantum + MinHeight = world Z.
+	// Dequantize uint8 heights → FFixedPoint. Runtime stores ABSOLUTE world Z
+	// for both (Ground = MinHeight + Q·steps; Blocker = Ground + Q·steps) so
+	// shadowcast's lampshade test is a straight world-Z compare.
 	const FFixedPoint MinH = Asset->MinHeight;
-	const FFixedPoint Quantum = Asset->HeightQuantum;
+	const FFixedPoint Q = Asset->HeightQuantum;
 	for (int32 Idx = 0; Idx < NumCells; ++Idx)
 	{
 		const FSeinFogOfWarCell& Cell = Asset->Cells[Idx];
-		GroundHeight[Idx] = MinH + Quantum * FFixedPoint::FromInt(Cell.GroundHeight);
+		const FFixedPoint GroundZ = MinH + Q * FFixedPoint::FromInt(Cell.GroundHeight);
+		const FFixedPoint BlockerRelZ = Q * FFixedPoint::FromInt(Cell.BlockerHeight);
+		GroundHeight[Idx] = GroundZ;
+		BlockerHeight[Idx] = (Cell.BlockerHeight > 0) ? (GroundZ + BlockerRelZ) : FFixedPoint::Zero;
+		BlockerLayerMask[Idx] = Cell.BlockerLayerMask;
 	}
 }
+
+// ============================================================================
+// Init (no bake fallback)
+// ============================================================================
 
 void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 {
@@ -112,12 +393,11 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 
 	const int32 NumCells = Width * Height;
 	GroundHeight.SetNumUninitialized(NumCells);
+	BlockerHeight.SetNumZeroed(NumCells);
+	BlockerLayerMask.SetNumZeroed(NumCells);
 	CellBitfield.SetNumZeroed(NumCells);
 
-	// Per-cell downward trace for terrain Z. Capped at InitTraceCellCap; beyond
-	// that snap to the volume mid-Z to avoid a multi-second init hitch on huge
-	// maps. (Bake pipeline replaces this with pre-computed quantized heights
-	// in USeinFogOfWarDefaultAsset.)
+	// Per-cell downward trace capped at InitTraceCellCap — no-bake fallback.
 	const bool bTracePerCell = NumCells <= InitTraceCellCap;
 	const FFixedPoint FallbackZ = FFixedPoint::FromFloat((UnionBounds.Min.Z + UnionBounds.Max.Z) * 0.5f);
 
@@ -135,7 +415,7 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 				FHitResult Hit;
 				const FVector Start(CX, CY, UnionBounds.Max.Z + 100.0f);
 				const FVector End  (CX, CY, UnionBounds.Min.Z - 100.0f);
-				if (World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, Params))
+				if (World->LineTraceSingleByChannel(Hit, Start, End, BakeTraceChannel, Params))
 				{
 					Z = FFixedPoint::FromFloat(Hit.Location.Z);
 				}
@@ -151,6 +431,10 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 	OnFogOfWarMutated.Broadcast();
 }
 
+// ============================================================================
+// Tick / stamp
+// ============================================================================
+
 void USeinFogOfWarDefault::TickStamps(UWorld* World)
 {
 	if (Width <= 0 || Height <= 0 || !World) return;
@@ -161,15 +445,12 @@ void USeinFogOfWarDefault::TickStamps(UWorld* World)
 	const ISeinComponentStorage* Storage = Sim->GetComponentStorageRaw(FSeinVisionData::StaticStruct());
 	if (!Storage) return;
 
-	// Clear visibility bits but preserve the Explored bit (it's sticky —
-	// once a cell is seen, history stays for the match).
+	// Clear visibility bits but preserve the Explored bit (sticky per match).
 	for (uint8& Byte : CellBitfield)
 	{
 		Byte &= SEIN_FOW_BIT_EXPLORED;
 	}
 
-	// Walk every live entity. If it carries FSeinVisionData, stamp its
-	// vision circle into the bitfield.
 	Sim->GetEntityPool().ForEachEntity(
 		[this, Storage](FSeinEntityHandle Handle, FSeinEntity& Entity)
 		{
@@ -189,16 +470,15 @@ void USeinFogOfWarDefault::StampFlatCircle(const FFixedVector& WorldPos, FFixedP
 {
 	int32 CX, CY;
 	if (!WorldToGrid(WorldPos, CX, CY)) return;
+	if (CellSize <= FFixedPoint::Zero || Radius <= FFixedPoint::Zero) return;
 
-	// TODO(det): radius math in FFixedPoint for replay determinism. MVP uses
-	// float for readability — acceptable while stamp output isn't replicated
-	// sim state yet (debug viz + LOS checks feed off it, both tolerant of a
-	// float rounding delta).
-	const float CellSizeF = CellSize.ToFloat();
-	if (CellSizeF <= 0.0f) return;
-	const float RadiusCellsF = Radius.ToFloat() / CellSizeF;
-	const int32 RadiusCells = FMath::CeilToInt(RadiusCellsF);
-	const float RadiusSqF = RadiusCellsF * RadiusCellsF;
+	// Pure FFixedPoint math — see header determinism contract.
+	const FFixedPoint RadiusCellsFP = Radius / CellSize;
+	const int32 RadiusCellsFloor = RadiusCellsFP.ToInt();
+	const bool bHasFraction = (RadiusCellsFP.Value & FFixedPoint::FractionalMask) != 0;
+	const int32 RadiusCells = bHasFraction ? RadiusCellsFloor + 1 : RadiusCellsFloor;
+
+	const FFixedPoint RadiusCellsSq = RadiusCellsFP * RadiusCellsFP;
 
 	const uint8 StampMask = SEIN_FOW_BIT_NORMAL | SEIN_FOW_BIT_EXPLORED;
 
@@ -209,8 +489,8 @@ void USeinFogOfWarDefault::StampFlatCircle(const FFixedVector& WorldPos, FFixedP
 		const int32 DYSq = DY * DY;
 		for (int32 DX = -RadiusCells; DX <= RadiusCells; ++DX)
 		{
-			const float DistSq = static_cast<float>(DX * DX + DYSq);
-			if (DistSq > RadiusSqF) continue;
+			const FFixedPoint DistSqCells = FFixedPoint::FromInt(DX * DX + DYSq);
+			if (DistSqCells > RadiusCellsSq) continue;
 			const int32 X = CX + DX;
 			if (X < 0 || X >= Width) continue;
 			CellBitfield[CellIndex(X, Y)] |= StampMask;
@@ -232,7 +512,10 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 {
 	if (Width <= 0 || Height <= 0) return;
 
-	OutHalfExtent = CellSize.ToFloat() * 0.5f;
+	// 0.9 inset → ~10% gap between neighboring quads. Reads as a grid (matches
+	// USeinNavigationAStar::CollectDebugCellQuads). Also dodges any z-fight at
+	// exact cell boundaries between same-Z cells.
+	OutHalfExtent = CellSize.ToFloat() * 0.5f * 0.9f;
 	const int32 NumCells = Width * Height;
 	OutCenters.Reserve(NumCells);
 	OutColors.Reserve(NumCells);
@@ -242,12 +525,15 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 	const float CellSizeF = CellSize.ToFloat();
 	const float HalfCellF = CellSizeF * 0.5f;
 
-	// Cyan = currently visible (V bit); red = in-grid but not visible. Debug
-	// viz: Explored-but-not-visible intentionally collapses to the plain red
-	// channel for MVP — once ownership + per-player VisionGroups land, the
-	// dim-red "fog of war memory" color will reintroduce.
-	const FColor Cyan(0, 200, 255);
-	const FColor Red (200, 0, 0);
+	// Three-state color scheme (debug proxy buckets by channel pattern):
+	//  cyan  → cell is visible this tick (V bit set)
+	//  red   → cell is a baked static blocker (no vision this tick)
+	//  black → cell is in-grid with no blocker + no visibility
+	// Cell Z: blocker cells draw at blocker-top (shows the blocker's height);
+	// everything else draws at ground height. Matches nav's per-cell-Z pattern.
+	const FColor Cyan (0, 200, 255);
+	const FColor Red  (200, 0, 0);
+	const FColor Black(0, 0, 0);
 
 	for (int32 Y = 0; Y < Height; ++Y)
 	{
@@ -256,15 +542,38 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 			const int32 Idx = CellIndex(X, Y);
 			const uint8 Bits = CellBitfield[Idx];
 			const bool bVisible = (Bits & SEIN_FOW_BIT_NORMAL) != 0;
+			const bool bHasBlocker = BlockerLayerMask.IsValidIndex(Idx) && BlockerLayerMask[Idx] != 0;
+
+			const FFixedPoint GroundZ = GroundHeight.IsValidIndex(Idx) ? GroundHeight[Idx] : Origin.Z;
+			const FFixedPoint BlockZ  = bHasBlocker ? BlockerHeight[Idx] : GroundZ;
+			const FFixedPoint TopZ    = (BlockZ > GroundZ) ? BlockZ : GroundZ;
+
+			// Blocker cells track blocker-top; visible-over-blocker also rides
+			// the blocker top so the cyan cell sits on the roof (matches what
+			// a unit on that roof would see). Plain-ground cells stay at ground.
+			FColor Color;
+			FFixedPoint WZFP;
+			if (bVisible)
+			{
+				Color = Cyan;
+				WZFP = TopZ;
+			}
+			else if (bHasBlocker)
+			{
+				Color = Red;
+				WZFP = BlockZ;
+			}
+			else
+			{
+				Color = Black;
+				WZFP = GroundZ;
+			}
 
 			const float WX = OriginXF + CellSizeF * X + HalfCellF;
 			const float WY = OriginYF + CellSizeF * Y + HalfCellF;
-			const float WZ = GroundHeight.IsValidIndex(Idx) ? GroundHeight[Idx].ToFloat() : Origin.Z.ToFloat();
 
-			// Sit well above nav's debug layer (+2cm) and clear of z-buffer
-			// precision fuzz at camera distance. See SEIN_FOW_DEBUG_Z_OFFSET.
-			OutCenters.Emplace(WX, WY, WZ + SEIN_FOW_DEBUG_Z_OFFSET);
-			OutColors.Add(bVisible ? Cyan : Red);
+			OutCenters.Emplace(WX, WY, WZFP.ToFloat() + SEIN_FOW_DEBUG_Z_OFFSET);
+			OutColors.Add(Color);
 		}
 	}
 }

@@ -106,7 +106,8 @@ public:
 	 * entirely without touching any framework code.
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Navigation",
-		meta = (DisplayName = "Navigation Class", MetaClass = "/Script/SeinARTSNavigation.SeinNavigation"))
+		meta = (DisplayName = "Navigation Class",
+				MetaClass = "/Script/SeinARTSNavigation.SeinNavigation"))
 	FSoftClassPath NavigationClass;
 
 	/**

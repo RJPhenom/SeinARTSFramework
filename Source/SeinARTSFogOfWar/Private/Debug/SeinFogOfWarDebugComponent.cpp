@@ -83,7 +83,9 @@ namespace
 
 		const float CellSize = Volume->GetResolvedCellSize();
 		if (CellSize <= 0.0f) return;
-		OutHalfExtent = CellSize * 0.5f;
+		// 0.9 inset — matches the impl's CollectDebugCellQuads so the no-bake
+		// fallback path reads the same "grid of squares" as the baked path.
+		OutHalfExtent = CellSize * 0.5f * 0.9f;
 
 		const int32 Width  = FMath::Max(1, FMath::CeilToInt(Bounds.GetSize().X / CellSize));
 		const int32 Height = FMath::Max(1, FMath::CeilToInt(Bounds.GetSize().Y / CellSize));
@@ -120,8 +122,10 @@ namespace
 }
 
 // ============================================================================
-// Scene proxy — two-batch pattern (visible cyan + unseen red), same shape as
-// USeinNavDebugProxy's walkable/blocked split.
+// Scene proxy — three-batch pattern (visible cyan + blocker red + default black).
+// Same shape as USeinNavDebugProxy's walkable/blocked split, +1 bucket for the
+// "no blocker, no vision" baseline so designers can audit bake output without
+// units present.
 // ============================================================================
 
 class FSeinFogOfWarDebugProxy final : public FPrimitiveSceneProxy
@@ -130,11 +134,13 @@ public:
 	FSeinFogOfWarDebugProxy(
 		UPrimitiveComponent* InComponent,
 		TArray<FVector>&& InVisibleCenters,
-		TArray<FVector>&& InUnseenCenters,
+		TArray<FVector>&& InBlockerCenters,
+		TArray<FVector>&& InDefaultCenters,
 		float InHalfExtent)
 		: FPrimitiveSceneProxy(InComponent)
 		, VisibleCenters(MoveTemp(InVisibleCenters))
-		, UnseenCenters(MoveTemp(InUnseenCenters))
+		, BlockerCenters(MoveTemp(InBlockerCenters))
+		, DefaultCenters(MoveTemp(InDefaultCenters))
 		, HalfExtent(InHalfExtent)
 	{
 		bWillEverBeLit = false;
@@ -148,7 +154,10 @@ public:
 
 	virtual uint32 GetMemoryFootprint() const override
 	{
-		return sizeof(*this) + VisibleCenters.GetAllocatedSize() + UnseenCenters.GetAllocatedSize();
+		return sizeof(*this)
+			+ VisibleCenters.GetAllocatedSize()
+			+ BlockerCenters.GetAllocatedSize()
+			+ DefaultCenters.GetAllocatedSize();
 	}
 
 	virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override
@@ -173,7 +182,7 @@ public:
 		if (!BaseMat) return;
 		const FMaterialRenderProxy* BaseProxy = BaseMat->GetRenderProxy();
 		if (!BaseProxy) return;
-		if (VisibleCenters.Num() == 0 && UnseenCenters.Num() == 0) return;
+		if (VisibleCenters.Num() == 0 && BlockerCenters.Num() == 0 && DefaultCenters.Num() == 0) return;
 
 		for (int32 ViewIdx = 0; ViewIdx < Views.Num(); ++ViewIdx)
 		{
@@ -186,7 +195,10 @@ public:
 					BaseProxy, FLinearColor(0.0f, 0.8f, 1.0f, 0.4f));
 			const FColoredMaterialRenderProxy* RedMat =
 				&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
-					BaseProxy, FLinearColor(0.85f, 0.0f, 0.0f, 0.35f));
+					BaseProxy, FLinearColor(0.9f, 0.0f, 0.0f, 0.55f));
+			const FColoredMaterialRenderProxy* BlackMat =
+				&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
+					BaseProxy, FLinearColor(0.0f, 0.0f, 0.0f, 0.4f));
 
 			if (VisibleCenters.Num() > 0)
 			{
@@ -196,11 +208,18 @@ public:
 					/*bDisableBackfaceCulling*/ true, /*bReceivesDecals*/ false,
 					ViewIdx, Collector);
 			}
-			if (UnseenCenters.Num() > 0)
+			if (BlockerCenters.Num() > 0)
 			{
 				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, UnseenCenters);
+				EmitQuads(Builder, BlockerCenters);
 				Builder.GetMesh(FMatrix::Identity, RedMat, SDPG_World,
+					true, false, ViewIdx, Collector);
+			}
+			if (DefaultCenters.Num() > 0)
+			{
+				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
+				EmitQuads(Builder, DefaultCenters);
+				Builder.GetMesh(FMatrix::Identity, BlackMat, SDPG_World,
 					true, false, ViewIdx, Collector);
 			}
 		}
@@ -243,7 +262,8 @@ private:
 	}
 
 	TArray<FVector> VisibleCenters;
-	TArray<FVector> UnseenCenters;
+	TArray<FVector> BlockerCenters;
+	TArray<FVector> DefaultCenters;
 	float HalfExtent;
 };
 
@@ -306,34 +326,42 @@ FPrimitiveSceneProxy* USeinFogOfWarDebugComponent::CreateSceneProxy()
 
 	if (AllCenters.Num() == 0) return nullptr;
 
-	// Bucket cells by color: cyan (visible) vs everything else (unseen).
-	// Impl uses FColor(0, 200, 255) for cyan and (200, 0, 0) for red — test
-	// on blue > red is robust for the MVP 2-color scheme. When explored-only
-	// (dim red) comes in, bucket logic expands to 3 buckets.
+	// Bucket cells by color channel into three viz states. Impl sentinel
+	// colors: cyan = (0, 200, 255), red = (200, 0, 0), black = (0, 0, 0).
+	//   B > R    → cyan (visible)
+	//   R > 100  → red (blocker)
+	//   else     → black (default)
+	// Fallback path (no colors parallel — legacy volume-rasterize case):
+	// treat every cell as default so the whole grid shows up as the black
+	// baseline.
 	TArray<FVector> VisibleCenters;
-	TArray<FVector> UnseenCenters;
+	TArray<FVector> BlockerCenters;
+	TArray<FVector> DefaultCenters;
 	if (AllColors.Num() == AllCenters.Num())
 	{
 		VisibleCenters.Reserve(AllCenters.Num());
-		UnseenCenters.Reserve(AllCenters.Num());
+		BlockerCenters.Reserve(AllCenters.Num());
+		DefaultCenters.Reserve(AllCenters.Num());
 		for (int32 i = 0; i < AllCenters.Num(); ++i)
 		{
 			const FColor& C = AllColors[i];
-			if (C.B > C.R) VisibleCenters.Add(AllCenters[i]);
-			else           UnseenCenters.Add(AllCenters[i]);
+			if (C.B > C.R)      VisibleCenters.Add(AllCenters[i]);
+			else if (C.R > 100) BlockerCenters.Add(AllCenters[i]);
+			else                DefaultCenters.Add(AllCenters[i]);
 		}
 	}
 	else
 	{
-		UnseenCenters = MoveTemp(AllCenters);
+		DefaultCenters = MoveTemp(AllCenters);
 	}
 
 	UE_LOG(LogSeinFogOfWarDebug, Verbose,
-		TEXT("CreateSceneProxy: %d visible + %d unseen cells, halfExtent=%.1f"),
-		VisibleCenters.Num(), UnseenCenters.Num(), HalfExtent);
+		TEXT("CreateSceneProxy: %d visible + %d blocker + %d default cells, halfExtent=%.1f"),
+		VisibleCenters.Num(), BlockerCenters.Num(), DefaultCenters.Num(), HalfExtent);
 
 	return new FSeinFogOfWarDebugProxy(this,
-		MoveTemp(VisibleCenters), MoveTemp(UnseenCenters), HalfExtent);
+		MoveTemp(VisibleCenters), MoveTemp(BlockerCenters),
+		MoveTemp(DefaultCenters), HalfExtent);
 #else
 	return nullptr;
 #endif

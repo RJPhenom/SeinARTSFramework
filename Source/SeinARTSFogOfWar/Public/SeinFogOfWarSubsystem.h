@@ -16,7 +16,6 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
-#include "Containers/Ticker.h"
 #include "SeinFogOfWarSubsystem.generated.h"
 
 class USeinFogOfWar;
@@ -58,10 +57,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<USeinFogOfWar> FogOfWar;
 
-	/** Wall-clock ticker that drives `FogOfWar->TickStamps(World)`. MVP uses
-	 *  wall-clock for simplicity; a sim-tick-driven hook lands when stamp
-	 *  output becomes replicated sim state (shadowcast + ownership pass). */
-	FTSTicker::FDelegateHandle TickerHandle;
+	/** Handle into USeinWorldSubsystem::OnSimTickCompleted. Stamp updates run
+	 *  from the sim tick (not wall clock) so all clients recompute against
+	 *  identical tick-N entity positions — lockstep-safe. */
+	FDelegateHandle SimTickHandle;
 
 	/** Called in OnWorldBeginPlay — scans fog volumes for a baked asset and
 	 *  hands it to the fog impl. Idempotent. */
@@ -72,8 +71,13 @@ private:
 	 *  the bake pipeline lands. */
 	void InitGridIfUnbaked(UWorld& World);
 
-	/** Schedule the wall-clock stamp tick. Called from OnWorldBeginPlay. */
-	void StartStampTicker(UWorld& World);
+	/** Binds `OnSimTickCompleted` so stamps recompute on the sim-tick clock
+	 *  at the plugin-settings `VisionTickInterval` cadence. */
+	void BindStampTick(UWorld& World);
+
+	/** Called each sim tick — applies `VisionTickInterval` gate, then drives
+	 *  the impl's TickStamps for this tick's source snapshot. */
+	void HandleSimTickCompleted(int32 CurrentTick);
 
 	/** Binds cross-module delegates on USeinWorldSubsystem so sim code can
 	 *  query visibility without importing fog-of-war headers. */

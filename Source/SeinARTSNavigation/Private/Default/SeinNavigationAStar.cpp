@@ -285,6 +285,109 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 			BakeEdges, BakeBlockedEdges, StepMax);
 	}
 
+	// ========================================================================
+	// Connected-component pruning — isolated walkable regions (cube tops with
+	// no bridge back to the main floor, floating geometry, etc.) are marked
+	// blocked. Without this, GetGroundHeightAt on a cube-footprint cell would
+	// return cube_top_Z and unit Z-snap would expose the cell's surface even
+	// though pathing can't legitimately reach it. Also strips those cells from
+	// the debug viz (they re-appear as red / unwalkable instead of green).
+	// ========================================================================
+	{
+		static const int32 DX8[8] = { 1, -1,  0,  0,  1,  1, -1, -1 };
+		static const int32 DY8[8] = { 0,  0,  1, -1,  1, -1,  1, -1 };
+
+		const int32 N = GridW * GridH;
+		TArray<int32> Labels;
+		Labels.Init(-1, N);
+		TArray<int32> SizeByLabel;
+		int32 NextLabel = 0;
+
+		TArray<int32> BFSStack;
+		BFSStack.Reserve(256);
+
+		for (int32 Seed = 0; Seed < N; ++Seed)
+		{
+			if (OutAsset->Cells[Seed].Cost == 0) continue;
+			if (Labels[Seed] != -1) continue;
+
+			const int32 L = NextLabel++;
+			int32 Count = 0;
+			BFSStack.Reset();
+			BFSStack.Add(Seed);
+			Labels[Seed] = L;
+
+			while (BFSStack.Num() > 0)
+			{
+				const int32 Cur = BFSStack.Pop(EAllowShrinking::No);
+				++Count;
+
+				const int32 CX = Cur % GridW;
+				const int32 CY = Cur / GridW;
+				const uint8 Conn = OutAsset->Cells[Cur].Connections;
+
+				for (int32 n = 0; n < 8; ++n)
+				{
+					if ((Conn & (1 << n)) == 0) continue;
+					const int32 NX = CX + DX8[n];
+					const int32 NY = CY + DY8[n];
+					if (NX < 0 || NX >= GridW || NY < 0 || NY >= GridH) continue;
+					const int32 NIdx = NY * GridW + NX;
+					if (Labels[NIdx] != -1) continue;
+					Labels[NIdx] = L;
+					BFSStack.Add(NIdx);
+				}
+			}
+
+			SizeByLabel.Add(Count);
+		}
+
+		int32 LargestLabel = 0;
+		int32 LargestSize = 0;
+		for (int32 L = 0; L < SizeByLabel.Num(); ++L)
+		{
+			if (SizeByLabel[L] > LargestSize)
+			{
+				LargestSize = SizeByLabel[L];
+				LargestLabel = L;
+			}
+		}
+
+		int32 Pruned = 0;
+		for (int32 i = 0; i < N; ++i)
+		{
+			if (Labels[i] != -1 && Labels[i] != LargestLabel)
+			{
+				OutAsset->Cells[i].Cost = 0;
+				OutAsset->Cells[i].Connections = 0;
+				++Pruned;
+			}
+		}
+
+		UE_LOG(LogSeinNavAStar, Log,
+			TEXT("Bake components: %d total, largest=%d cells, pruned %d isolated cells"),
+			SizeByLabel.Num(), LargestSize, Pruned);
+
+		// Per-component size histogram (up to 8 components logged) — helps
+		// diagnose whether pruning actually isolated the cube top from the
+		// ground, or whether a stray connection bit merged them.
+		{
+			FString Sizes;
+			for (int32 L = 0; L < FMath::Min<int32>(SizeByLabel.Num(), 8); ++L)
+			{
+				Sizes += FString::Printf(TEXT("[%d]=%d%s "), L, SizeByLabel[L],
+					L == LargestLabel ? TEXT("*") : TEXT(""));
+			}
+			if (SizeByLabel.Num() > 8) Sizes += TEXT("...");
+			UE_LOG(LogSeinNavAStar, Log, TEXT("Bake component sizes: %s"), *Sizes);
+		}
+
+		// Update walkable/blocked tallies so the summary log reflects the post-
+		// prune state.
+		BakeWalkable = FMath::Max(0, BakeWalkable - Pruned);
+		BakeBlocked += Pruned;
+	}
+
 	UE_LOG(LogSeinNavAStar, Log,
 		TEXT("Bake stats: %dx%d=%d cells — walkable=%d blocked=%d (no_trace_hit=%d)"),
 		GridW, GridH, GridW * GridH, BakeWalkable, BakeBlocked, BakeMissed);
@@ -701,60 +804,66 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 		return false;
 	}
 
-	// Project unreachable start/end to nearest walkable cell.
+	// Source projection: if the unit's physical cell is blocked (e.g. stuck on
+	// a pruned island from a stale bake), ring-scan for a nearby walkable cell.
 	if (!IsCellPassable(SX, SY))
 	{
 		FFixedVector Snapped;
 		if (!ProjectPointToNav(Request.Start, Snapped)) return false;
 		WorldToGrid(Snapped, SX, SY);
 	}
-	if (!IsCellPassable(EX, EY))
-	{
-		FFixedVector Snapped;
-		if (!ProjectPointToNav(Request.End, Snapped)) return false;
-		WorldToGrid(Snapped, EX, EY);
-		OutPath.bIsPartial = true;
-	}
 
-	TArray<FIntPoint> CellPath = AStarSearch(FIntPoint(SX, SY), FIntPoint(EX, EY));
+	// Destinations on blocked cells (pruned cube tops, out-of-nav, etc.) skip
+	// A* and fall into the Bresenham walkback below. Designers who want
+	// "reject invalid destination instead of falling back" flip the ability's
+	// bRequiresPathableTarget flag — that routes through IsReachable at
+	// command-validation time, before FindPath is ever called. So FindPath
+	// itself is always permissive: the MoveToAction's contract is to get
+	// somewhere sensible along the straight line toward the click.
+	TArray<FIntPoint> CellPath;
+	if (IsCellPassable(EX, EY))
+	{
+		CellPath = AStarSearch(FIntPoint(SX, SY), FIntPoint(EX, EY));
+	}
 
 	// Fallback: if A* can't reach the destination (unreachable without a ramp —
 	// e.g., clicking on top of a cube with no slope up), walk Bresenham from the
 	// destination back toward the source and try A* to each cell along the line.
 	// First reachable cell wins; the path is marked partial. "Nearest cell on
 	// the floor to the destination cell that lies along a straight path."
+	//
+	// NOTE: we track partial locally rather than setting OutPath.bIsPartial
+	// here directly — BuildSmoothedPath below calls OutPath.Clear() which
+	// would reset the flag. Apply to OutPath *after* smoothing.
+	bool bPartial = false;
 	if (CellPath.Num() == 0)
 	{
-		const int32 FallbackSX = SX, FallbackSY = SY;
-		const int32 DirX = (FallbackSX < EX) ? -1 : ((FallbackSX > EX) ? 1 : 0);
-		const int32 DirY = (FallbackSY < EY) ? -1 : ((FallbackSY > EY) ? 1 : 0);
 		int32 X = EX, Y = EY;
-		int32 DX = FMath::Abs(FallbackSX - EX);
-		int32 DY = FMath::Abs(FallbackSY - EY);
-		int32 SXs = (EX < FallbackSX) ? 1 : -1;
-		int32 SYs = (EY < FallbackSY) ? 1 : -1;
+		int32 DX = FMath::Abs(SX - EX);
+		int32 DY = FMath::Abs(SY - EY);
+		int32 SXs = (EX < SX) ? 1 : -1;
+		int32 SYs = (EY < SY) ? 1 : -1;
 		int32 Err = DX - DY;
-		(void)DirX; (void)DirY; // kept for future diagonal-aware variants
 
 		// Bounded scan — worst case grid diagonal, plus a small slack.
 		const int32 MaxSteps = Width + Height + 4;
 		int32 Steps = 0;
 		while (Steps++ < MaxSteps)
 		{
-			if (X == FallbackSX && Y == FallbackSY) break;
+			if (X == SX && Y == SY) break;
 			const int32 E2 = 2 * Err;
 			if (E2 > -DY) { Err -= DY; X += SXs; }
 			if (E2 < DX)  { Err += DX; Y += SYs; }
 
 			if (!IsValidCoord(X, Y) || !IsCellPassable(X, Y)) continue;
 
-			TArray<FIntPoint> Candidate = AStarSearch(FIntPoint(FallbackSX, FallbackSY), FIntPoint(X, Y));
+			TArray<FIntPoint> Candidate = AStarSearch(FIntPoint(SX, SY), FIntPoint(X, Y));
 			if (Candidate.Num() > 0)
 			{
 				CellPath = MoveTemp(Candidate);
 				EX = X;
 				EY = Y;
-				OutPath.bIsPartial = true;
+				bPartial = true;
 				break;
 			}
 		}
@@ -763,6 +872,11 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 	if (CellPath.Num() == 0) return false;
 
 	BuildSmoothedPath(CellPath, OutPath);
+	// Apply partial flag AFTER smoothing — BuildSmoothedPath's OutPath.Clear()
+	// resets it, so setting it earlier gets clobbered and the "arrive at exact
+	// click" replacement below would then incorrectly snap the final waypoint
+	// onto the original unreachable destination (e.g., a cube top).
+	OutPath.bIsPartial = bPartial;
 
 	// Replace last waypoint with the requested end position (within the cell)
 	// so unit actually arrives at the ordered point, not the cell center.
