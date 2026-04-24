@@ -117,15 +117,29 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "800"))
 	float DefaultCellSize;
 
-	// Vision / Fog of War Settings (DESIGN.md §12)
+	// Vision / Fog of War Settings
 	// ====================================================================================================
 
 	/**
-	 * Vision grid cell edge in world units. Independent of nav cell size — the
-	 * vision grid is typically coarser than nav (default 400 cm = 4 m) because
-	 * fog of war doesn't need sub-meter granularity. Smaller values = crisper
-	 * fog edges + higher memory; larger = cheaper stamps + chunkier edges. Can
-	 * be overridden per-volume on `ASeinFogOfWarVolume`.
+	 * Active fog-of-war implementation. The framework's reader BPFL, editor
+	 * bake button, and cross-module LOS resolver route through this class —
+	 * the rest of the plugin is wholly decoupled from fog-of-war semantics.
+	 *
+	 * Ships with `USeinFogOfWarDefault` as the default: single-layer 2D grid
+	 * with symmetric-shadowcast visibility + lampshade height model (CoH
+	 * TrueSight behavior). Game teams can subclass or replace entirely without
+	 * touching any other framework code — fog is independent of nav.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+		meta = (DisplayName = "Fog Of War Class", MetaClass = "/Script/SeinARTSFogOfWar.SeinFogOfWar"))
+	FSoftClassPath FogOfWarClass;
+
+	/**
+	 * Default fog-of-war grid cell edge in world units (per-volume override
+	 * supported on `ASeinFogOfWarVolume`). Independent of nav cell size — the
+	 * fog grid is typically coarser than nav because vision doesn't need
+	 * sub-meter granularity. Smaller values = crisper fog edges + higher
+	 * memory; larger = cheaper stamps + chunkier edges.
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Vision", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "1600"))
 	float VisionCellSize;

@@ -37,6 +37,19 @@ public:
 		meta = (EditCondition = "bOverrideCellSize", ClampMin = "10.0"))
 	float CellSize = 100.0f;
 
+	/** Maximum vertical step (world units) an agent can traverse between
+	 *  adjacent cells. Blocks "jumps" across gaps where two cells happen to
+	 *  have matching surface Zs but no physical geometry bridging them:
+	 *  ramp-top → cube-top across thin air is rejected because the midpoint
+	 *  surface (ground below) drops more than this value. Typical value is a
+	 *  fraction of a cell (~30-60 cm for a 100 cm grid). */
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Navigation|Overrides")
+	bool bOverrideMaxStepHeight = false;
+
+	UPROPERTY(EditAnywhere, Category = "SeinARTS|Navigation|Overrides",
+		meta = (EditCondition = "bOverrideMaxStepHeight", ClampMin = "0.0"))
+	float MaxStepHeight = 50.0f;
+
 	/** Baked nav data for this level. Assigned by the bake pipeline; shared
 	 *  across all NavVolumes on the level (last-baked wins). Polymorphic —
 	 *  concrete type depends on the active USeinNavigation subclass. */
@@ -53,4 +66,7 @@ public:
 
 	/** Per-volume cell size with plugin-settings fallback. */
 	float GetResolvedCellSize() const;
+
+	/** Per-volume max-step-height with default fallback (50 cm). */
+	float GetResolvedMaxStepHeight() const;
 };

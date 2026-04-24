@@ -1,35 +1,36 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
- * @file    SeinNavVolume.cpp
+ * @file    SeinFogOfWarVolume.cpp
  */
 
-#include "Volumes/SeinNavVolume.h"
+#include "Volumes/SeinFogOfWarVolume.h"
+#include "Debug/SeinFogOfWarDebugComponent.h"
 #include "Settings/PluginSettings.h"
-#include "Debug/SeinNavDebugComponent.h"
 
 #include "Components/BrushComponent.h"
 #include "Engine/CollisionProfile.h"
 
-ASeinNavVolume::ASeinNavVolume(const FObjectInitializer& ObjectInitializer)
+ASeinFogOfWarVolume::ASeinFogOfWarVolume(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = false;
 
-	// Match ANavMeshBoundsVolume: NoCollision profile keeps the FBrushSceneProxy
-	// orange-wireframe rendering in editor while guaranteeing no physics/query.
 	if (UBrushComponent* BrushComp = GetBrushComponent())
 	{
 		BrushComp->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 		BrushComp->Mobility = EComponentMobility::Static;
 	}
 
-	BrushColor = FColor(255, 165, 0, 255); // orange
+	// Distinct color from the nav volume's orange so the two are visually
+	// distinguishable when both sit on the same level. Teal / cyan reads as
+	// "vision-related" against the terrain palette.
+	BrushColor = FColor(0, 200, 200, 255);
 	bColored = true;
 
 #if UE_ENABLE_DEBUG_DRAWING
-	// Scene-proxy debug viz. Visible in editor pre-PIE when the Navigation
+	// Scene-proxy debug viz. Visible in editor pre-PIE when the FogOfWar
 	// show flag is on; null + stripped in shipping.
-	DebugComponent = CreateDefaultSubobject<USeinNavDebugComponent>(TEXT("NavDebugRenderer"));
+	DebugComponent = CreateDefaultSubobject<USeinFogOfWarDebugComponent>(TEXT("FogOfWarDebugRenderer"));
 	if (DebugComponent && GetBrushComponent())
 	{
 		DebugComponent->SetupAttachment(GetBrushComponent());
@@ -37,7 +38,7 @@ ASeinNavVolume::ASeinNavVolume(const FObjectInitializer& ObjectInitializer)
 #endif
 }
 
-FBox ASeinNavVolume::GetVolumeWorldBounds() const
+FBox ASeinFogOfWarVolume::GetVolumeWorldBounds() const
 {
 	if (UBrushComponent* BrushComp = GetBrushComponent())
 	{
@@ -46,18 +47,12 @@ FBox ASeinNavVolume::GetVolumeWorldBounds() const
 	return FBox(ForceInit);
 }
 
-float ASeinNavVolume::GetResolvedCellSize() const
+float ASeinFogOfWarVolume::GetResolvedCellSize() const
 {
 	if (bOverrideCellSize) return CellSize;
 	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
 	{
-		return Settings->DefaultCellSize;
+		return Settings->VisionCellSize;
 	}
-	return 100.0f;
-}
-
-float ASeinNavVolume::GetResolvedMaxStepHeight() const
-{
-	// No plugin-settings equivalent yet — volume override or hardcoded default.
-	return bOverrideMaxStepHeight ? MaxStepHeight : 50.0f;
+	return 400.0f;
 }

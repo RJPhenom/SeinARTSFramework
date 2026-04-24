@@ -124,6 +124,17 @@ public:
 		return HasRuntimeData();
 	}
 
+	/** Sample the baked ground Z at a world-space XY. Returns false if the
+	 *  XY is outside the nav's bounds. Blocked cells still return their stored
+	 *  height (ground level under the obstacle, per the bake), so agents
+	 *  clipping past edges don't pop to weird Zs.
+	 *
+	 *  Used by MoveToAction to keep the agent flush with local terrain as it
+	 *  walks — sampling per-tick at the agent's *current* XY rather than
+	 *  snapping Z to the next waypoint's Z (which causes teleport-to-target-Z
+	 *  artifacts with stacked geometry). */
+	virtual bool GetGroundHeightAt(const FFixedVector& WorldPos, FFixedPoint& OutZ) const { return false; }
+
 	// ----------------------------------------------------------------------
 	// Debug
 	// ----------------------------------------------------------------------

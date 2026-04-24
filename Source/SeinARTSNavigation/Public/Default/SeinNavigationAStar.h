@@ -61,6 +61,7 @@ public:
 	virtual bool FindPath(const FSeinPathRequest& Request, FSeinPath& OutPath) const override;
 	virtual bool IsPassable(const FFixedVector& WorldPos) const override;
 	virtual bool ProjectPointToNav(const FFixedVector& WorldPos, FFixedVector& OutProjected) const override;
+	virtual bool GetGroundHeightAt(const FFixedVector& WorldPos, FFixedPoint& OutZ) const override;
 
 	// Debug collectors — declarations stay in all build configs (ABI); bodies
 	// are compiled out in shipping via UE_ENABLE_DEBUG_DRAWING in the .cpp.
@@ -88,6 +89,18 @@ private:
 
 	/** Per-cell center-height (world-space Z) — snapped-to placement for units. */
 	TArray<FFixedPoint> CellHeight;
+
+	/** Per-cell 8-direction connectivity bitmask (baked). Bit N is set iff a
+	 *  unit can traverse from this cell to its neighbor at direction index N.
+	 *  Queried directly by A* + path smoother — no live slope math at query
+	 *  time, so the rules applied at bake are guaranteed to match the rules
+	 *  enforced at runtime. */
+	TArray<uint8> CellConnections;
+
+	/** Precomputed tan²(MaxWalkableSlopeDegrees). Used only at bake time when
+	 *  computing cell connectivity — the A* pathing reads CellConnections bits
+	 *  rather than re-checking slope live. */
+	FFixedPoint MaxSlopeTanSq = FFixedPoint::One;
 
 	// ----------------------------------------------------------------------
 	// Bake state

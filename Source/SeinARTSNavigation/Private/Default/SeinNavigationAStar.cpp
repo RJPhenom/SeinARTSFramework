@@ -139,6 +139,9 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 		if (Vol) QP.AddIgnoredActor(Vol);
 	}
 
+	// Diagnostic counters. Log at end-of-bake. Turn to Verbose to silence later.
+	int32 BakeMissed = 0, BakeWalkable = 0, BakeBlocked = 0;
+
 	int32 Processed = 0;
 	for (int32 Y = 0; Y < GridH; ++Y)
 	{
@@ -158,43 +161,26 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 
 			FSeinAStarCell& Cell = OutAsset->Cells[Y * GridW + X];
 
-			// Primary trace: first blocker from above. Could be ground OR an
-			// obstacle sitting on the ground (a single line trace stops at the
-			// first blocking collider, so by itself it can't distinguish).
+			// Trace down from above; record whatever walkable-topped surface we
+			// hit. A cube top and the floor next to it both register as walkable
+			// cells — what prevents units from climbing the cube is the slope
+			// gate in A* neighbor transitions (|ΔZ| / cellDist > tan(max slope)
+			// → that edge is not traversable). Same behavior as UE NavMesh.
 			FHitResult TopHit;
-			if (!World->LineTraceSingleByChannel(TopHit, Start, End, ECC_WorldStatic, QP))
+			if (!World->LineTraceSingleByChannel(TopHit, Start, End, ECC_Visibility, QP))
 			{
 				Cell.Cost = 0;
 				Cell.Height = FFixedPoint::FromFloat(BottomZ);
+				++BakeMissed;
+				++BakeBlocked;
 			}
 			else
 			{
-				// Secondary trace: ignore the first-hit actor and see if there's
-				// ground beneath it. If the deeper hit is meaningfully lower, the
-				// first actor is an obstacle above the ground → cell is blocked,
-				// but stored at the *ground* height so the debug viz sits flush
-				// with the floor (not hovering on top of the obstacle).
-				FHitResult GroundHit = TopHit;
-				bool bObstacle = false;
-				if (AActor* TopActor = TopHit.GetActor())
-				{
-					FCollisionQueryParams QP2 = QP;
-					QP2.AddIgnoredActor(TopActor);
-					FHitResult BelowHit;
-					if (World->LineTraceSingleByChannel(BelowHit, Start, End, ECC_WorldStatic, QP2))
-					{
-						if (BelowHit.ImpactPoint.Z < TopHit.ImpactPoint.Z - 10.0f)
-						{
-							GroundHit = BelowHit;
-							bObstacle = true;
-						}
-					}
-				}
-
-				const float Dot = FVector::DotProduct(GroundHit.Normal, FVector::UpVector);
+				const float Dot = FVector::DotProduct(TopHit.Normal, FVector::UpVector);
 				const bool bSlopeOK = Dot >= MaxSlopeCos;
-				Cell.Cost = (bSlopeOK && !bObstacle) ? 1 : 0;
-				Cell.Height = FFixedPoint::FromFloat(GroundHit.ImpactPoint.Z);
+				Cell.Cost = bSlopeOK ? 1 : 0;
+				Cell.Height = FFixedPoint::FromFloat(TopHit.ImpactPoint.Z);
+				if (Cell.Cost == 0) ++BakeBlocked; else ++BakeWalkable;
 			}
 
 			++Processed;
@@ -210,6 +196,98 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 #endif
 		}
 	}
+
+	// ========================================================================
+	// Connectivity pass — detect physical gaps / obstacles between adjacent
+	// walkable cells. For each cell A and each of its 8 neighbor directions,
+	// sample the surface at the midpoint between cell centers. The edge is
+	// traversable iff both half-steps (A→mid, mid→B) pass the slope gate AND
+	// no half-step exceeds MaxStepHeight. Catches the "ramp-top → gap → cube-
+	// top" jump where A.Z ≈ B.Z but the geometry between them drops off.
+	// ========================================================================
+	{
+		const float StepMax = (Volumes.Num() > 0) ? Volumes[0]->GetResolvedMaxStepHeight() : 50.0f;
+		const FFixedPoint MaxStepHeightFP = FFixedPoint::FromFloat(StepMax);
+		const float BakeTan = FMath::Tan(FMath::DegreesToRadians(MaxWalkableSlopeDegrees));
+		const FFixedPoint BakeMaxSlopeTanSq = FFixedPoint::FromFloat(BakeTan * BakeTan);
+		const FFixedPoint CellSizeFP = BakedCellSize;
+		const FFixedPoint HalfCellSq = (CellSizeFP * CellSizeFP) / FFixedPoint::FromInt(4);   // (cell/2)² cardinal half-step
+		const FFixedPoint HalfDiagSq = HalfCellSq * FFixedPoint::FromInt(2);                  // (cell/2 × √2)² diagonal half-step
+
+		static const int32 DX8[8] = { 1, -1,  0,  0,  1,  1, -1, -1 };
+		static const int32 DY8[8] = { 0,  0,  1, -1,  1, -1,  1, -1 };
+
+		int32 BakeEdges = 0, BakeBlockedEdges = 0;
+
+		for (int32 Y = 0; Y < GridH; ++Y)
+		{
+			for (int32 X = 0; X < GridW; ++X)
+			{
+				FSeinAStarCell& A = OutAsset->Cells[Y * GridW + X];
+				if (A.Cost == 0) { A.Connections = 0; continue; }
+
+				uint8 Mask = 0;
+				for (int32 n = 0; n < 8; ++n)
+				{
+					const int32 NX = X + DX8[n];
+					const int32 NY = Y + DY8[n];
+					if (NX < 0 || NX >= GridW || NY < 0 || NY >= GridH) continue;
+					const FSeinAStarCell& B = OutAsset->Cells[NY * GridW + NX];
+					if (B.Cost == 0) continue;
+
+					++BakeEdges;
+
+					// Midpoint surface trace.
+					const float MidX = OriginWorld.X + (X + 0.5f + 0.5f * DX8[n]) * CellSizeF;
+					const float MidY = OriginWorld.Y + (Y + 0.5f + 0.5f * DY8[n]) * CellSizeF;
+					FHitResult MidHit;
+					const FVector MidStart(MidX, MidY, TopZ);
+					const FVector MidEnd(MidX, MidY, BottomZ);
+					if (!World->LineTraceSingleByChannel(MidHit, MidStart, MidEnd, ECC_Visibility, QP))
+					{
+						++BakeBlockedEdges;
+						continue; // no surface at midpoint → no edge
+					}
+
+					const FFixedPoint MidZ = FFixedPoint::FromFloat(MidHit.ImpactPoint.Z);
+					const FFixedPoint AZ = A.Height;
+					const FFixedPoint BZ = B.Height;
+
+					// Half-step vertical deltas.
+					const FFixedPoint AMid = (MidZ > AZ) ? (MidZ - AZ) : (AZ - MidZ);
+					const FFixedPoint MidB = (BZ > MidZ) ? (BZ - MidZ) : (MidZ - BZ);
+
+					// Max-step gate (absolute vertical delta per half-step).
+					if (AMid > MaxStepHeightFP || MidB > MaxStepHeightFP)
+					{
+						++BakeBlockedEdges;
+						continue;
+					}
+
+					// Slope gate on each half-step. Horizontal half-distance is
+					// cellSize/2 for cardinal, cellSize/2 × √2 for diagonal — so
+					// the squared half-distance is HalfCellSq or HalfDiagSq.
+					const FFixedPoint HalfSq = (n < 4) ? HalfCellSq : HalfDiagSq;
+					if ((AMid * AMid) > HalfSq * BakeMaxSlopeTanSq ||
+					    (MidB * MidB) > HalfSq * BakeMaxSlopeTanSq)
+					{
+						++BakeBlockedEdges;
+						continue;
+					}
+
+					Mask |= (1 << n);
+				}
+				A.Connections = Mask;
+			}
+		}
+
+		UE_LOG(LogSeinNavAStar, Log, TEXT("Bake connectivity: edges=%d blocked_edges=%d MaxStepHeight=%.1f"),
+			BakeEdges, BakeBlockedEdges, StepMax);
+	}
+
+	UE_LOG(LogSeinNavAStar, Log,
+		TEXT("Bake stats: %dx%d=%d cells — walkable=%d blocked=%d (no_trace_hit=%d)"),
+		GridW, GridH, GridW * GridH, BakeWalkable, BakeBlocked, BakeMissed);
 
 #if WITH_EDITOR
 	if (!SaveAssetToDisk(OutAsset))
@@ -293,11 +371,19 @@ void USeinNavigationAStar::ApplyAssetData(const USeinNavigationAStarAsset* Asset
 	const int32 N = Width * Height;
 	CellCost.SetNumUninitialized(N);
 	CellHeight.SetNumUninitialized(N);
+	CellConnections.SetNumUninitialized(N);
 	for (int32 i = 0; i < N; ++i)
 	{
 		CellCost[i] = Asset->Cells[i].Cost;
 		CellHeight[i] = Asset->Cells[i].Height;
+		CellConnections[i] = Asset->Cells[i].Connections;
 	}
+
+	// Precompute tan²(MaxWalkableSlopeDegrees) for the A* neighbor-transition
+	// slope gate. Computing at load time (not per-query) keeps A* deterministic
+	// + cheap; the float→fixed conversion is stable across machines.
+	const float Tan = FMath::Tan(FMath::DegreesToRadians(MaxWalkableSlopeDegrees));
+	MaxSlopeTanSq = FFixedPoint::FromFloat(Tan * Tan);
 }
 
 // ============================================================================
@@ -331,6 +417,14 @@ bool USeinNavigationAStar::IsPassable(const FFixedVector& WorldPos) const
 	int32 X, Y;
 	if (!WorldToGrid(WorldPos, X, Y)) return false;
 	return IsCellPassable(X, Y);
+}
+
+bool USeinNavigationAStar::GetGroundHeightAt(const FFixedVector& WorldPos, FFixedPoint& OutZ) const
+{
+	int32 X, Y;
+	if (!WorldToGrid(WorldPos, X, Y)) return false;
+	OutZ = CellHeight[CellIndex(X, Y)];
+	return true;
 }
 
 bool USeinNavigationAStar::ProjectPointToNav(const FFixedVector& WorldPos, FFixedVector& OutProjected) const
@@ -449,20 +543,38 @@ TArray<FIntPoint> USeinNavigationAStar::AStarSearch(FIntPoint Start, FIntPoint E
 		const int32 CX = Cur.CellIdx % Width;
 		const int32 CY = Cur.CellIdx / Width;
 
+		const uint8 CurConn = CellConnections[Cur.CellIdx];
+
 		for (int32 n = 0; n < 8; ++n)
 		{
+			// Connectivity bit — set at bake time via midpoint trace + slope +
+			// max-step gate. Replaces live slope math in the hot loop.
+			if ((CurConn & (1 << n)) == 0) continue;
+
 			const int32 NX = CX + NeighborDX[n];
 			const int32 NY = CY + NeighborDY[n];
-			if (!IsCellPassable(NX, NY)) continue;
-
-			// Disallow diagonal squeezes through blocked corners.
-			if (n >= 4)
-			{
-				if (!IsCellPassable(CX + NeighborDX[n], CY) || !IsCellPassable(CX, CY + NeighborDY[n]))
-					continue;
-			}
+			if (!IsCellPassable(NX, NY)) continue; // defensive; connectivity should already guarantee this
 
 			const int32 NIdx = CellIndex(NX, NY);
+
+			// Disallow diagonal squeezes through blocked-or-disconnected corners.
+			// The diagonal bit being set on THIS cell doesn't imply both cardinal
+			// transitions are legal — check each cardinal-step bit on the current
+			// cell's connectivity mask.
+			if (n >= 4)
+			{
+				// Cardinal indices making up this diagonal:
+				//   4: (+1,+1) → cardinal (+1,0)=idx 0 and (0,+1)=idx 2
+				//   5: (+1,-1) → (+1,0)=0, (0,-1)=3
+				//   6: (-1,+1) → (-1,0)=1, (0,+1)=2
+				//   7: (-1,-1) → (-1,0)=1, (0,-1)=3
+				static const uint8 CardinalA[4] = { 0, 0, 1, 1 };
+				static const uint8 CardinalB[4] = { 2, 3, 2, 3 };
+				const uint8 AIdx = CardinalA[n - 4];
+				const uint8 BIdx = CardinalB[n - 4];
+				if ((CurConn & (1 << AIdx)) == 0 || (CurConn & (1 << BIdx)) == 0) continue;
+			}
+
 			if (Closed[NIdx]) continue;
 
 			const int32 StepCost = NeighborCost[n] * CellCost[NIdx];
@@ -485,7 +597,10 @@ TArray<FIntPoint> USeinNavigationAStar::AStarSearch(FIntPoint Start, FIntPoint E
 
 bool USeinNavigationAStar::HasLineOfSight(int32 X0, int32 Y0, int32 X1, int32 Y1) const
 {
-	// Bresenham supercover — steps through every cell the line touches.
+	// Bresenham supercover with connectivity gate — the smoother must honor the
+	// same rules A* uses, otherwise a path that A* carefully routed around an
+	// obstacle gets collapsed into a straight line that walks through
+	// walkable-but-disconnected cells (e.g., across a cube footprint).
 	int32 DX = FMath::Abs(X1 - X0);
 	int32 DY = FMath::Abs(Y1 - Y0);
 	int32 SX = (X0 < X1) ? 1 : -1;
@@ -493,13 +608,39 @@ bool USeinNavigationAStar::HasLineOfSight(int32 X0, int32 Y0, int32 X1, int32 Y1
 	int32 Err = DX - DY;
 
 	int32 X = X0, Y = Y0;
+
 	while (true)
 	{
 		if (!IsCellPassable(X, Y)) return false;
 		if (X == X1 && Y == Y1) return true;
+
+		int32 NextX = X, NextY = Y;
 		const int32 E2 = 2 * Err;
-		if (E2 > -DY) { Err -= DY; X += SX; }
-		if (E2 < DX)  { Err += DX; Y += SY; }
+		if (E2 > -DY) { Err -= DY; NextX += SX; }
+		if (E2 < DX)  { Err += DX; NextY += SY; }
+
+		// Connectivity gate on the step about to be taken. Map the (dx, dy)
+		// direction to the 8-neighbor bitmask index used at bake time.
+		const int32 StepDX = NextX - X;
+		const int32 StepDY = NextY - Y;
+		int32 DirIdx = -1;
+		if (StepDX ==  1 && StepDY ==  0) DirIdx = 0;
+		else if (StepDX == -1 && StepDY ==  0) DirIdx = 1;
+		else if (StepDX ==  0 && StepDY ==  1) DirIdx = 2;
+		else if (StepDX ==  0 && StepDY == -1) DirIdx = 3;
+		else if (StepDX ==  1 && StepDY ==  1) DirIdx = 4;
+		else if (StepDX ==  1 && StepDY == -1) DirIdx = 5;
+		else if (StepDX == -1 && StepDY ==  1) DirIdx = 6;
+		else if (StepDX == -1 && StepDY == -1) DirIdx = 7;
+
+		if (DirIdx >= 0)
+		{
+			const uint8 Conn = CellConnections[CellIndex(X, Y)];
+			if ((Conn & (1 << DirIdx)) == 0) return false;
+		}
+
+		X = NextX;
+		Y = NextY;
 	}
 }
 
@@ -575,13 +716,58 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 		OutPath.bIsPartial = true;
 	}
 
-	const TArray<FIntPoint> CellPath = AStarSearch(FIntPoint(SX, SY), FIntPoint(EX, EY));
+	TArray<FIntPoint> CellPath = AStarSearch(FIntPoint(SX, SY), FIntPoint(EX, EY));
+
+	// Fallback: if A* can't reach the destination (unreachable without a ramp —
+	// e.g., clicking on top of a cube with no slope up), walk Bresenham from the
+	// destination back toward the source and try A* to each cell along the line.
+	// First reachable cell wins; the path is marked partial. "Nearest cell on
+	// the floor to the destination cell that lies along a straight path."
+	if (CellPath.Num() == 0)
+	{
+		const int32 FallbackSX = SX, FallbackSY = SY;
+		const int32 DirX = (FallbackSX < EX) ? -1 : ((FallbackSX > EX) ? 1 : 0);
+		const int32 DirY = (FallbackSY < EY) ? -1 : ((FallbackSY > EY) ? 1 : 0);
+		int32 X = EX, Y = EY;
+		int32 DX = FMath::Abs(FallbackSX - EX);
+		int32 DY = FMath::Abs(FallbackSY - EY);
+		int32 SXs = (EX < FallbackSX) ? 1 : -1;
+		int32 SYs = (EY < FallbackSY) ? 1 : -1;
+		int32 Err = DX - DY;
+		(void)DirX; (void)DirY; // kept for future diagonal-aware variants
+
+		// Bounded scan — worst case grid diagonal, plus a small slack.
+		const int32 MaxSteps = Width + Height + 4;
+		int32 Steps = 0;
+		while (Steps++ < MaxSteps)
+		{
+			if (X == FallbackSX && Y == FallbackSY) break;
+			const int32 E2 = 2 * Err;
+			if (E2 > -DY) { Err -= DY; X += SXs; }
+			if (E2 < DX)  { Err += DX; Y += SYs; }
+
+			if (!IsValidCoord(X, Y) || !IsCellPassable(X, Y)) continue;
+
+			TArray<FIntPoint> Candidate = AStarSearch(FIntPoint(FallbackSX, FallbackSY), FIntPoint(X, Y));
+			if (Candidate.Num() > 0)
+			{
+				CellPath = MoveTemp(Candidate);
+				EX = X;
+				EY = Y;
+				OutPath.bIsPartial = true;
+				break;
+			}
+		}
+	}
+
 	if (CellPath.Num() == 0) return false;
 
 	BuildSmoothedPath(CellPath, OutPath);
 
 	// Replace last waypoint with the requested end position (within the cell)
 	// so unit actually arrives at the ordered point, not the cell center.
+	// Partial paths keep the cell-center final waypoint — the destination is
+	// literally unreachable, so snapping to it would put the unit inside a wall.
 	if (OutPath.Waypoints.Num() > 0 && !OutPath.bIsPartial)
 	{
 		OutPath.Waypoints.Last() = Request.End;

@@ -11,6 +11,7 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinMovementData.h"
 #include "Types/Entity.h"
+#include "Types/FixedPoint.h"
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinMove, Log, All);
@@ -70,12 +71,13 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 	FFixedVector Pos = Entity->Transform.GetLocation();
 	FFixedPoint RemainingStep = MoveComp->MoveSpeed * DeltaTime;
 
+	// Planar XY movement only; Z is sampled from nav ground once after the loop.
+	// (Using Target.Z per step causes snap-to-next-waypoint-Z teleports — a unit
+	// approaching a cube-top waypoint would leap to cube top before entering it.)
 	while (RemainingStep > FFixedPoint::Zero && CurrentWaypointIndex < Path.Waypoints.Num())
 	{
 		const FFixedVector Target = Path.Waypoints[CurrentWaypointIndex];
 		FFixedVector Delta = Target - Pos;
-		// Planar distance (ignore Z drift so ramps don't bump the unit up/down
-		// via steering — the cell's baked Height is authoritative).
 		Delta.Z = FFixedPoint::Zero;
 		const FFixedPoint DistSq = Delta.SizeSquared();
 
@@ -84,10 +86,9 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 
 		if (DistSq <= ArriveRadiusSq)
 		{
-			// Arrived at this waypoint.
+			// Arrived at this waypoint (XY only; Z resolved below).
 			Pos.X = Target.X;
 			Pos.Y = Target.Y;
-			Pos.Z = Target.Z;
 			NotifyWaypointReached(CurrentWaypointIndex, Path.Waypoints.Num());
 			++CurrentWaypointIndex;
 			continue;
@@ -99,7 +100,6 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		const FFixedVector Dir = FFixedVector::GetSafeNormal(Delta);
 		Pos.X = Pos.X + Dir.X * StepLen;
 		Pos.Y = Pos.Y + Dir.Y * StepLen;
-		Pos.Z = Target.Z; // snap Z to the baked cell height
 
 		RemainingStep = RemainingStep - StepLen;
 
@@ -112,6 +112,19 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 			// TODO: once a fast fixed-point atan2 is wired up we can rotate the
 			// quaternion directly. For MVP we leave rotation alone — the visual
 			// layer reads velocity for facing in most RTS setups anyway.
+		}
+	}
+
+	// Snap Z to the nav's ground height at the agent's *current* XY. This keeps
+	// the unit flush with local terrain instead of popping to an upcoming
+	// waypoint's Z — so obstacles that slipped into a stale bake don't cause
+	// mid-air teleports, and legitimate ramps transition Z at cell boundaries.
+	if (USeinNavigation* Nav = USeinNavigationSubsystem::GetNavigationForWorld(&World))
+	{
+		FFixedPoint GroundZ;
+		if (Nav->GetGroundHeightAt(Pos, GroundZ))
+		{
+			Pos.Z = GroundZ;
 		}
 	}
 

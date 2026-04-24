@@ -71,7 +71,7 @@ DECLARE_DELEGATE_RetVal_ThreeParams(bool, FSeinPathableTargetResolver,
 
 /**
  * Delegate sim uses to ask "is this target visible for the owner's VisionGroup?"
- * Registered by USeinVisionSubsystem (SeinARTSNavigation) at OnWorldBeginPlay so
+ * Registered by USeinFogOfWarSubsystem (SeinARTSFogOfWar) at OnWorldBeginPlay so
  * SeinARTSCoreEntity code can consult it without a circular dependency.
  * Returns true = target is visible. False = reject with NoLineOfSight.
  */
@@ -239,8 +239,8 @@ public:
 	 *  by USeinNavigationSubsystem at OnWorldBeginPlay. */
 	FSeinPathableTargetResolver PathableTargetResolver;
 
-	/** Cross-module resolver for USeinAbility::bRequiresLineOfSight (§12). Registered
-	 *  by USeinVisionSubsystem at OnWorldBeginPlay. If unbound, LOS checks permit. */
+	/** Cross-module resolver for USeinAbility::bRequiresLineOfSight. Registered
+	 *  by USeinFogOfWarSubsystem at OnWorldBeginPlay. If unbound, LOS checks permit. */
 	FSeinLineOfSightResolver LineOfSightResolver;
 
 	/** Cross-module spatial-grid register/unregister callbacks (§13 + §14).

@@ -14,7 +14,7 @@
 #include "Types/Vector.h"
 #include "SeinNavigationAStarAsset.generated.h"
 
-/** Per-cell baked data. Packed into a single byte to keep the grid dense. */
+/** Per-cell baked data. */
 USTRUCT()
 struct FSeinAStarCell
 {
@@ -24,6 +24,14 @@ struct FSeinAStarCell
 	 *  (multiplied against unit step cost during A*). 255 = impassable. */
 	UPROPERTY()
 	uint8 Cost = 1;
+
+	/** Per-direction connectivity bitmask. Bit N is set iff a unit can traverse
+	 *  from this cell to the neighbor in direction N. Direction indices match
+	 *  NeighborDX/DY in the A* search: 0..3 cardinal (E/W/N/S), 4..7 diagonal
+	 *  (NE/SE/NW/SW). Baked by a per-edge midpoint trace that checks slope on
+	 *  both halves + max-step-height. Replaces live slope math in A*. */
+	UPROPERTY()
+	uint8 Connections = 0;
 
 	/** World-space Z at the cell's center (for visual placement + debug). */
 	UPROPERTY()

@@ -24,6 +24,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "SeinARTSFogOfWar",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "SeinARTSEditor",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit"

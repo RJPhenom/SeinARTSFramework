@@ -44,10 +44,10 @@ TArray<FSeinEntityHandle> USeinAIBPFL::SeinQueryAllEntities(const UObject* World
 TArray<FSeinEntityHandle> USeinAIBPFL::SeinQueryVisibleEntitiesForPlayer(const UObject* WorldContextObject, FSeinPlayerID ObserverPlayer, FGameplayTagQuery Query)
 {
 	// V1: forwards through the all-entities query. Fog-respecting filter is a
-	// cross-module call into USeinVisionSubsystem; hooking it up is a polish
-	// pass that binds into USeinVisionBPFL when the vision reader BPFL grows
-	// a "is visible for player" predicate entry. Designer-author AI that want
-	// fog-respecting behavior can consult `USeinVisionBPFL::SeinIsEntityVisible`
+	// cross-module call into USeinFogOfWarSubsystem; hooking it up is a polish
+	// pass that binds into USeinFogOfWarBPFL when the reader BPFL grows a
+	// "is visible for player" predicate entry. Designer-author AI that want
+	// fog-respecting behavior can consult `USeinFogOfWarBPFL::SeinIsEntityVisible`
 	// on each entity in the meantime.
 	(void)ObserverPlayer;
 	return SeinQueryAllEntities(WorldContextObject, Query);
