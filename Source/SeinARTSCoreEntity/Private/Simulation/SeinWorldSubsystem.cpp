@@ -7,6 +7,7 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Actor/SeinActor.h"
 #include "AI/SeinAIController.h"
+#include "HAL/IConsoleManager.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Data/SeinFaction.h"
 #include "Settings/PluginSettings.h"
@@ -208,6 +209,23 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 		FFixedPoint SimDeltaTime = FFixedPoint::One / FFixedPoint::FromInt(Settings->SimulationTickRate);
 
 		TickSystems(SimDeltaTime);
+
+#if !UE_BUILD_SHIPPING
+		// Determinism verification: when the Log cvar is on, dump the sim
+		// state hash each tick. Run two PIE clients with this enabled and
+		// diff the logs — any divergence pinpoints the tick where lockstep
+		// breaks. Gated off in shipping builds so the hash walk doesn't
+		// cost production CPU.
+		{
+			static IConsoleVariable* CVarLog = IConsoleManager::Get().FindConsoleVariable(TEXT("SeinARTS.Debug.StateHash.Log"));
+			if (CVarLog && CVarLog->GetInt() != 0)
+			{
+				UE_LOG(LogSeinSim, Log, TEXT("StateHash[tick %d] = 0x%08x"),
+					CurrentTick, static_cast<uint32>(ComputeStateHash()));
+			}
+		}
+#endif
+
 		OnSimTickCompleted.Broadcast(CurrentTick);
 	}
 
@@ -680,16 +698,16 @@ void USeinWorldSubsystem::ProcessCommands()
 				continue;
 			}
 
-			// 3b. Pathable-target gate (DESIGN §13) — if enabled on this ability,
-			// consult the nav-registered resolver for abstract-graph reachability
-			// from the entity's current world position to the target position.
+			// 3b. Pathable-target gate — if enabled on this ability, consult the
+			// nav-registered resolver for reachability. From/To stay FFixedVector
+			// end-to-end; no lossy float round-trip on the sim path.
 			if (Ability->bRequiresPathableTarget && PathableTargetResolver.IsBound())
 			{
 				const FSeinEntity* ActingEntity = GetEntity(Cmd.EntityHandle);
 				if (ActingEntity)
 				{
-					const FVector FromWorld = ActingEntity->Transform.GetLocation().ToVector();
-					const FVector ToWorld = Cmd.TargetLocation.ToVector();
+					const FFixedVector FromWorld = ActingEntity->Transform.GetLocation();
+					const FFixedVector ToWorld = Cmd.TargetLocation;
 
 					FGameplayTagContainer AgentTags;
 					if (const FSeinTagData* TagComp = GetComponent<FSeinTagData>(Cmd.EntityHandle))
@@ -2040,21 +2058,217 @@ TArray<FSeinVisualEvent> USeinWorldSubsystem::FlushVisualEvents()
 
 // ==================== State Hashing ====================
 
+namespace
+{
+	// Tag comparator — iteration order that's stable across processes.
+	FORCEINLINE bool TagNameLess(const FGameplayTag& A, const FGameplayTag& B)
+	{
+		return A.GetTagName().Compare(B.GetTagName()) < 0;
+	}
+
+	// Walk a TMap<FGameplayTag, T> in sorted-by-name order + hash each
+	// (tag, value) pair. Handles the cross-process-stable iteration the
+	// audit flagged for pointer-keyed maps + any tag-keyed state that
+	// contributes to the sim hash.
+	template<typename ValueType, typename HashValueFn>
+	FORCEINLINE void HashTagMap(uint32& Hash, const TMap<FGameplayTag, ValueType>& Map, HashValueFn HashVal)
+	{
+		TArray<FGameplayTag> Keys;
+		Map.GetKeys(Keys);
+		Keys.Sort(TagNameLess);
+		for (const FGameplayTag& Key : Keys)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(Key));
+			Hash = HashCombine(Hash, HashVal(Map[Key]));
+		}
+	}
+
+	// Hash a FSeinPlayerState field-by-field. The free-function
+	// GetTypeHash(FSeinPlayerState) only covers PlayerID (it's a TMap-
+	// key hash) — we need the full state for desync detection.
+	uint32 HashPlayerStateFields(const FSeinPlayerState& State)
+	{
+		uint32 Hash = GetTypeHash(State.PlayerID);
+		Hash = HashCombine(Hash, GetTypeHash(State.FactionID));
+		Hash = HashCombine(Hash, GetTypeHash(State.TeamID));
+		Hash = HashCombine(Hash, GetTypeHash(State.bEliminated));
+		Hash = HashCombine(Hash, GetTypeHash(State.bReady));
+		Hash = HashCombine(Hash, GetTypeHash(State.bIsSpectator));
+		Hash = HashCombine(Hash, GetTypeHash(State.bIsAI));
+		Hash = HashCombine(Hash, GetTypeHash(State.NextEffectInstanceID));
+
+		HashTagMap(Hash, State.Resources,          [](const FFixedPoint& V) { return GetTypeHash(V); });
+		HashTagMap(Hash, State.ResourceCaps,       [](const FFixedPoint& V) { return GetTypeHash(V); });
+		HashTagMap(Hash, State.PlayerTagRefCounts, [](int32 V)              { return GetTypeHash(V); });
+		HashTagMap(Hash, State.StatCounters,       [](const FFixedPoint& V) { return GetTypeHash(V); });
+
+		// ArchetypeEffects + PlayerEffects are TArrays — order is already
+		// deterministic by insertion (apply order is sim-tick driven).
+		Hash = HashCombine(Hash, GetTypeHash(State.ArchetypeEffects.Num()));
+		for (const FSeinActiveEffect& E : State.ArchetypeEffects)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(E));
+		}
+		Hash = HashCombine(Hash, GetTypeHash(State.PlayerEffects.Num()));
+		for (const FSeinActiveEffect& E : State.PlayerEffects)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(E));
+		}
+		return Hash;
+	}
+}
+
 int32 USeinWorldSubsystem::ComputeStateHash() const
 {
 	uint32 Hash = GetTypeHash(CurrentTick);
 
-	// Hash all entities
+	// Entities — pool iterates in slot-index order, already deterministic.
 	EntityPool.ForEachEntity([&Hash](FSeinEntityHandle Handle, const FSeinEntity& Entity)
 	{
 		Hash = HashCombine(Hash, GetTypeHash(Entity));
 	});
 
-	// Hash all component storages
-	for (const auto& Pair : ComponentStorages)
+	// Component storages — TMap is keyed by UScriptStruct* (pointer).
+	// Pointer hash is stable within a process but not guaranteed across
+	// processes, so sort by struct name before hashing. Keeps cross-process
+	// comparison reliable for desync detection.
 	{
-		Hash = HashCombine(Hash, Pair.Value->ComputeHash());
+		TArray<UScriptStruct*> Structs;
+		Structs.Reserve(ComponentStorages.Num());
+		for (const auto& Pair : ComponentStorages) { Structs.Add(Pair.Key); }
+		Structs.Sort([](const UScriptStruct& A, const UScriptStruct& B)
+		{
+			return A.GetFName().Compare(B.GetFName()) < 0;
+		});
+		for (UScriptStruct* Struct : Structs)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(Struct->GetFName()));
+			Hash = HashCombine(Hash, ComponentStorages[Struct]->ComputeHash());
+		}
 	}
+
+	// Player states — sort by PlayerID (uint8, ordering trivially stable).
+	{
+		TArray<FSeinPlayerID> Keys;
+		PlayerStates.GetKeys(Keys);
+		Keys.Sort();
+		for (const FSeinPlayerID& PID : Keys)
+		{
+			Hash = HashCombine(Hash, HashPlayerStateFields(PlayerStates[PID]));
+		}
+	}
+
+	// Entity tag index — sorted by tag name. Redundant with per-entity
+	// FSeinTagData (which is in component storage), but hashing it catches
+	// index/refcount drift the per-entity path would miss.
+	{
+		TArray<FGameplayTag> Keys;
+		EntityTagIndex.GetKeys(Keys);
+		Keys.Sort(TagNameLess);
+		for (const FGameplayTag& Tag : Keys)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(Tag));
+			const TArray<FSeinEntityHandle>& Bucket = EntityTagIndex[Tag];
+			Hash = HashCombine(Hash, GetTypeHash(Bucket.Num()));
+			for (const FSeinEntityHandle& H : Bucket)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(H));
+			}
+		}
+	}
+
+	// Named entity registry — sort by name.
+	{
+		TArray<FName> Keys;
+		NamedEntityRegistry.GetKeys(Keys);
+		Keys.Sort([](const FName& A, const FName& B) { return A.Compare(B) < 0; });
+		for (const FName& Name : Keys)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(Name));
+			Hash = HashCombine(Hash, GetTypeHash(NamedEntityRegistry[Name]));
+		}
+	}
+
+	// Diplomacy — relations + tag index. Sort by (From, To) pair.
+	// FGameplayTagContainer has no GetTypeHash; iterate its tags sorted.
+	{
+		TArray<FSeinDiplomacyKey> Keys;
+		DiplomacyRelations.GetKeys(Keys);
+		Keys.Sort([](const FSeinDiplomacyKey& A, const FSeinDiplomacyKey& B)
+		{
+			if (A.FromPlayer.Value != B.FromPlayer.Value) return A.FromPlayer.Value < B.FromPlayer.Value;
+			return A.ToPlayer.Value < B.ToPlayer.Value;
+		});
+		for (const FSeinDiplomacyKey& K : Keys)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(K));
+			const FGameplayTagContainer& Tags = DiplomacyRelations[K];
+			TArray<FGameplayTag> TagList;
+			Tags.GetGameplayTagArray(TagList);
+			TagList.Sort(TagNameLess);
+			for (const FGameplayTag& T : TagList)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(T));
+			}
+		}
+	}
+	{
+		TArray<FGameplayTag> Keys;
+		DiplomacyTagIndex.GetKeys(Keys);
+		Keys.Sort(TagNameLess);
+		for (const FGameplayTag& Tag : Keys)
+		{
+			Hash = HashCombine(Hash, GetTypeHash(Tag));
+			const FSeinDiplomacyIndexBucket& Bucket = DiplomacyTagIndex[Tag];
+			Hash = HashCombine(Hash, GetTypeHash(Bucket.Pairs.Num()));
+			for (const FSeinDiplomacyKey& K : Bucket.Pairs)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(K));
+			}
+		}
+	}
+
+	// Active votes — sort by vote type tag. Inner Votes map sorted by player ID.
+	{
+		TArray<FGameplayTag> Keys;
+		ActiveVotes.GetKeys(Keys);
+		Keys.Sort(TagNameLess);
+		for (const FGameplayTag& VTag : Keys)
+		{
+			const FSeinVoteState& V = ActiveVotes[VTag];
+			Hash = HashCombine(Hash, GetTypeHash(VTag));
+			Hash = HashCombine(Hash, GetTypeHash(V.RequiredThreshold));
+			Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(V.Resolution)));
+			Hash = HashCombine(Hash, GetTypeHash(V.InitiatedAtTick));
+			Hash = HashCombine(Hash, GetTypeHash(V.ExpiresAtTick));
+			Hash = HashCombine(Hash, GetTypeHash(V.Initiator));
+			TArray<FSeinPlayerID> Voters;
+			V.Votes.GetKeys(Voters);
+			Voters.Sort();
+			for (const FSeinPlayerID& Voter : Voters)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(Voter));
+				Hash = HashCombine(Hash, GetTypeHash(V.Votes[Voter]));
+			}
+		}
+	}
+
+	// Pending destroys — order matters if destroys trigger same-tick effects.
+	Hash = HashCombine(Hash, GetTypeHash(PendingDestroy.Num()));
+	for (const FSeinEntityHandle& H : PendingDestroy)
+	{
+		Hash = HashCombine(Hash, GetTypeHash(H));
+	}
+
+	// Sim PRNG cursor — determinism of any roll-ordered systems depends on
+	// it advancing identically on all clients. Hash both state halves.
+	Hash = HashCombine(Hash, GetTypeHash(SimRandom.State0));
+	Hash = HashCombine(Hash, GetTypeHash(SimRandom.State1));
+
+	// Match + pause flags.
+	Hash = HashCombine(Hash, GetTypeHash(static_cast<uint8>(MatchState)));
+	Hash = HashCombine(Hash, GetTypeHash(bSimPaused));
+	Hash = HashCombine(Hash, GetTypeHash(bSimPausedHard));
 
 	return static_cast<int32>(Hash);
 }

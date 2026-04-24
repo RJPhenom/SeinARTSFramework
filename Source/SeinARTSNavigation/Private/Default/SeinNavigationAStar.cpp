@@ -206,8 +206,41 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 	// top" jump where A.Z ≈ B.Z but the geometry between them drops off.
 	// ========================================================================
 	{
-		const float StepMax = (Volumes.Num() > 0) ? Volumes[0]->GetResolvedMaxStepHeight() : 50.0f;
-		const FFixedPoint MaxStepHeightFP = FFixedPoint::FromFloat(StepMax);
+		// Per-cell max step height: first containing volume's override wins,
+		// else plugin-settings fallback. Testing each cell against the volume
+		// AABB list is O(cells × volumes) — fine for typical bakes (few dozen
+		// volumes, tens of thousands of cells). If that ever shifts, swap to a
+		// spatial hash of volume bounds.
+		const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+		const float FallbackStepF = Settings ? Settings->DefaultMaxStepHeight : 50.0f;
+		const FFixedPoint FallbackStepFP = FFixedPoint::FromFloat(FallbackStepF);
+
+		TArray<FFixedPoint> CellMaxStep;
+		CellMaxStep.SetNum(GridW * GridH);
+		for (int32 Y = 0; Y < GridH; ++Y)
+		{
+			for (int32 X = 0; X < GridW; ++X)
+			{
+				const float CX = OriginWorld.X + (X + 0.5f) * CellSizeF;
+				const float CY = OriginWorld.Y + (Y + 0.5f) * CellSizeF;
+				FFixedPoint CellStep = FallbackStepFP;
+				for (ASeinNavVolume* Vol : Volumes)
+				{
+					if (!Vol) continue;
+					const FBox VB = Vol->GetVolumeWorldBounds();
+					// XY containment only — bake spans the full vertical extent
+					// of the union, and cells inside a volume in plan view take
+					// its step rule regardless of Z.
+					if (CX >= VB.Min.X && CX <= VB.Max.X && CY >= VB.Min.Y && CY <= VB.Max.Y)
+					{
+						CellStep = FFixedPoint::FromFloat(Vol->GetResolvedMaxStepHeight());
+						break; // first match wins
+					}
+				}
+				CellMaxStep[Y * GridW + X] = CellStep;
+			}
+		}
+
 		const float BakeTan = FMath::Tan(FMath::DegreesToRadians(MaxWalkableSlopeDegrees));
 		const FFixedPoint BakeMaxSlopeTanSq = FFixedPoint::FromFloat(BakeTan * BakeTan);
 		const FFixedPoint CellSizeFP = BakedCellSize;
@@ -225,6 +258,8 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 			{
 				FSeinAStarCell& A = OutAsset->Cells[Y * GridW + X];
 				if (A.Cost == 0) { A.Connections = 0; continue; }
+
+				const FFixedPoint AStep = CellMaxStep[Y * GridW + X];
 
 				uint8 Mask = 0;
 				for (int32 n = 0; n < 8; ++n)
@@ -257,8 +292,13 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 					const FFixedPoint AMid = (MidZ > AZ) ? (MidZ - AZ) : (AZ - MidZ);
 					const FFixedPoint MidB = (BZ > MidZ) ? (BZ - MidZ) : (MidZ - BZ);
 
-					// Max-step gate (absolute vertical delta per half-step).
-					if (AMid > MaxStepHeightFP || MidB > MaxStepHeightFP)
+					// Max-step gate per half-step. Two adjacent cells can belong
+					// to different volumes with different step rules — take the
+					// min (most restrictive) so an edge survives only if BOTH
+					// sides permit it.
+					const FFixedPoint BStep = CellMaxStep[NY * GridW + NX];
+					const FFixedPoint EdgeStep = (AStep < BStep) ? AStep : BStep;
+					if (AMid > EdgeStep || MidB > EdgeStep)
 					{
 						++BakeBlockedEdges;
 						continue;
@@ -281,8 +321,8 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 			}
 		}
 
-		UE_LOG(LogSeinNavAStar, Log, TEXT("Bake connectivity: edges=%d blocked_edges=%d MaxStepHeight=%.1f"),
-			BakeEdges, BakeBlockedEdges, StepMax);
+		UE_LOG(LogSeinNavAStar, Log, TEXT("Bake connectivity: edges=%d blocked_edges=%d FallbackStep=%.1f"),
+			BakeEdges, BakeBlockedEdges, FallbackStepF);
 	}
 
 	// ========================================================================

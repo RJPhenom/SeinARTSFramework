@@ -14,6 +14,8 @@
 #include "Events/SeinVisualEvent.h"
 #include "Types/Entity.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogSeinBridge, Log, All);
+
 USeinActorBridge::USeinActorBridge()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -104,6 +106,14 @@ void USeinActorBridge::OnSimTick()
 	PreviousSimTransform = CurrentSimTransform;
 	CurrentSimTransform = Entity->Transform;
 	bHasSimSnapshot = true;
+
+	UE_LOG(LogSeinBridge, Verbose,
+		TEXT("Snapshot %s: entityRot=(x=%.3f y=%.3f z=%.3f w=%.3f) capturedRot=(x=%.3f y=%.3f z=%.3f w=%.3f)"),
+		*GetOwner()->GetName(),
+		Entity->Transform.Rotation.X.ToFloat(), Entity->Transform.Rotation.Y.ToFloat(),
+		Entity->Transform.Rotation.Z.ToFloat(), Entity->Transform.Rotation.W.ToFloat(),
+		CurrentSimTransform.Rotation.X.ToFloat(), CurrentSimTransform.Rotation.Y.ToFloat(),
+		CurrentSimTransform.Rotation.Z.ToFloat(), CurrentSimTransform.Rotation.W.ToFloat());
 }
 
 void USeinActorBridge::HandleVisualEvent(const FSeinVisualEvent& Event)
@@ -229,4 +239,13 @@ void USeinActorBridge::SyncTransformToActor()
 	}
 
 	Owner->SetActorTransform(TargetTransform);
+
+	// Diagnostic: enable with `log LogSeinBridge Verbose`. Fires once per
+	// bridge tick with the rotation yaw we just pushed to the actor.
+	UE_LOG(LogSeinBridge, Verbose,
+		TEXT("Bridge %s: pos=(%.1f,%.1f,%.1f) yaw=%.1f deg [interp=%d]"),
+		*Owner->GetName(),
+		TargetTransform.GetLocation().X, TargetTransform.GetLocation().Y, TargetTransform.GetLocation().Z,
+		TargetTransform.Rotator().Yaw,
+		bInterpolateTransform ? 1 : 0);
 }

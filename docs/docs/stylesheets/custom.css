@@ -61,21 +61,24 @@
 /* Underlying page canvas for mobile overscroll / area beyond footer */
 html,
 body {
-  background: #000;
+  background: #000 !important;
 }
 
 /* Keep the visible docs surfaces on the normal theme background */
+
 .md-container,
 .md-main,
 .md-main__inner {
-  background: var(--md-default-bg-color);
+  background: #000 !important;
 }
 
 /* --- Header --- */
 .md-header {
-  background: #000;
+  background: #000 !important;
   border-bottom: 1px solid var(--sein-border);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  min-height: 4.5rem;
+  height: 4.5rem;
 }
 
 .md-header__title {
@@ -85,7 +88,7 @@ body {
 
 .md-header__button.md-logo img,
 .md-header__button.md-logo svg {
-  height: 32px;
+  height: 36px;
   width: auto;
 }
 
@@ -95,23 +98,12 @@ body {
 }
 
 /* Gold accent line under header */
-.md-header::after {
-  content: "";
-  display: block;
-  height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--sein-gold-dim) 20%,
-    var(--sein-gold) 50%,
-    var(--sein-gold-dim) 80%,
-    transparent 100%
-  );
-}
 
 /* --- Inline Header Nav (replaces tabs) --- */
 .md-header__inner {
   align-items: center;
+  display: flex;
+  height: 100%;
 }
 
 .md-header__inline-nav {
@@ -169,7 +161,7 @@ body {
 
   .md-header__button.md-logo img,
   .md-header__button.md-logo svg {
-    height: 20px;
+    height: 24px;
     width: auto;
   }
 

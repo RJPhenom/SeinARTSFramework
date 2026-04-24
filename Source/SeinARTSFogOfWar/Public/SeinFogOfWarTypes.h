@@ -13,6 +13,30 @@
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
 #include "Core/SeinPlayerID.h"
+#include "SeinFogOfWarTypes.generated.h"
+
+/**
+ * EVNNNNNN bit identity for use in UPROPERTY bitmask pickers. Values are
+ * the bit masks themselves (with `UseEnumValuesAsMaskValuesInEditor`), so
+ * ANDing / ORing against `FSeinVisionData::EmissionLayerMask` and friends
+ * works without any translation. Names are static (baked at compile time);
+ * if designers want their project-specific layer names (e.g. "Thermal"
+ * instead of "N0") in the picker, that's a custom details panel — the
+ * bits themselves stay keyed to this enum.
+ */
+UENUM(meta = (Bitflags, UseEnumValuesAsMaskValuesInEditor = "true"))
+enum class ESeinFogOfWarLayerBit : uint8
+{
+	Explored = 0x01 UMETA(DisplayName = "E (Explored)"),
+	Normal   = 0x02 UMETA(DisplayName = "V (Normal)"),
+	N0       = 0x04 UMETA(DisplayName = "N0"),
+	N1       = 0x08 UMETA(DisplayName = "N1"),
+	N2       = 0x10 UMETA(DisplayName = "N2"),
+	N3       = 0x20 UMETA(DisplayName = "N3"),
+	N4       = 0x40 UMETA(DisplayName = "N4"),
+	N5       = 0x80 UMETA(DisplayName = "N5"),
+};
+ENUM_CLASS_FLAGS(ESeinFogOfWarLayerBit);
 
 /** Debug-viz Z offset (world units) above the terrain-trace hit. Keeps fog
  *  cells clearly above the nav debug layer (which draws at bake cell height

@@ -67,6 +67,7 @@ public:
 	/** Per-volume cell size with plugin-settings fallback. */
 	float GetResolvedCellSize() const;
 
-	/** Per-volume max-step-height with default fallback (50 cm). */
+	/** Per-volume max-step-height with plugin-settings fallback
+	 *  (`USeinARTSCoreSettings::DefaultMaxStepHeight`). */
 	float GetResolvedMaxStepHeight() const;
 };

@@ -1,15 +1,15 @@
 {% extends "base.html" %} {% block announce %}
 <style>
   .md-banner {
-    background: #000;
+    background: #22262e;
     border-bottom: 1px solid var(--sein-border);
   }
   .md-banner__inner {
     font-size: 0.67rem;
     line-height: 1.2;
     color: rgba(255, 255, 255, 0.82);
-    padding-top: 0.35rem;
-    padding-bottom: 0.35rem;
+    padding-top: 0.05rem;
+    padding-bottom: 0.05rem;
   }
   .md-banner__inner a {
     color: var(--sein-blue);
@@ -41,18 +41,6 @@ SeinARTS Framework is in active development &mdash;
         alt="{{ config.site_name | e }}"
       />
     </a>
-
-    <!-- Inline nav links (replaces site title) -->
-    <nav class="md-header__inline-nav" aria-label="Site navigation">
-      {% for nav_item in nav %} {% if nav_item != nav.homepage %}
-      <a
-        href="{{ (nav_item.url or (nav_item.children[0].url if nav_item.children else '#')) | url }}"
-        class="md-header-inline__link{% if nav_item.active %} md-header-inline__link--active{% endif %}"
-      >
-        {{ nav_item.title }}
-      </a>
-      {% endif %} {% endfor %}
-    </nav>
 
     <!-- Spacer pushes controls to the right -->
     <div class="md-header__spacer"></div>

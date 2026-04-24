@@ -10,6 +10,8 @@
 #include "Types/Quat.h"
 #include "Components/SeinMovementData.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogSeinLocomotion, Log, All);
+
 bool USeinInfantryMovement::Tick(
 	FSeinEntity& Entity,
 	const FSeinMovementData& MoveData,
@@ -37,7 +39,20 @@ bool USeinInfantryMovement::Tick(
 	if (Planar.SizeSquared() > FFixedPoint::Epsilon)
 	{
 		const FFixedPoint Yaw = SeinMath::Atan2(Planar.Y, Planar.X);
-		Entity.Transform.Rotation = YawOnly(Yaw);
+		const FFixedQuaternion NewQuat = YawOnly(Yaw);
+		Entity.Transform.Rotation = NewQuat;
+		UE_LOG(LogSeinLocomotion, Verbose,
+			TEXT("Infantry: yaw=%.3f rad -> quat(x=%.4f y=%.4f z=%.4f w=%.4f) post-write(x=%.4f y=%.4f z=%.4f w=%.4f)"),
+			Yaw.ToFloat(),
+			NewQuat.X.ToFloat(), NewQuat.Y.ToFloat(), NewQuat.Z.ToFloat(), NewQuat.W.ToFloat(),
+			Entity.Transform.Rotation.X.ToFloat(), Entity.Transform.Rotation.Y.ToFloat(),
+			Entity.Transform.Rotation.Z.ToFloat(), Entity.Transform.Rotation.W.ToFloat());
+	}
+	else
+	{
+		UE_LOG(LogSeinLocomotion, Verbose,
+			TEXT("Infantry: delta too small (sqMag=%.6f), rotation NOT updated"),
+			Planar.SizeSquared().ToFloat());
 	}
 
 	return bReached;

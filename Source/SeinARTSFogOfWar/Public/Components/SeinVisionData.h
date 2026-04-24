@@ -11,6 +11,7 @@
 
 #include "CoreMinimal.h"
 #include "Types/FixedPoint.h"
+#include "SeinFogOfWarTypes.h"
 #include "SeinVisionData.generated.h"
 
 /**
@@ -35,10 +36,12 @@ struct SEINARTSFOGOFWAR_API FSeinVisionLayerRadius
 
 	/** Stamp radius (world units) for this layer. Independent of the default
 	 *  `VisionRadius` on the parent component — a unit can have a tight Normal
-	 *  radius and a wide Thermal radius, for example. */
+	 *  radius and a wide Thermal radius, for example. Defaults to 0 so
+	 *  authoring a custom-layer stamp is an explicit opt-in (check the box,
+	 *  set the radius). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Vision",
 		meta = (EditCondition = "bEnabled"))
-	FFixedPoint Radius = FFixedPoint::FromInt(500);
+	FFixedPoint Radius = FFixedPoint::Zero;
 };
 
 /**
@@ -71,6 +74,25 @@ struct SEINARTSFOGOFWAR_API FSeinVisionData
 	 *  blocks them. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Vision")
 	FFixedPoint EyeHeight = FFixedPoint::FromInt(180);
+
+	/** Layer bitmask this entity emits on — the visibility check is
+	 *  `(observer_cell_bits & EmissionLayerMask) != 0`. Bit 1 = V (Normal,
+	 *  default for standard units). Bit 0 = E (never set here in practice —
+	 *  explored-only is a tracking concept). Bits 2..7 = N0..N5 custom
+	 *  layers.
+	 *
+	 *  Examples:
+	 *    - Standard unit    → 0x02 (visible on Normal)
+	 *    - Camouflaged unit → 0x04 (visible only on N0 / e.g. "Stealth")
+	 *    - Detected-always  → 0xFE (visible on any vision layer)
+	 *    - Invisible prop   → 0x00 (never visible — debug-only)
+	 *
+	 *  This is the EMISSION side. The perception side (what layers this
+	 *  unit stamps as a vision source) is driven by VisionRadius +
+	 *  LayerSlots below. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Vision",
+		meta = (Bitmask, BitmaskEnum = "/Script/SeinARTSFogOfWar.ESeinFogOfWarLayerBit"))
+	uint8 EmissionLayerMask = 0x02; // V bit (Normal)
 
 	/** Exactly 6 per-layer stamp slots, matching the project's configured
 	 *  vision layers (`USeinARTSCoreSettings::VisionLayers`). Slot N → bit

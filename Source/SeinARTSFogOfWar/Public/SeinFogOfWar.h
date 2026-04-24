@@ -186,10 +186,13 @@ public:
 	virtual void DrawDebug(UWorld* World) const {}
 
 	/** Collect cell geometry for scene-proxy rendering, for one observer's
-	 *  VisionGroup. Emits one quad per cell with per-cell color derived from
-	 *  the EVNNNNNN bitfield (visible / explored-only / unexplored). Default:
-	 *  no cells. */
+	 *  VisionGroup. `VisibleBitIndex` in [0, 7] selects which EVNNNNNN bit
+	 *  paints as "visible" (0 = E, 1 = V, 2..7 = N0..N5); driven by
+	 *  `SeinARTS.Debug.ShowFogOfWar.LayerPerspective`. Default impls emit
+	 *  one quad per cell with per-cell color derived from which bits are
+	 *  set (visible / blocker / default). Default virtual: no cells. */
 	virtual void CollectDebugCellQuads(FSeinPlayerID Observer,
+		int32 VisibleBitIndex,
 		TArray<FVector>& OutCenters,
 		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const {}

@@ -58,6 +58,10 @@ float ASeinNavVolume::GetResolvedCellSize() const
 
 float ASeinNavVolume::GetResolvedMaxStepHeight() const
 {
-	// No plugin-settings equivalent yet — volume override or hardcoded default.
-	return bOverrideMaxStepHeight ? MaxStepHeight : 50.0f;
+	if (bOverrideMaxStepHeight) return MaxStepHeight;
+	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
+	{
+		return Settings->DefaultMaxStepHeight;
+	}
+	return 50.0f;
 }

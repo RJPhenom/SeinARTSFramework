@@ -45,4 +45,12 @@ struct SEINARTSFOGOFWAR_API FSeinVisionBlockerData
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Vision",
 		meta = (Bitmask))
 	uint8 BlockedLayerMask = 0xFE;
+
+	/** Disc radius (world units) for area blockers like smoke grenades.
+	 *  Zero → single-cell blocker (destructibles, debris). Non-zero →
+	 *  stamp every cell within Radius of the entity's position with this
+	 *  blocker's Height + LayerMask. Deterministic disc stamp, same math
+	 *  shape as the vision-source stamp. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Vision")
+	FFixedPoint Radius = FFixedPoint::Zero;
 };

@@ -12,7 +12,9 @@
 #include "Default/SeinFogOfWarDefaultAsset.h"
 #include "Volumes/SeinFogOfWarVolume.h"
 #include "Components/SeinVisionData.h"
+#include "Components/SeinVisionBlockerData.h"
 #include "SeinFogOfWarTypes.h"
+#include "SeinARTSFogOfWarModule.h"
 
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Simulation/ComponentStorage.h"
@@ -330,6 +332,8 @@ void USeinFogOfWarDefault::LoadFromAsset(USeinFogOfWarAsset* Asset)
 		GroundHeight.Reset();
 		BlockerHeight.Reset();
 		BlockerLayerMask.Reset();
+		DynamicBlockerHeight.Reset();
+		DynamicBlockerLayerMask.Reset();
 		VisionGroups.Empty();
 	}
 	OnFogOfWarMutated.Broadcast();
@@ -353,6 +357,8 @@ void USeinFogOfWarDefault::ApplyAssetData(const USeinFogOfWarDefaultAsset* Asset
 	GroundHeight.SetNumUninitialized(NumCells);
 	BlockerHeight.SetNumUninitialized(NumCells);
 	BlockerLayerMask.SetNumUninitialized(NumCells);
+	DynamicBlockerHeight.SetNumZeroed(NumCells);
+	DynamicBlockerLayerMask.SetNumZeroed(NumCells);
 	VisionGroups.Empty(); // per-player state recreates lazily on next stamp
 
 	// Dequantize uint8 heights → FFixedPoint. Runtime stores ABSOLUTE world Z
@@ -412,6 +418,8 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 	GroundHeight.SetNumUninitialized(NumCells);
 	BlockerHeight.SetNumZeroed(NumCells);
 	BlockerLayerMask.SetNumZeroed(NumCells);
+	DynamicBlockerHeight.SetNumZeroed(NumCells);
+	DynamicBlockerLayerMask.SetNumZeroed(NumCells);
 	VisionGroups.Empty();
 
 	// Per-cell downward trace capped at InitTraceCellCap — no-bake fallback.
@@ -473,8 +481,14 @@ void USeinFogOfWarDefault::TickStamps(UWorld* World)
 	const ISeinComponentStorage* Storage = Sim->GetComponentStorageRaw(FSeinVisionData::StaticStruct());
 	if (!Storage) return;
 
-	// Clear V bits in every existing group but preserve Explored — that bit
-	// is sticky per-player-per-match (classic fog-of-war memory).
+	// Rebuild dynamic blocker overlay first — smoke grenades / destructible
+	// mid-animation / any runtime USeinVisionBlockerComponent entities stamp
+	// their discs into DynamicBlockerHeight + DynamicBlockerLayerMask here,
+	// so the vision passes below see the freshest occlusion state.
+	RebuildDynamicBlockers(World);
+
+	// Clear V + custom-layer bits in every existing group but preserve
+	// Explored (bit 0) — sticky per-player-per-match.
 	for (TPair<FSeinPlayerID, FSeinFogVisionGroup>& Pair : VisionGroups)
 	{
 		for (uint8& Byte : Pair.Value.CellBitfield)
@@ -490,30 +504,59 @@ void USeinFogOfWarDefault::TickStamps(UWorld* World)
 			if (!Raw) return;
 			const FSeinVisionData* VData = static_cast<const FSeinVisionData*>(Raw);
 			if (!VData) return;
-			if (VData->VisionRadius <= FFixedPoint::Zero) return;
 
 			const FSeinPlayerID OwnerPlayer = Sim->GetEntityOwner(Handle);
-			StampShadowcast(OwnerPlayer, Entity.Transform.GetLocation(),
-				VData->VisionRadius, VData->EyeHeight);
+			const FFixedVector Pos = Entity.Transform.GetLocation();
+
+			// V (Normal) pass — always stamped when VisionRadius > 0.
+			if (VData->VisionRadius > FFixedPoint::Zero)
+			{
+				StampShadowcast(OwnerPlayer, Pos, VData->VisionRadius,
+					VData->EyeHeight, /*StampBit=*/ 1);
+			}
+
+			// Custom-layer passes — slot N → bit (2+N). Each enabled slot
+			// with a non-zero radius stamps independently, using its own
+			// layer-specific blocker visibility (e.g. a smoke blocker that
+			// only masks the Normal bit lets Thermal see through).
+			const int32 Slots = FMath::Min(VData->LayerSlots.Num(), 6);
+			for (int32 i = 0; i < Slots; ++i)
+			{
+				const FSeinVisionLayerRadius& Slot = VData->LayerSlots[i];
+				if (!Slot.bEnabled) continue;
+				if (Slot.Radius <= FFixedPoint::Zero) continue;
+				const uint8 BitIdx = static_cast<uint8>(2 + i);
+				StampShadowcast(OwnerPlayer, Pos, Slot.Radius,
+					VData->EyeHeight, BitIdx);
+			}
 		});
 
 	OnFogOfWarMutated.Broadcast();
 }
 
 void USeinFogOfWarDefault::StampShadowcast(FSeinPlayerID OwnerPlayer,
-	const FFixedVector& WorldPos, FFixedPoint Radius, FFixedPoint EyeHeight)
+	const FFixedVector& WorldPos, FFixedPoint Radius, FFixedPoint EyeHeight,
+	uint8 StampBit)
 {
+	if (StampBit > 7) return;
+
 	int32 SX, SY;
 	if (!WorldToGrid(WorldPos, SX, SY)) return;
 	if (CellSize <= FFixedPoint::Zero || Radius <= FFixedPoint::Zero) return;
 
-	// Source eye Z in absolute world coords. GroundHeight at the source's
-	// own cell is the reference; the unit is treated as standing on that
-	// cell's ground regardless of its authored Z (keeps sim/render decoupled
-	// and lampshade test deterministic).
+	// Source eye Z = unit's actual sim Z + EyeHeight. Uses `WorldPos.Z`
+	// (the unit's FFixedVector from sim) rather than `GroundHeight[cell]`
+	// — the bake stores GroundHeight as "terrain beneath any static
+	// blocker," so a unit standing ON TOP of a climbable platform would
+	// compute its eye Z from the terrain below the platform, not its
+	// actual standing surface. That caused the platform's walls to read
+	// as opaque to the unit and occlude its view of everything beyond.
+	// Sim Z is already the source of truth for where the unit stands —
+	// nav waypoints carry per-cell height, so a unit moved onto a
+	// platform has its Z updated correctly. Deterministic: WorldPos is
+	// FFixedVector, EyeHeight is FFixedPoint, sum is FFixedPoint.
 	const int32 SrcIdx = CellIndex(SX, SY);
-	const FFixedPoint SourceGroundZ = GroundHeight.IsValidIndex(SrcIdx) ? GroundHeight[SrcIdx] : Origin.Z;
-	const FFixedPoint EyeZ = SourceGroundZ + EyeHeight;
+	const FFixedPoint EyeZ = WorldPos.Z + EyeHeight;
 
 	// Grab the owner's group once — stamps write into this bitfield only.
 	TArray<uint8>& OwnerBits = GetOrCreateGroup(OwnerPlayer).CellBitfield;
@@ -526,14 +569,15 @@ void USeinFogOfWarDefault::StampShadowcast(FSeinPlayerID OwnerPlayer,
 	const int32 RadiusCells = bHasFraction ? RadiusCellsFloor + 1 : RadiusCellsFloor;
 	const FFixedPoint RadiusCellsSq = RadiusCellsFP * RadiusCellsFP;
 
-	const uint8 StampMask = SEIN_FOW_BIT_NORMAL | SEIN_FOW_BIT_EXPLORED;
+	const uint8 StampBitMask = static_cast<uint8>(1u << StampBit);
+	const uint8 StampMask = StampBitMask | SEIN_FOW_BIT_EXPLORED;
 
-	// Source's own cell is always visible.
+	// Source's own cell is always visible on this layer.
 	OwnerBits[SrcIdx] |= StampMask;
 
 	// Iterate the radius bounding box; for each cell inside the circular
 	// radius, Bresenham-walk from source and stamp only if no intermediate
-	// cell is opaque to our eye.
+	// cell is opaque to our eye on this layer.
 	for (int32 DY = -RadiusCells; DY <= RadiusCells; ++DY)
 	{
 		const int32 TY = SY + DY;
@@ -547,53 +591,196 @@ void USeinFogOfWarDefault::StampShadowcast(FSeinPlayerID OwnerPlayer,
 			const int32 TX = SX + DX;
 			if (TX < 0 || TX >= Width) continue;
 
-			if (HasLineOfSightToCell(SX, SY, TX, TY, EyeZ))
+			// Stamp-skip fast path: if another source in this same
+			// VisionGroup already stamped this layer at this cell this
+			// tick, the cell is visible — skip the Bresenham LOS walk.
+			// Deterministic (union is commutative); saves O(R) per
+			// overlapping source pair.
+			const int32 TargetIdx = CellIndex(TX, TY);
+			if ((OwnerBits[TargetIdx] & StampBitMask) != 0) continue;
+
+			// Target Z for the lampshade ray = target cell's terrain
+			// height. Gives a descending ray from elevated viewers down
+			// to ground, an ascending ray from low viewers up to
+			// hilltops — both correctly occluded by blockers rising into
+			// the ray's path between source and target.
+			const FFixedPoint TargetZ = GroundHeight.IsValidIndex(TargetIdx)
+				? GroundHeight[TargetIdx] : Origin.Z;
+
+			if (HasLineOfSightToCell(SX, SY, TX, TY, EyeZ, TargetZ, StampBitMask))
 			{
-				OwnerBits[CellIndex(TX, TY)] |= StampMask;
+				OwnerBits[TargetIdx] |= StampMask;
 			}
 		}
 	}
 }
 
-bool USeinFogOfWarDefault::HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1, FFixedPoint EyeZ) const
+bool USeinFogOfWarDefault::HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1,
+	FFixedPoint EyeZ, FFixedPoint TargetZ, uint8 StampBitMask) const
 {
 	if (X0 == X1 && Y0 == Y1) return true;
 
 	// Classic Bresenham — integer-native, symmetric, same walk from either
-	// endpoint. Source cell is the starting point (not tested); target cell
-	// is whatever we're trying to see (not tested — you can always "see"
-	// the thing you're looking at, even if it's a wall). Opacity test
-	// applies to every cell in between.
-	const int32 DX =  FMath::Abs(X1 - X0);
-	const int32 DY = -FMath::Abs(Y1 - Y0);
+	// endpoint. Source cell is the starting point (not tested); target
+	// cell is whatever we're trying to see (not tested — you can always
+	// "see" the thing you're looking at, even if it's a wall). Opacity
+	// test applies to every cell in between, filtered by the stamp's
+	// layer + checked against the ray's interpolated Z at that cell.
+	const int32 DXabs = FMath::Abs(X1 - X0);
+	const int32 DYabs = FMath::Abs(Y1 - Y0);
+	const int32 TotalSteps = FMath::Max(DXabs, DYabs); // ≥ 1 by the endpoint check above
+
+	// Deterministic lampshade ray: RayZ at step i of N = EyeZ + ΔZ·(i/N).
+	// All ops in FFixedPoint (operator* and / are 128-bit) — same
+	// determinism guarantee as the radius / cell-distance math elsewhere.
+	const FFixedPoint DeltaZ = TargetZ - EyeZ;
+	const FFixedPoint TotalStepsFP = FFixedPoint::FromInt(TotalSteps);
+
+	const int32 DX =  DXabs;
+	const int32 DY = -DYabs;
 	const int32 SXStep = (X0 < X1) ? 1 : -1;
 	const int32 SYStep = (Y0 < Y1) ? 1 : -1;
 	int32 Err = DX + DY;
 	int32 X = X0;
 	int32 Y = Y0;
+	int32 StepIdx = 0;
 
 	while (true)
 	{
 		const int32 E2 = 2 * Err;
 		if (E2 >= DY) { Err += DY; X += SXStep; }
 		if (E2 <= DX) { Err += DX; Y += SYStep; }
+		++StepIdx;
 
 		if (X == X1 && Y == Y1) return true;
-		if (IsCellOpaqueToEye(X, Y, EyeZ)) return false;
+
+		// RayZ at this step's cell. Uses IsCellOpaqueToEye with RayZ as
+		// the eye-height argument — the opacity test is "top-surface
+		// above ray Z at this cell," which generalizes over both the
+		// flat-eye case (Delta=0 → RayZ=EyeZ everywhere) and the
+		// descending / ascending cases here.
+		const FFixedPoint RayZ = EyeZ + (DeltaZ * FFixedPoint::FromInt(StepIdx)) / TotalStepsFP;
+		if (IsCellOpaqueToEye(X, Y, RayZ, StampBitMask)) return false;
 	}
 }
 
-bool USeinFogOfWarDefault::IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ) const
+bool USeinFogOfWarDefault::IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ, uint8 StampBitMask) const
 {
 	if (!IsValidCoord(X, Y)) return false;
 	const int32 Idx = CellIndex(X, Y);
 	const FFixedPoint GroundZ  = GroundHeight.IsValidIndex(Idx)  ? GroundHeight[Idx]  : FFixedPoint::Zero;
-	const FFixedPoint BlockerZ = BlockerHeight.IsValidIndex(Idx) ? BlockerHeight[Idx] : FFixedPoint::Zero;
-	// Effective blocker top = max(ground, blocker) — open terrain uses
-	// ground (hills block distant sight); cells with structures use the
-	// blocker top.
-	const FFixedPoint Top = (BlockerZ > GroundZ) ? BlockerZ : GroundZ;
-	return Top > EyeZ;
+
+	// Terrain (ground) always occludes — hills block line of sight
+	// regardless of which layer you're stamping. Height is height.
+	if (GroundZ > EyeZ) return true;
+
+	// Static blocker (from bake) — only occludes this layer if the
+	// blocker's LayerMask covers the stamping bit.
+	const FFixedPoint StaticZ = BlockerHeight.IsValidIndex(Idx) ? BlockerHeight[Idx] : FFixedPoint::Zero;
+	if (StaticZ > EyeZ)
+	{
+		const uint8 Mask = BlockerLayerMask.IsValidIndex(Idx) ? BlockerLayerMask[Idx] : 0;
+		if ((Mask & StampBitMask) != 0) return true;
+	}
+
+	// Dynamic blocker (runtime — smoke grenades, destructibles mid-anim)
+	// tests independently. A short-but-layered dynamic blocker doesn't
+	// inherit a tall static's reach, and vice versa.
+	const FFixedPoint DynZ = DynamicBlockerHeight.IsValidIndex(Idx) ? DynamicBlockerHeight[Idx] : FFixedPoint::Zero;
+	if (DynZ > EyeZ)
+	{
+		const uint8 Mask = DynamicBlockerLayerMask.IsValidIndex(Idx) ? DynamicBlockerLayerMask[Idx] : 0;
+		if ((Mask & StampBitMask) != 0) return true;
+	}
+
+	return false;
+}
+
+void USeinFogOfWarDefault::RebuildDynamicBlockers(UWorld* World)
+{
+	// Clear last tick's overlay. FMemory::Memzero is fine on FFixedPoint's
+	// int64 backing — value 0 is the struct's "no blocker" sentinel.
+	if (DynamicBlockerHeight.Num() > 0)
+	{
+		FMemory::Memzero(DynamicBlockerHeight.GetData(),
+			DynamicBlockerHeight.Num() * sizeof(FFixedPoint));
+	}
+	if (DynamicBlockerLayerMask.Num() > 0)
+	{
+		FMemory::Memzero(DynamicBlockerLayerMask.GetData(),
+			DynamicBlockerLayerMask.Num() * sizeof(uint8));
+	}
+
+	if (!World) return;
+	USeinWorldSubsystem* Sim = World->GetSubsystem<USeinWorldSubsystem>();
+	if (!Sim) return;
+	const ISeinComponentStorage* Storage = Sim->GetComponentStorageRaw(FSeinVisionBlockerData::StaticStruct());
+	if (!Storage) return;
+
+	// Walk every alive entity; stamp its blocker disc if it carries data.
+	// Smoke-grenade pattern: spawn an entity with FSeinVisionBlockerData
+	// via an ability, set its position + duration; the subsystem picks
+	// it up automatically. When the entity despawns, the blocker vanishes
+	// on the next tick (overlay is rebuilt from scratch).
+	Sim->GetEntityPool().ForEachEntity(
+		[this, Storage](FSeinEntityHandle Handle, FSeinEntity& Entity)
+		{
+			const void* Raw = Storage->GetComponentRaw(Handle);
+			if (!Raw) return;
+			const FSeinVisionBlockerData* BData = static_cast<const FSeinVisionBlockerData*>(Raw);
+			if (!BData) return;
+			if (BData->BlockerHeight <= FFixedPoint::Zero) return;
+			if (BData->BlockedLayerMask == 0) return;
+
+			StampDynamicBlockerDisc(Entity.Transform.GetLocation(),
+				BData->Radius, BData->BlockerHeight, BData->BlockedLayerMask);
+		});
+}
+
+void USeinFogOfWarDefault::StampDynamicBlockerDisc(const FFixedVector& WorldPos,
+	FFixedPoint Radius, FFixedPoint HeightAboveGround, uint8 LayerMask)
+{
+	int32 CX, CY;
+	if (!WorldToGrid(WorldPos, CX, CY)) return;
+
+	// Single-cell blocker (destructible, debris).
+	if (Radius <= FFixedPoint::Zero)
+	{
+		const int32 Idx = CellIndex(CX, CY);
+		const FFixedPoint GroundZ = GroundHeight.IsValidIndex(Idx) ? GroundHeight[Idx] : FFixedPoint::Zero;
+		const FFixedPoint TopZ = GroundZ + HeightAboveGround;
+		if (TopZ > DynamicBlockerHeight[Idx]) DynamicBlockerHeight[Idx] = TopZ;
+		DynamicBlockerLayerMask[Idx] |= LayerMask;
+		return;
+	}
+
+	// Disc stamp — same fixed-point math as the vision stamp's bounding
+	// box + circular radius test.
+	const FFixedPoint RadiusCellsFP = Radius / CellSize;
+	const int32 RadiusCellsFloor = RadiusCellsFP.ToInt();
+	const bool bHasFraction = (RadiusCellsFP.Value & FFixedPoint::FractionalMask) != 0;
+	const int32 RadiusCells = bHasFraction ? RadiusCellsFloor + 1 : RadiusCellsFloor;
+	const FFixedPoint RadiusCellsSq = RadiusCellsFP * RadiusCellsFP;
+
+	for (int32 DY = -RadiusCells; DY <= RadiusCells; ++DY)
+	{
+		const int32 TY = CY + DY;
+		if (TY < 0 || TY >= Height) continue;
+		const int32 DYSq = DY * DY;
+		for (int32 DX = -RadiusCells; DX <= RadiusCells; ++DX)
+		{
+			const FFixedPoint DistSqCells = FFixedPoint::FromInt(DX * DX + DYSq);
+			if (DistSqCells > RadiusCellsSq) continue;
+			const int32 TX = CX + DX;
+			if (TX < 0 || TX >= Width) continue;
+
+			const int32 Idx = CellIndex(TX, TY);
+			const FFixedPoint GroundZ = GroundHeight[Idx];
+			const FFixedPoint TopZ = GroundZ + HeightAboveGround;
+			if (TopZ > DynamicBlockerHeight[Idx]) DynamicBlockerHeight[Idx] = TopZ;
+			DynamicBlockerLayerMask[Idx] |= LayerMask;
+		}
+	}
 }
 
 uint8 USeinFogOfWarDefault::GetCellBitfield(FSeinPlayerID Observer, const FFixedVector& WorldPos) const
@@ -607,6 +794,7 @@ uint8 USeinFogOfWarDefault::GetCellBitfield(FSeinPlayerID Observer, const FFixed
 }
 
 void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
+	int32 VisibleBitIndex,
 	TArray<FVector>& OutCenters,
 	TArray<FColor>& OutColors,
 	float& OutHalfExtent) const
@@ -627,18 +815,21 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 	const float HalfCellF = CellSizeF * 0.5f;
 
 	// Per-observer bitfield lookup. If the observer has never stamped,
-	// there's no group — treat every cell's V bit as 0 (non-PIE / editor
-	// preview / unknown observer all render as baseline).
+	// there's no group — every cell renders as baseline (non-PIE / editor
+	// preview / unknown observer).
 	const FSeinFogVisionGroup* ObserverGroup = VisionGroups.Find(Observer);
 	const TArray<uint8>* ObserverBits = ObserverGroup ? &ObserverGroup->CellBitfield : nullptr;
 
-	// Three-state color scheme (debug proxy buckets by channel pattern):
-	//  cyan  → cell is visible this tick (V bit set for Observer)
-	//  red   → cell is a baked static blocker (no vision this tick)
-	//  black → cell is in-grid with no blocker + no visibility
-	// Cell Z: blocker cells draw at blocker-top (shows the blocker's height);
-	// everything else draws at ground height. Matches nav's per-cell-Z pattern.
-	const FColor Cyan (0, 200, 255);
+	// Clamp bit index to valid EVNNNNNN range; anything out-of-range falls
+	// back to the V bit (1).
+	if (VisibleBitIndex < 0 || VisibleBitIndex > 7) VisibleBitIndex = 1;
+	const uint8 VisibleMask = static_cast<uint8>(1u << VisibleBitIndex);
+
+	// Paint colors. "Visible" color comes from the module helper (yellow for
+	// E, cyan for V, plugin-settings DebugColor for N0..N5). Blocker red and
+	// baseline black are framework-fixed — keep them readable across any
+	// layer perspective.
+	const FColor VisibleColor = UE::SeinARTSFogOfWar::GetDebugLayerColor(VisibleBitIndex);
 	const FColor Red  (200, 0, 0);
 	const FColor Black(0, 0, 0);
 
@@ -648,21 +839,35 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 		{
 			const int32 Idx = CellIndex(X, Y);
 			const uint8 Bits = (ObserverBits && ObserverBits->IsValidIndex(Idx)) ? (*ObserverBits)[Idx] : 0;
-			const bool bVisible = (Bits & SEIN_FOW_BIT_NORMAL) != 0;
-			const bool bHasBlocker = BlockerLayerMask.IsValidIndex(Idx) && BlockerLayerMask[Idx] != 0;
+			const bool bVisible = (Bits & VisibleMask) != 0;
 
-			const FFixedPoint GroundZ = GroundHeight.IsValidIndex(Idx) ? GroundHeight[Idx] : Origin.Z;
-			const FFixedPoint BlockZ  = bHasBlocker ? BlockerHeight[Idx] : GroundZ;
-			const FFixedPoint TopZ    = (BlockZ > GroundZ) ? BlockZ : GroundZ;
+			// Static + dynamic blocker merge for the "blocks this layer?"
+			// test: read as blocker iff EITHER static or dynamic masks the
+			// selected bit. Renders smoke grenades in the debug viz the
+			// same way walls render — red cells on the affected layer
+			// only. Toggle to a layer the blocker doesn't cover and it
+			// drops back to default black, per-layer audit intact.
+			const uint8 StaticMask  = BlockerLayerMask.IsValidIndex(Idx) ? BlockerLayerMask[Idx] : 0;
+			const uint8 DynMask     = DynamicBlockerLayerMask.IsValidIndex(Idx) ? DynamicBlockerLayerMask[Idx] : 0;
+			const bool bHasBlocker  = ((StaticMask | DynMask) & VisibleMask) != 0;
 
-			// Blocker cells track blocker-top; visible-over-blocker also rides
-			// the blocker top so the cyan cell sits on the roof (matches what
-			// a unit on that roof would see). Plain-ground cells stay at ground.
+			const FFixedPoint GroundZ  = GroundHeight.IsValidIndex(Idx) ? GroundHeight[Idx] : Origin.Z;
+			const FFixedPoint StaticZ  = (StaticMask != 0 && BlockerHeight.IsValidIndex(Idx)) ? BlockerHeight[Idx] : GroundZ;
+			const FFixedPoint DynZ     = (DynMask != 0 && DynamicBlockerHeight.IsValidIndex(Idx)) ? DynamicBlockerHeight[Idx] : GroundZ;
+			// Render at the tallest occluder so smoke + wall at the same
+			// cell draws at the smoke top if smoke is taller (which is
+			// visually correct — it's what the unit sees).
+			const FFixedPoint BlockZ   = (DynZ > StaticZ) ? DynZ : StaticZ;
+			const FFixedPoint TopZ     = (BlockZ > GroundZ) ? BlockZ : GroundZ;
+
+			// Blocker cells track blocker-top; visible-over-blocker also
+			// rides the blocker top so a roof cell visible from above sits
+			// on the roof. Plain-ground cells stay at ground.
 			FColor Color;
 			FFixedPoint WZFP;
 			if (bVisible)
 			{
-				Color = Cyan;
+				Color = VisibleColor;
 				WZFP = TopZ;
 			}
 			else if (bHasBlocker)

@@ -32,6 +32,14 @@ class SEINARTSCOREENTITY_API USeinARTSCoreSettings : public UDeveloperSettings
 public:
 	USeinARTSCoreSettings();
 
+	/** Reconciles the VisionLayers array after config load. DefaultEngine.ini
+	 *  files saved before the 6-slot contract / DebugColor field existed
+	 *  can load back at len < 6 or with white-default colors on older
+	 *  entries — this hook pads the array to 6 slots and backfills
+	 *  per-slot debug colors on any slot whose color is still the struct-
+	 *  default white. Idempotent. */
+	virtual void PostInitProperties() override;
+
 	// Simulation Settings
 	// ====================================================================================================
 
@@ -117,6 +125,16 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "800"))
 	float DefaultCellSize;
+
+	/**
+	 * Project-wide fallback for vertical step height (world units) an agent
+	 * can traverse between adjacent cells at bake time. Per-volume overrides
+	 * (set on `ASeinNavVolume`) shadow this value — cells inside an
+	 * overriding volume use that volume's value, everything else uses this.
+	 * Typical: ~half the cell size.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "0.0", UIMin = "10", UIMax = "200"))
+	float DefaultMaxStepHeight;
 
 	// Vision / Fog of War Settings
 	// ====================================================================================================

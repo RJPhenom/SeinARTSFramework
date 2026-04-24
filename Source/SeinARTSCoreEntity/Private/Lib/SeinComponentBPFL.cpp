@@ -89,13 +89,29 @@ TArray<FInstancedStruct> USeinComponentBPFL::SeinGetComponents(const UObject* Wo
 	USeinWorldSubsystem* Subsystem = GetWorldSubsystem(WorldContextObject);
 	if (!Subsystem) return Result;
 
+	// Sort component types by struct name before walking. TMap<UScriptStruct*>
+	// iteration is pointer-keyed — stable within a process but not guaranteed
+	// across clients. BP designers consuming this array can safely iterate
+	// in order without accidentally introducing desyncs.
+	TArray<UScriptStruct*> SortedTypes;
 	for (const TPair<UScriptStruct*, ISeinComponentStorage*>& Pair : Subsystem->GetAllComponentStorages())
 	{
-		if (!Pair.Key || !Pair.Value) continue;
-		if (const void* Raw = Pair.Value->GetComponentRaw(EntityHandle))
+		if (Pair.Key && Pair.Value) SortedTypes.Add(Pair.Key);
+	}
+	SortedTypes.Sort([](const UScriptStruct& A, const UScriptStruct& B)
+	{
+		return A.GetFName().Compare(B.GetFName()) < 0;
+	});
+
+	const TMap<UScriptStruct*, ISeinComponentStorage*>& AllStorages = Subsystem->GetAllComponentStorages();
+	for (UScriptStruct* StructType : SortedTypes)
+	{
+		ISeinComponentStorage* const* StorageFound = AllStorages.Find(StructType);
+		if (!StorageFound || !*StorageFound) continue;
+		if (const void* Raw = (*StorageFound)->GetComponentRaw(EntityHandle))
 		{
 			FInstancedStruct Inst;
-			Inst.InitializeAs(Pair.Key, static_cast<const uint8*>(Raw));
+			Inst.InitializeAs(StructType, static_cast<const uint8*>(Raw));
 			Result.Add(MoveTemp(Inst));
 		}
 	}

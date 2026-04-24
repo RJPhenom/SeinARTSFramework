@@ -25,7 +25,8 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	, NavigationClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinNavigationAStar")))
 	, FogOfWarClass(FSoftClassPath(TEXT("/Script/SeinARTSFogOfWar.SeinFogOfWarDefault")))
 	, DefaultCellSize(100.0f)
-	, VisionCellSize(400.0f)
+	, DefaultMaxStepHeight(50.0f)
+	, VisionCellSize(100.0f)
 	, VisionTickInterval(3)
 	, FogRenderTickRate(10.0f)
 #if WITH_EDITORONLY_DATA
@@ -41,7 +42,50 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// the V bit and is always present without needing a slot here. Designers
 	// opt in by naming + enabling slots for game-specific channels (Stealth,
 	// Thermal, etc.). EditFixedSize prevents add/remove — rename or toggle only.
+	// Note: we SetNum + seed here, but config load after the ctor can stomp
+	// this — PostInitProperties reconciles.
 	VisionLayers.SetNum(6);
+}
+
+namespace
+{
+	// Canonical per-slot debug colors. Authored as sRGB hex and converted
+	// via `FLinearColor(FColor)` so the picker in settings shows the exact
+	// hex the user intended (hex is sRGB by convention; UE's display pipe
+	// gamma-corrects linear → sRGB when rendering, so going hex → FColor
+	// → FLinearColor preserves the visual intent).
+	//  Slot 0 (N0) 0000FF · Slot 1 (N1) 9100FF · Slot 2 (N2) E700D6
+	//  Slot 3 (N3) FF5A72 · Slot 4 (N4) D4FF83 · Slot 5 (N5) 00FFA1
+	static const FLinearColor DefaultLayerColors[6] = {
+		FLinearColor(FColor::FromHex(TEXT("0000FF"))),
+		FLinearColor(FColor::FromHex(TEXT("9100FF"))),
+		FLinearColor(FColor::FromHex(TEXT("E700D6"))),
+		FLinearColor(FColor::FromHex(TEXT("FF5A72"))),
+		FLinearColor(FColor::FromHex(TEXT("D4FF83"))),
+		FLinearColor(FColor::FromHex(TEXT("00FFA1"))),
+	};
+}
+
+void USeinARTSCoreSettings::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+	// Config load (DefaultEngine.ini) runs AFTER the ctor. An older INI can
+	// shrink the array or leave DebugColor at the struct default (white).
+	// Force exactly 6 slots and re-seed any color that's still plain white
+	// with the per-slot canonical value — idempotent on fresh projects,
+	// corrective on legacy ones.
+	if (VisionLayers.Num() != 6)
+	{
+		VisionLayers.SetNum(6);
+	}
+	for (int32 i = 0; i < 6; ++i)
+	{
+		if (VisionLayers[i].DebugColor == FLinearColor::White)
+		{
+			VisionLayers[i].DebugColor = DefaultLayerColors[i];
+		}
+	}
 }
 
 FName USeinARTSCoreSettings::GetCategoryName() const

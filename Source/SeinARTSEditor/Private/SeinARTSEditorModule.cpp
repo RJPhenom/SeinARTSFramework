@@ -31,6 +31,8 @@
 #include "Details/SeinInstancedStructDetails.h"
 #include "Details/SeinNavVolumeDetails.h"
 #include "Details/SeinFogOfWarVolumeDetails.h"
+#include "Details/SeinVisionLayerRadiusDetails.h"
+#include "Details/SeinVisionDataDetails.h"
 #include "Volumes/SeinNavVolume.h"
 #include "Volumes/SeinFogOfWarVolume.h"
 #include "Brokers/SeinStructAssetBroker.h"
@@ -122,6 +124,14 @@ void FSeinARTSEditorModule::StartupModule()
 			TEXT("InstancedStruct"),
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinInstancedStructDetails::MakeInstance));
 
+		PropertyModule.RegisterCustomPropertyTypeLayout(
+			TEXT("SeinVisionLayerRadius"),
+			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinVisionLayerRadiusDetails::MakeInstance));
+
+		PropertyModule.RegisterCustomPropertyTypeLayout(
+			TEXT("SeinVisionData"),
+			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinVisionDataDetails::MakeInstance));
+
 		PropertyModule.RegisterCustomClassLayout(
 			ASeinNavVolume::StaticClass()->GetFName(),
 			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinNavVolumeDetails::MakeInstance));
@@ -141,6 +151,8 @@ void FSeinARTSEditorModule::ShutdownModule()
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("FixedPoint"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("InstancedStruct"));
+		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionLayerRadius"));
+		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionData"));
 		PropertyModule.UnregisterCustomClassLayout(ASeinNavVolume::StaticClass()->GetFName());
 		PropertyModule.UnregisterCustomClassLayout(ASeinFogOfWarVolume::StaticClass()->GetFName());
 	}

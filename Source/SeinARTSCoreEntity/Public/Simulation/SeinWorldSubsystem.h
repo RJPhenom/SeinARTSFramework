@@ -59,15 +59,19 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FOnCommandsProcessing, int32 /*Tick*/, cons
  * Registered by USeinNavigationSubsystem (SeinARTSNavigation module) at OnWorldBeginPlay
  * so SeinARTSCoreEntity code can consult it without a circular dependency.
  *
- *   From:      entity's current world position (FVector world units, fixed-point-convertible)
- *   To:        target world position the command asked to activate against
+ *   From:      entity's current sim position (fixed-point)
+ *   To:        target sim position the command asked to activate against
  *   AgentTags: owning entity's tag container (for navlink eligibility filtering)
  *
  * Return true = target is reachable. False = pre-reject with PathUnreachable.
  * Sim skips the gate if no resolver is registered (tests, nav-less games).
+ *
+ * Parameters are FFixedVector — not FVector — so the query stays bit-identical
+ * across clients. Sim callers already carry FFixedVector, and the nav impl's
+ * pathability check is fixed-point throughout.
  */
 DECLARE_DELEGATE_RetVal_ThreeParams(bool, FSeinPathableTargetResolver,
-	const FVector& /*FromWorld*/, const FVector& /*ToWorld*/, const FGameplayTagContainer& /*AgentTags*/);
+	const FFixedVector& /*FromWorld*/, const FFixedVector& /*ToWorld*/, const FGameplayTagContainer& /*AgentTags*/);
 
 /**
  * Delegate sim uses to ask "is this target visible for the owner's VisionGroup?"

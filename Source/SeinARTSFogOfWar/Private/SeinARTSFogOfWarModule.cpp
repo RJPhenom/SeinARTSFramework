@@ -22,6 +22,10 @@
 
 #include "SeinARTSFogOfWarModule.h"
 
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "UObject/UnrealType.h"
+
 #if UE_ENABLE_DEBUG_DRAWING
 #include "ShowFlags.h"
 #include "HAL/IConsoleManager.h"
@@ -29,6 +33,8 @@
 #include "Engine/GameViewportClient.h"
 #include "UObject/UObjectIterator.h"
 #include "Debug/SeinFogOfWarDebugComponent.h"
+#include "Settings/PluginSettings.h"
+#include "Data/SeinVisionLayerDefinition.h"
 
 #if WITH_EDITOR
 #include "LevelEditorViewport.h"
@@ -67,12 +73,18 @@ namespace
 {
 	IConsoleCommand* GShowFogOfWarCmd = nullptr;
 	IConsoleCommand* GPlayerPerspectiveCmd = nullptr;
+	IConsoleCommand* GLayerPerspectiveCmd = nullptr;
 
 	// Debug observer override. -1 = no override (use local PC). 0..255 = pinned
 	// FSeinPlayerID::Value. Lockstep sim is symmetric so every client's
 	// USeinFogOfWarDefault holds every player's VisionGroup; this toggle just
 	// picks which one the proxy renders on THIS client.
 	int32 GDebugObserverOverride = -1;
+
+	// Debug layer override. -1 = no override (use V / Normal bit). 0..7 =
+	// pinned EVNNNNNN bit to render through. 0 = E (Explored), 1 = V
+	// (Normal), 2..7 = N0..N5 custom layers.
+	int32 GDebugLayerOverride = -1;
 
 	/** Set ShowFlags.FogOfWar across all editor + game viewport clients. */
 	static void SetFogOfWarShowFlag(bool bEnable)
@@ -130,6 +142,34 @@ namespace
 				It->MarkRenderStateDirty();
 			}
 		}
+	}
+
+	static void OnLayerPerspectiveCommand(const TArray<FString>& Args, UWorld* /*WorldContext*/)
+	{
+		if (Args.Num() == 0)
+		{
+			GDebugLayerOverride = -1;
+			UE_LOG(LogTemp, Log, TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective = V (reset to Normal)"));
+			MarkAllFogDebugProxiesDirty();
+			return;
+		}
+		const int32 Parsed = FCString::Atoi(*Args[0]);
+		if (Parsed < 0 || Parsed > 7)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective: expected 0-7 (0=E, 1=V, 2..7=N0..N5), got %s"),
+				*Args[0]);
+			return;
+		}
+		GDebugLayerOverride = Parsed;
+		static const TCHAR* LayerNames[] = {
+			TEXT("E (Explored)"), TEXT("V (Normal)"),
+			TEXT("N0"), TEXT("N1"), TEXT("N2"), TEXT("N3"), TEXT("N4"), TEXT("N5")
+		};
+		UE_LOG(LogTemp, Log,
+			TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective = bit %d (%s). Use no-args to reset to V."),
+			Parsed, LayerNames[Parsed]);
+		MarkAllFogDebugProxiesDirty();
 	}
 
 	static void OnPlayerPerspectiveCommand(const TArray<FString>& Args, UWorld* /*WorldContext*/)
@@ -202,6 +242,14 @@ void FSeinARTSFogOfWarModule::StartupModule()
 			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnPlayerPerspectiveCommand),
 			ECVF_Default);
 	}
+	if (!GLayerPerspectiveCmd)
+	{
+		GLayerPerspectiveCmd = IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective"),
+			TEXT("Override the fog-of-war debug viewer to paint cells through a specific EVNNNNNN layer bit. Usage: SeinARTS.Debug.ShowFogOfWar.LayerPerspective <bit 0-7>. 0 = E (Explored, yellow), 1 = V (Normal, cyan — default), 2..7 = N0..N5 (colors from VisionLayers settings). Blockers still render red when the baked BlockerLayerMask occludes the selected bit. No args → reset to V."),
+			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnLayerPerspectiveCommand),
+			ECVF_Default);
+	}
 #endif
 }
 
@@ -218,6 +266,11 @@ void FSeinARTSFogOfWarModule::ShutdownModule()
 		IConsoleManager::Get().UnregisterConsoleObject(GPlayerPerspectiveCmd);
 		GPlayerPerspectiveCmd = nullptr;
 	}
+	if (GLayerPerspectiveCmd)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(GLayerPerspectiveCmd);
+		GLayerPerspectiveCmd = nullptr;
+	}
 #endif
 }
 
@@ -233,5 +286,61 @@ namespace UE::SeinARTSFogOfWar
 		}
 #endif
 		return false;
+	}
+
+	bool TryGetDebugLayerOverride(int32& OutBitIndex)
+	{
+#if UE_ENABLE_DEBUG_DRAWING
+		if (GDebugLayerOverride >= 0 && GDebugLayerOverride <= 7)
+		{
+			OutBitIndex = GDebugLayerOverride;
+			return true;
+		}
+#endif
+		return false;
+	}
+
+	FSeinPlayerID ResolveLocalObserverPlayerID(UWorld* World)
+	{
+		if (!World) return FSeinPlayerID();
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* PC = It->Get();
+			if (!PC || !PC->IsLocalPlayerController()) continue;
+			FStructProperty* Prop = FindFProperty<FStructProperty>(PC->GetClass(), TEXT("SeinPlayerID"));
+			if (!Prop || Prop->Struct != FSeinPlayerID::StaticStruct()) return FSeinPlayerID();
+			if (const FSeinPlayerID* Value = Prop->ContainerPtrToValuePtr<FSeinPlayerID>(PC))
+			{
+				return *Value;
+			}
+			return FSeinPlayerID();
+		}
+		return FSeinPlayerID();
+	}
+
+	FColor GetDebugLayerColor(int32 BitIndex)
+	{
+#if UE_ENABLE_DEBUG_DRAWING
+		// E (0) + V (1) are framework-reserved bits — colors hardcoded here
+		// and intentionally NOT driven by plugin settings (the "Normal" layer
+		// has no slot, per DESIGN §12).
+		if (BitIndex == 0) return FColor(255, 230, 0);  // Yellow — Explored
+		if (BitIndex == 1) return FColor(0, 200, 255);  // Cyan — Normal (V)
+
+		// Custom N0..N5 colors live in plugin settings so designers can
+		// retune per-project without a code change.
+		if (BitIndex >= 2 && BitIndex <= 7)
+		{
+			const int32 SlotIdx = BitIndex - 2;
+			if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
+			{
+				if (Settings->VisionLayers.IsValidIndex(SlotIdx))
+				{
+					return Settings->VisionLayers[SlotIdx].DebugColor.ToFColor(/*bSRGB*/ true);
+				}
+			}
+		}
+#endif
+		return FColor::White;
 	}
 }

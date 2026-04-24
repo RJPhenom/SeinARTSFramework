@@ -58,4 +58,12 @@ struct SEINARTSCOREENTITY_API FSeinVisionLayerDefinition
 	 *  "Radar", "DetectorPerception", etc. */
 	UPROPERTY(Config, EditAnywhere, Category = "SeinARTS|Vision|Layer")
 	FName LayerName = NAME_None;
+
+	/** Color used by the fog-of-war debug viewer to paint cells where this
+	 *  layer's bit is set. Defaults are seeded per-slot in the settings ctor
+	 *  (blue→violet→purple→light-purple→magenta→light-pink for slots 0..5).
+	 *  Swap via `SeinARTS.Debug.ShowFogOfWar.LayerPerspective <bit>` to audit
+	 *  an individual layer's stamp output. */
+	UPROPERTY(Config, EditAnywhere, Category = "SeinARTS|Vision|Layer")
+	FLinearColor DebugColor = FLinearColor::White;
 };

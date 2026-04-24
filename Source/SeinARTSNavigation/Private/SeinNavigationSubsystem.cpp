@@ -87,13 +87,11 @@ void USeinNavigationSubsystem::BindSimDelegates(UWorld& World)
 	TWeakObjectPtr<USeinNavigation> NavWeak = Navigation;
 
 	Sim->PathableTargetResolver.BindWeakLambda(this,
-		[NavWeak](const FVector& FromWorld, const FVector& ToWorld, const FGameplayTagContainer& AgentTags) -> bool
+		[NavWeak](const FFixedVector& FromWorld, const FFixedVector& ToWorld, const FGameplayTagContainer& AgentTags) -> bool
 		{
 			USeinNavigation* Nav = NavWeak.Get();
 			if (!Nav || !Nav->HasRuntimeData()) return true; // no data = permit (tests, nav-less games)
-			const FFixedVector From = FFixedVector::FromVector(FromWorld);
-			const FFixedVector To = FFixedVector::FromVector(ToWorld);
-			return Nav->IsReachable(From, To, AgentTags);
+			return Nav->IsReachable(FromWorld, ToWorld, AgentTags);
 		});
 }
 

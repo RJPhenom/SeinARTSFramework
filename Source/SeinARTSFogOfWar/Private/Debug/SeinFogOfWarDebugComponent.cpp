@@ -51,34 +51,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinFogOfWarDebug, Log, All);
 
 namespace
 {
-	/** Reflectively look up the local player controller's `SeinPlayerID`
-	 *  property, if it has one. Avoids a SeinARTSFramework module dep (the
-	 *  PC's concrete class lives there, below us in the dep graph). Returns
-	 *  neutral (id 0) when no PIE is running, no local PC exists, or the
-	 *  PC's class doesn't expose a `SeinPlayerID` FStructProperty. */
-	static FSeinPlayerID ResolveLocalObserverPlayerID(UWorld* World)
-	{
-		if (!World) return FSeinPlayerID();
-		APlayerController* LocalPC = nullptr;
-		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-		{
-			APlayerController* PC = It->Get();
-			if (PC && PC->IsLocalPlayerController())
-			{
-				LocalPC = PC;
-				break;
-			}
-		}
-		if (!LocalPC) return FSeinPlayerID();
-		FStructProperty* Prop = FindFProperty<FStructProperty>(LocalPC->GetClass(), TEXT("SeinPlayerID"));
-		if (!Prop || Prop->Struct != FSeinPlayerID::StaticStruct()) return FSeinPlayerID();
-		if (const FSeinPlayerID* Value = Prop->ContainerPtrToValuePtr<FSeinPlayerID>(LocalPC))
-		{
-			return *Value;
-		}
-		return FSeinPlayerID();
-	}
-
 	/** Query the custom ShowFlags.FogOfWar state on an FEngineShowFlags.
 	 *  `FindIndexByName` handles both engine and custom flags — it falls
 	 *  through to the custom-flag lookup internally and returns a raw bit
@@ -154,25 +126,28 @@ namespace
 }
 
 // ============================================================================
-// Scene proxy — three-batch pattern (visible cyan + blocker red + default black).
-// Same shape as USeinNavDebugProxy's walkable/blocked split, +1 bucket for the
-// "no blocker, no vision" baseline so designers can audit bake output without
-// units present.
+// Scene proxy — N-bucket by color. Cells grouped by their FColor sentinel
+// (visible/blocker/default can each be any palette), one FDynamicMeshBuilder
+// + FColoredMaterialRenderProxy per unique color. Tops out at a small number
+// of buckets (≤ 3 in practice: one "visible" layer color + red + black), so
+// the extra flexibility costs nothing vs the old hardcoded three-batch.
 // ============================================================================
+
+struct FSeinFogOfWarColorBucket
+{
+	FColor Color;
+	TArray<FVector> Centers;
+};
 
 class FSeinFogOfWarDebugProxy final : public FPrimitiveSceneProxy
 {
 public:
 	FSeinFogOfWarDebugProxy(
 		UPrimitiveComponent* InComponent,
-		TArray<FVector>&& InVisibleCenters,
-		TArray<FVector>&& InBlockerCenters,
-		TArray<FVector>&& InDefaultCenters,
+		TArray<FSeinFogOfWarColorBucket>&& InBuckets,
 		float InHalfExtent)
 		: FPrimitiveSceneProxy(InComponent)
-		, VisibleCenters(MoveTemp(InVisibleCenters))
-		, BlockerCenters(MoveTemp(InBlockerCenters))
-		, DefaultCenters(MoveTemp(InDefaultCenters))
+		, Buckets(MoveTemp(InBuckets))
 		, HalfExtent(InHalfExtent)
 	{
 		bWillEverBeLit = false;
@@ -186,10 +161,12 @@ public:
 
 	virtual uint32 GetMemoryFootprint() const override
 	{
-		return sizeof(*this)
-			+ VisibleCenters.GetAllocatedSize()
-			+ BlockerCenters.GetAllocatedSize()
-			+ DefaultCenters.GetAllocatedSize();
+		uint32 Total = sizeof(*this) + Buckets.GetAllocatedSize();
+		for (const FSeinFogOfWarColorBucket& B : Buckets)
+		{
+			Total += B.Centers.GetAllocatedSize();
+		}
+		return Total;
 	}
 
 	virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override
@@ -214,7 +191,7 @@ public:
 		if (!BaseMat) return;
 		const FMaterialRenderProxy* BaseProxy = BaseMat->GetRenderProxy();
 		if (!BaseProxy) return;
-		if (VisibleCenters.Num() == 0 && BlockerCenters.Num() == 0 && DefaultCenters.Num() == 0) return;
+		if (Buckets.Num() == 0) return;
 
 		for (int32 ViewIdx = 0; ViewIdx < Views.Num(); ++ViewIdx)
 		{
@@ -222,37 +199,26 @@ public:
 			const FSceneView* View = Views[ViewIdx];
 			if (!IsFogOfWarShowFlagOn(View->Family->EngineShowFlags)) continue;
 
-			const FColoredMaterialRenderProxy* CyanMat =
-				&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
-					BaseProxy, FLinearColor(0.0f, 0.8f, 1.0f, 0.4f));
-			const FColoredMaterialRenderProxy* RedMat =
-				&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
-					BaseProxy, FLinearColor(0.9f, 0.0f, 0.0f, 0.55f));
-			const FColoredMaterialRenderProxy* BlackMat =
-				&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
-					BaseProxy, FLinearColor(0.0f, 0.0f, 0.0f, 0.4f));
+			for (const FSeinFogOfWarColorBucket& Bucket : Buckets)
+			{
+				if (Bucket.Centers.Num() == 0) continue;
+				FLinearColor Tint = FLinearColor(Bucket.Color);
+				// Alpha tuned per-role: blockers opaque enough to read against
+				// underlying mesh at distance, visible/default translucent to
+				// show terrain through them.
+				Tint.A = (Bucket.Color == FColor(200, 0, 0)) ? 0.55f
+					   : (Bucket.Color == FColor(0, 0, 0))   ? 0.40f
+					                                         : 0.45f;
+				const FColoredMaterialRenderProxy* Mat =
+					&Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
+						BaseProxy, Tint);
 
-			if (VisibleCenters.Num() > 0)
-			{
 				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, VisibleCenters);
-				Builder.GetMesh(FMatrix::Identity, CyanMat, SDPG_World,
-					/*bDisableBackfaceCulling*/ true, /*bReceivesDecals*/ false,
+				EmitQuads(Builder, Bucket.Centers);
+				Builder.GetMesh(FMatrix::Identity, Mat, SDPG_World,
+					/*bDisableBackfaceCulling*/ true,
+					/*bReceivesDecals*/ false,
 					ViewIdx, Collector);
-			}
-			if (BlockerCenters.Num() > 0)
-			{
-				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, BlockerCenters);
-				Builder.GetMesh(FMatrix::Identity, RedMat, SDPG_World,
-					true, false, ViewIdx, Collector);
-			}
-			if (DefaultCenters.Num() > 0)
-			{
-				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, DefaultCenters);
-				Builder.GetMesh(FMatrix::Identity, BlackMat, SDPG_World,
-					true, false, ViewIdx, Collector);
 			}
 		}
 	}
@@ -293,9 +259,7 @@ private:
 		}
 	}
 
-	TArray<FVector> VisibleCenters;
-	TArray<FVector> BlockerCenters;
-	TArray<FVector> DefaultCenters;
+	TArray<FSeinFogOfWarColorBucket> Buckets;
 	float HalfExtent;
 };
 
@@ -341,17 +305,16 @@ FPrimitiveSceneProxy* USeinFogOfWarDebugComponent::CreateSceneProxy()
 		{
 			if (Fog->HasRuntimeData())
 			{
-				// Observer precedence: console override
-				// (`SeinARTS.Debug.ShowFogOfWar.PlayerPerspective <id>`) wins,
-				// otherwise the local PC's FSeinPlayerID. Non-PIE with no
-				// override falls through to neutral → every cell renders as
-				// blocker (red) or default (black) baseline.
+				// Observer precedence: console override wins, else local PC.
 				FSeinPlayerID Observer;
 				if (!UE::SeinARTSFogOfWar::TryGetDebugObserverOverride(Observer))
 				{
-					Observer = ResolveLocalObserverPlayerID(World);
+					Observer = UE::SeinARTSFogOfWar::ResolveLocalObserverPlayerID(World);
 				}
-				Fog->CollectDebugCellQuads(Observer, AllCenters, AllColors, HalfExtent);
+				// Layer precedence: console override wins, else V (bit 1).
+				int32 VisibleBit = 1;
+				UE::SeinARTSFogOfWar::TryGetDebugLayerOverride(VisibleBit);
+				Fog->CollectDebugCellQuads(Observer, VisibleBit, AllCenters, AllColors, HalfExtent);
 			}
 		}
 	}
@@ -365,42 +328,44 @@ FPrimitiveSceneProxy* USeinFogOfWarDebugComponent::CreateSceneProxy()
 
 	if (AllCenters.Num() == 0) return nullptr;
 
-	// Bucket cells by color channel into three viz states. Impl sentinel
-	// colors: cyan = (0, 200, 255), red = (200, 0, 0), black = (0, 0, 0).
-	//   B > R    → cyan (visible)
-	//   R > 100  → red (blocker)
-	//   else     → black (default)
-	// Fallback path (no colors parallel — legacy volume-rasterize case):
-	// treat every cell as default so the whole grid shows up as the black
-	// baseline.
-	TArray<FVector> VisibleCenters;
-	TArray<FVector> BlockerCenters;
-	TArray<FVector> DefaultCenters;
+	// Bucket cells by exact FColor. N-way instead of the old hardcoded
+	// 3-way — lets per-layer visible colors (E=yellow, V=cyan, N0..N5 from
+	// plugin settings) coexist with blocker red + baseline black on the
+	// same proxy. Typical rebuild has ≤ 3 buckets (one visible color +
+	// red + black).
+	TArray<FSeinFogOfWarColorBucket> Buckets;
 	if (AllColors.Num() == AllCenters.Num())
 	{
-		VisibleCenters.Reserve(AllCenters.Num());
-		BlockerCenters.Reserve(AllCenters.Num());
-		DefaultCenters.Reserve(AllCenters.Num());
 		for (int32 i = 0; i < AllCenters.Num(); ++i)
 		{
 			const FColor& C = AllColors[i];
-			if (C.B > C.R)      VisibleCenters.Add(AllCenters[i]);
-			else if (C.R > 100) BlockerCenters.Add(AllCenters[i]);
-			else                DefaultCenters.Add(AllCenters[i]);
+			FSeinFogOfWarColorBucket* Match = Buckets.FindByPredicate(
+				[&C](const FSeinFogOfWarColorBucket& B) { return B.Color == C; });
+			if (!Match)
+			{
+				FSeinFogOfWarColorBucket NewBucket;
+				NewBucket.Color = C;
+				Match = &Buckets.Add_GetRef(MoveTemp(NewBucket));
+			}
+			Match->Centers.Add(AllCenters[i]);
 		}
 	}
 	else
 	{
-		DefaultCenters = MoveTemp(AllCenters);
+		// Fallback (volume-rasterize path — no parallel colors). Treat as
+		// baseline red so the grid at least reads as "fog extent" in non-
+		// PIE when the impl has no runtime data.
+		FSeinFogOfWarColorBucket Fallback;
+		Fallback.Color = FColor(200, 0, 0);
+		Fallback.Centers = MoveTemp(AllCenters);
+		Buckets.Add(MoveTemp(Fallback));
 	}
 
 	UE_LOG(LogSeinFogOfWarDebug, Verbose,
-		TEXT("CreateSceneProxy: %d visible + %d blocker + %d default cells, halfExtent=%.1f"),
-		VisibleCenters.Num(), BlockerCenters.Num(), DefaultCenters.Num(), HalfExtent);
+		TEXT("CreateSceneProxy: %d color buckets, halfExtent=%.1f"),
+		Buckets.Num(), HalfExtent);
 
-	return new FSeinFogOfWarDebugProxy(this,
-		MoveTemp(VisibleCenters), MoveTemp(BlockerCenters),
-		MoveTemp(DefaultCenters), HalfExtent);
+	return new FSeinFogOfWarDebugProxy(this, MoveTemp(Buckets), HalfExtent);
 #else
 	return nullptr;
 #endif

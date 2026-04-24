@@ -111,6 +111,7 @@ public:
 	virtual uint8 GetCellBitfield(FSeinPlayerID Observer, const FFixedVector& WorldPos) const override;
 
 	virtual void CollectDebugCellQuads(FSeinPlayerID Observer,
+		int32 VisibleBitIndex,
 		TArray<FVector>& OutCenters,
 		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const override;
@@ -139,6 +140,20 @@ private:
 	 *  (e.g. thermal-see-through-smoke) land with the layer pass. */
 	TArray<uint8> BlockerLayerMask;
 
+	/** Dynamic blocker overlay — absolute world Z of any runtime-authored
+	 *  blocker (smoke grenades, destructibles in progress) at this cell.
+	 *  Rebuilt each `TickStamps` from entities carrying `FSeinVisionBlockerData`
+	 *  in sim component storage. Zero = no dynamic blocker this tick.
+	 *  LOS tests static + dynamic independently (per-blocker layer mask
+	 *  is honored separately — see IsCellOpaqueToEye). */
+	TArray<FFixedPoint> DynamicBlockerHeight;
+
+	/** Parallel to `DynamicBlockerHeight` — which EVNNNNNN bits the
+	 *  dynamic blocker at this cell occludes. OR'd across overlapping
+	 *  blockers (e.g. two smoke grenades at the same cell combine their
+	 *  masks). */
+	TArray<uint8> DynamicBlockerLayerMask;
+
 	/** Per-observer visibility state. Keyed by FSeinPlayerID; lazily
 	 *  created on first stamp by that owner. Each group's CellBitfield is
 	 *  sized Width*Height; bit 0 is sticky Explored, bit 1 is Normal vis
@@ -166,25 +181,60 @@ private:
 	 *  clear, Explored stays sticky). */
 	FSeinFogVisionGroup& GetOrCreateGroup(FSeinPlayerID PlayerID);
 
-	/** Stamp V + Explored bits into every cell within `Radius` world units
-	 *  of `WorldPos` that the source can actually see — writing into
-	 *  `OwnerPlayer`'s VisionGroup. Lampshade model: source's eye Z =
-	 *  GroundHeight[sourceCell] + EyeHeight; a cell is opaque to this
-	 *  source iff max(GroundHeight, BlockerHeight) at the cell is above
-	 *  eye Z. Per-target LOS uses integer Bresenham — O(R³) per source but
-	 *  symmetric, deterministic, and trivial to verify. Swap to Ford's
-	 *  symmetric shadowcast (O(R²)) when radii grow large. */
+	/** Stamp `StampBit` + Explored bits into every cell within `Radius`
+	 *  world units of `WorldPos` that the source can actually see —
+	 *  writing into `OwnerPlayer`'s VisionGroup. `StampBit` ∈ [1, 7]:
+	 *  1 = V (Normal), 2..7 = N0..N5 custom layers. Lampshade model:
+	 *  source eye Z = `WorldPos.Z + EyeHeight` (unit's actual sim Z,
+	 *  tracked by nav path — NOT the cell's baked GroundHeight, which
+	 *  stores the terrain beneath any blocker and would place a unit
+	 *  standing on a climbable platform below its walls). Terrain
+	 *  (GroundHeight) occludes layer-agnostically; static blockers only
+	 *  occlude if their `BlockerLayerMask` covers this layer's bit —
+	 *  which means, for example, smoke tagged to block Normal but not
+	 *  Thermal will let a Thermal stamp pass through. Per-target LOS uses
+	 *  integer Bresenham — O(R³) per source but symmetric, deterministic,
+	 *  and trivial to verify. Swap to Ford's symmetric shadowcast (O(R²))
+	 *  when radii grow large. */
 	void StampShadowcast(FSeinPlayerID OwnerPlayer, const FFixedVector& WorldPos,
-		FFixedPoint Radius, FFixedPoint EyeHeight);
+		FFixedPoint Radius, FFixedPoint EyeHeight, uint8 StampBit);
 
-	/** Integer Bresenham from (X0,Y0) to (X1,Y1). Returns true if every
-	 *  intermediate cell (excluding both endpoints) is transparent to an
-	 *  eye at `EyeZ`. */
-	bool HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1, FFixedPoint EyeZ) const;
+	/** Integer-Bresenham LOS from (X0,Y0,EyeZ) to (X1,Y1,TargetZ). At each
+	 *  intermediate cell the ray's Z is linearly interpolated between
+	 *  EyeZ and TargetZ; the cell is tested against that interpolated Z
+	 *  (not the constant EyeZ). This is what gives true-sight its
+	 *  elevation behavior: a unit on a roof looking DOWN at the ground
+	 *  has its ray descend, so a wall halfway between them — shorter than
+	 *  the unit's eye but taller than the ray's Z at that midpoint — will
+	 *  still occlude. Only blockers whose LayerMask covers `StampBitMask`
+	 *  contribute. */
+	bool HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1,
+		FFixedPoint EyeZ, FFixedPoint TargetZ, uint8 StampBitMask) const;
 
-	/** Cell is opaque to an eye at EyeZ iff its effective top (max of
-	 *  ground + blocker height, both absolute world Z) is above EyeZ. */
-	bool IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ) const;
+	/** Cell is opaque to an eye at EyeZ iff any of:
+	 *   - GroundHeight > EyeZ (terrain always occludes), OR
+	 *   - Static BlockerHeight > EyeZ AND BlockerLayerMask & StampBitMask, OR
+	 *   - Dynamic BlockerHeight > EyeZ AND DynamicBlockerLayerMask & StampBitMask.
+	 *  Static + dynamic test independently — a short-but-layered dynamic
+	 *  blocker doesn't inherit a tall static blocker's reach, and vice
+	 *  versa. Lets smoke-blocks-Normal-but-not-Thermal style policies work
+	 *  correctly alongside baked geometry. */
+	bool IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ, uint8 StampBitMask) const;
+
+	/** Clear the dynamic blocker overlay, then walk every entity carrying
+	 *  `FSeinVisionBlockerData` and disc-stamp its contribution into the
+	 *  overlay. Runs at the top of TickStamps so the vision passes below
+	 *  see the freshest occlusion state. */
+	void RebuildDynamicBlockers(UWorld* World);
+
+	/** Stamp a disc of effective height + layer mask into the dynamic
+	 *  blocker overlay. `Height` is blocker height above ground; at each
+	 *  covered cell the stored value is `GroundHeight[Idx] + Height`
+	 *  (absolute world Z of the blocker top, matching the static array
+	 *  convention). Multiple overlapping disc stamps take the taller
+	 *  height + OR'd layer mask per cell. */
+	void StampDynamicBlockerDisc(const FFixedVector& WorldPos,
+		FFixedPoint Radius, FFixedPoint HeightAboveGround, uint8 LayerMask);
 
 	/** Hoist baked asset fields into runtime arrays. Called from LoadFromAsset
 	 *  when the asset is a USeinFogOfWarDefaultAsset. */

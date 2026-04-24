@@ -21,6 +21,7 @@
 
 #include "CoreMinimal.h"
 #include "Movement/SeinLocomotion.h"
+#include "Types/FixedPoint.h"
 #include "SeinTrackedVehicleMovement.generated.h"
 
 UCLASS(meta = (DisplayName = "Tracked Vehicle"))
@@ -30,12 +31,16 @@ class SEINARTSNAVIGATION_API USeinTrackedVehicleMovement : public USeinLocomotio
 
 public:
 
+	USeinTrackedVehicleMovement();
+
 	/** Above this aim-angle (radians) the vehicle stops and rotates in place
 	 *  until back under the threshold. Default: π/4 (45°). Lower values keep
 	 *  the tank moving through sharper turns; higher values force more
-	 *  "stop-and-turn" beats. */
-	UPROPERTY(EditAnywhere, Category = "Movement", meta = (ClampMin = "0.0"))
-	float PivotThresholdRadians = 0.785398f; // π/4
+	 *  "stop-and-turn" beats. Stored as FFixedPoint so the per-tick compare
+	 *  with the sim-side YawDelta stays pure fixed-point — no per-tick
+	 *  float→fp conversion on the hot path. */
+	UPROPERTY(EditAnywhere, Category = "Movement")
+	FFixedPoint PivotThresholdRadians;
 
 	virtual bool Tick(
 		FSeinEntity& Entity,

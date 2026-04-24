@@ -13,6 +13,11 @@
 #include "Types/Vector.h"
 #include "Components/SeinMovementData.h"
 
+USeinTrackedVehicleMovement::USeinTrackedVehicleMovement()
+	: PivotThresholdRadians(FFixedPoint::QuarterPi)
+{
+}
+
 bool USeinTrackedVehicleMovement::Tick(
 	FSeinEntity& Entity,
 	const FSeinMovementData& MoveData,
@@ -56,9 +61,8 @@ bool USeinTrackedVehicleMovement::Tick(
 	// AFTER this tick's turn, stay stationary and rotate in place. Once the
 	// applied turn brings the remaining error under the threshold, allow
 	// translation this same tick so units don't lose a frame at the boundary.
-	const FFixedPoint PivotThreshold = FFixedPoint::FromFloat(PivotThresholdRadians);
 	const FFixedPoint RemainingErr = SeinMath::Abs(YawDelta - AppliedTurn);
-	const bool bAlignedEnoughToMove = (RemainingErr <= PivotThreshold);
+	const bool bAlignedEnoughToMove = (RemainingErr <= PivotThresholdRadians);
 
 	if (bAlignedEnoughToMove)
 	{
