@@ -112,6 +112,7 @@ bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*&
 	// supports per-region grids).
 	const float CellSizeF = Volumes[0]->GetResolvedCellSize();
 	const FFixedPoint BakedCellSize = FFixedPoint::FromFloat(CellSizeF);
+	const bool bBakeStaticBlockers = Volumes[0]->bBakeStaticBlockers;
 
 	const int32 GridW = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.X - UnionBounds.Min.X) / CellSizeF));
 	const int32 GridH = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.Y - UnionBounds.Min.Y) / CellSizeF));
@@ -155,6 +156,14 @@ bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*&
 		if (Vol) QP.AddIgnoredActor(Vol);
 	}
 
+	// Cell-footprint box shape for the top trace. Half-extents (cellHalf,
+	// cellHalf, 1cm). Using a box sweep here — not a line trace — so thin
+	// walls / hedgerows / fences that don't intersect the cell center still
+	// register as the cell's top surface. A line trace would miss them
+	// entirely, leaving thin blockers invisible to LOS.
+	const FCollisionShape CellBox = FCollisionShape::MakeBox(
+		FVector(CellSizeF * 0.5f, CellSizeF * 0.5f, 1.0f));
+
 	int32 BakeGroundHits = 0;
 	int32 BakeBlockerHits = 0;
 	int32 BakeMisses = 0;
@@ -178,9 +187,10 @@ bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*&
 
 			FSeinFogOfWarCell& Cell = OutAsset->Cells[Y * GridW + X];
 
-			// Trace 1: top-down for the topmost opaque surface in this column.
+			// Trace 1: box sweep for the topmost opaque surface anywhere in
+			// this cell's footprint (catches thin blockers).
 			FHitResult TopHit;
-			if (!World->LineTraceSingleByChannel(TopHit, Start, End, BakeTraceChannel, QP))
+			if (!World->SweepSingleByChannel(TopHit, Start, End, FQuat::Identity, BakeTraceChannel, CellBox, QP))
 			{
 				// No geometry at all — no ground, no blocker. GroundHeight
 				// defaults to the volume's bottom (quantized 0).
@@ -192,33 +202,40 @@ bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*&
 			else
 			{
 				const float TopHitZ = TopHit.ImpactPoint.Z;
-
-				// Trace 2: from the top hit downward, ignoring the top actor,
-				// for the ground beneath. If we miss, the top hit IS the
-				// ground (simple terrain). If we hit, the gap is a static
-				// blocker above the ground.
-				FCollisionQueryParams QP2 = QP;
-				if (AActor* TopActor = TopHit.GetActor())
-				{
-					QP2.AddIgnoredActor(TopActor);
-				}
-
-				FHitResult GroundHit;
-				const FVector Trace2Start(CX, CY, TopHitZ - 0.1f);
 				float GroundZ = TopHitZ;
 				float BlockerRelZ = 0.0f;
-				if (World->LineTraceSingleByChannel(GroundHit, Trace2Start, End, BakeTraceChannel, QP2))
+
+				if (bBakeStaticBlockers)
 				{
-					const float GroundHitZ = GroundHit.ImpactPoint.Z;
-					const float Gap = TopHitZ - GroundHitZ;
-					if (Gap >= StaticBlockerMinHeight)
+					// Trace 2: from the top hit downward, ignoring the top
+					// actor, for the ground beneath. If we miss, the top hit
+					// IS the ground (simple terrain). If we hit, the gap is
+					// a static blocker above the ground.
+					FCollisionQueryParams QP2 = QP;
+					if (AActor* TopActor = TopHit.GetActor())
 					{
-						GroundZ = GroundHitZ;
-						BlockerRelZ = Gap;
-						++BakeBlockerHits;
+						QP2.AddIgnoredActor(TopActor);
 					}
-					// else: top hit is walkable (terrain noise gap is negligible)
+
+					FHitResult GroundHit;
+					const FVector Trace2Start(CX, CY, TopHitZ - 0.1f);
+					if (World->LineTraceSingleByChannel(GroundHit, Trace2Start, End, BakeTraceChannel, QP2))
+					{
+						const float GroundHitZ = GroundHit.ImpactPoint.Z;
+						const float Gap = TopHitZ - GroundHitZ;
+						if (Gap >= StaticBlockerMinHeight)
+						{
+							GroundZ = GroundHitZ;
+							BlockerRelZ = Gap;
+							++BakeBlockerHits;
+						}
+						// else: top hit is walkable (terrain noise gap is negligible)
+					}
 				}
+				// else: static blocker pass disabled — the top hit is whatever
+				// stands at the top of this cell and we treat it as ground;
+				// no blocker contribution. All sight occlusion from this point
+				// on comes from runtime USeinVisionBlockerComponent overlays.
 
 				// Quantize. Ground stored relative to MinHeight; Blocker
 				// stored as height above Ground (both uint8).
@@ -313,7 +330,7 @@ void USeinFogOfWarDefault::LoadFromAsset(USeinFogOfWarAsset* Asset)
 		GroundHeight.Reset();
 		BlockerHeight.Reset();
 		BlockerLayerMask.Reset();
-		CellBitfield.Reset();
+		VisionGroups.Empty();
 	}
 	OnFogOfWarMutated.Broadcast();
 }
@@ -336,7 +353,7 @@ void USeinFogOfWarDefault::ApplyAssetData(const USeinFogOfWarDefaultAsset* Asset
 	GroundHeight.SetNumUninitialized(NumCells);
 	BlockerHeight.SetNumUninitialized(NumCells);
 	BlockerLayerMask.SetNumUninitialized(NumCells);
-	CellBitfield.SetNumZeroed(NumCells);
+	VisionGroups.Empty(); // per-player state recreates lazily on next stamp
 
 	// Dequantize uint8 heights → FFixedPoint. Runtime stores ABSOLUTE world Z
 	// for both (Ground = MinHeight + Q·steps; Blocker = Ground + Q·steps) so
@@ -395,7 +412,7 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 	GroundHeight.SetNumUninitialized(NumCells);
 	BlockerHeight.SetNumZeroed(NumCells);
 	BlockerLayerMask.SetNumZeroed(NumCells);
-	CellBitfield.SetNumZeroed(NumCells);
+	VisionGroups.Empty();
 
 	// Per-cell downward trace capped at InitTraceCellCap — no-bake fallback.
 	const bool bTracePerCell = NumCells <= InitTraceCellCap;
@@ -435,6 +452,17 @@ void USeinFogOfWarDefault::InitGridFromVolumes(UWorld* World)
 // Tick / stamp
 // ============================================================================
 
+FSeinFogVisionGroup& USeinFogOfWarDefault::GetOrCreateGroup(FSeinPlayerID PlayerID)
+{
+	FSeinFogVisionGroup& Group = VisionGroups.FindOrAdd(PlayerID);
+	const int32 NumCells = Width * Height;
+	if (Group.CellBitfield.Num() != NumCells)
+	{
+		Group.CellBitfield.SetNumZeroed(NumCells);
+	}
+	return Group;
+}
+
 void USeinFogOfWarDefault::TickStamps(UWorld* World)
 {
 	if (Width <= 0 || Height <= 0 || !World) return;
@@ -445,14 +473,18 @@ void USeinFogOfWarDefault::TickStamps(UWorld* World)
 	const ISeinComponentStorage* Storage = Sim->GetComponentStorageRaw(FSeinVisionData::StaticStruct());
 	if (!Storage) return;
 
-	// Clear visibility bits but preserve the Explored bit (sticky per match).
-	for (uint8& Byte : CellBitfield)
+	// Clear V bits in every existing group but preserve Explored — that bit
+	// is sticky per-player-per-match (classic fog-of-war memory).
+	for (TPair<FSeinPlayerID, FSeinFogVisionGroup>& Pair : VisionGroups)
 	{
-		Byte &= SEIN_FOW_BIT_EXPLORED;
+		for (uint8& Byte : Pair.Value.CellBitfield)
+		{
+			Byte &= SEIN_FOW_BIT_EXPLORED;
+		}
 	}
 
 	Sim->GetEntityPool().ForEachEntity(
-		[this, Storage](FSeinEntityHandle Handle, FSeinEntity& Entity)
+		[this, Sim, Storage](FSeinEntityHandle Handle, FSeinEntity& Entity)
 		{
 			const void* Raw = Storage->GetComponentRaw(Handle);
 			if (!Raw) return;
@@ -460,49 +492,118 @@ void USeinFogOfWarDefault::TickStamps(UWorld* World)
 			if (!VData) return;
 			if (VData->VisionRadius <= FFixedPoint::Zero) return;
 
-			StampFlatCircle(Entity.Transform.GetLocation(), VData->VisionRadius);
+			const FSeinPlayerID OwnerPlayer = Sim->GetEntityOwner(Handle);
+			StampShadowcast(OwnerPlayer, Entity.Transform.GetLocation(),
+				VData->VisionRadius, VData->EyeHeight);
 		});
 
 	OnFogOfWarMutated.Broadcast();
 }
 
-void USeinFogOfWarDefault::StampFlatCircle(const FFixedVector& WorldPos, FFixedPoint Radius)
+void USeinFogOfWarDefault::StampShadowcast(FSeinPlayerID OwnerPlayer,
+	const FFixedVector& WorldPos, FFixedPoint Radius, FFixedPoint EyeHeight)
 {
-	int32 CX, CY;
-	if (!WorldToGrid(WorldPos, CX, CY)) return;
+	int32 SX, SY;
+	if (!WorldToGrid(WorldPos, SX, SY)) return;
 	if (CellSize <= FFixedPoint::Zero || Radius <= FFixedPoint::Zero) return;
 
-	// Pure FFixedPoint math — see header determinism contract.
+	// Source eye Z in absolute world coords. GroundHeight at the source's
+	// own cell is the reference; the unit is treated as standing on that
+	// cell's ground regardless of its authored Z (keeps sim/render decoupled
+	// and lampshade test deterministic).
+	const int32 SrcIdx = CellIndex(SX, SY);
+	const FFixedPoint SourceGroundZ = GroundHeight.IsValidIndex(SrcIdx) ? GroundHeight[SrcIdx] : Origin.Z;
+	const FFixedPoint EyeZ = SourceGroundZ + EyeHeight;
+
+	// Grab the owner's group once — stamps write into this bitfield only.
+	TArray<uint8>& OwnerBits = GetOrCreateGroup(OwnerPlayer).CellBitfield;
+
+	// Radius bounds in cell units — see StampFlatCircle history in git for
+	// the integer-ceil-of-a-fixed-point explainer.
 	const FFixedPoint RadiusCellsFP = Radius / CellSize;
 	const int32 RadiusCellsFloor = RadiusCellsFP.ToInt();
 	const bool bHasFraction = (RadiusCellsFP.Value & FFixedPoint::FractionalMask) != 0;
 	const int32 RadiusCells = bHasFraction ? RadiusCellsFloor + 1 : RadiusCellsFloor;
-
 	const FFixedPoint RadiusCellsSq = RadiusCellsFP * RadiusCellsFP;
 
 	const uint8 StampMask = SEIN_FOW_BIT_NORMAL | SEIN_FOW_BIT_EXPLORED;
 
+	// Source's own cell is always visible.
+	OwnerBits[SrcIdx] |= StampMask;
+
+	// Iterate the radius bounding box; for each cell inside the circular
+	// radius, Bresenham-walk from source and stamp only if no intermediate
+	// cell is opaque to our eye.
 	for (int32 DY = -RadiusCells; DY <= RadiusCells; ++DY)
 	{
-		const int32 Y = CY + DY;
-		if (Y < 0 || Y >= Height) continue;
+		const int32 TY = SY + DY;
+		if (TY < 0 || TY >= Height) continue;
 		const int32 DYSq = DY * DY;
 		for (int32 DX = -RadiusCells; DX <= RadiusCells; ++DX)
 		{
+			if (DX == 0 && DY == 0) continue;
 			const FFixedPoint DistSqCells = FFixedPoint::FromInt(DX * DX + DYSq);
 			if (DistSqCells > RadiusCellsSq) continue;
-			const int32 X = CX + DX;
-			if (X < 0 || X >= Width) continue;
-			CellBitfield[CellIndex(X, Y)] |= StampMask;
+			const int32 TX = SX + DX;
+			if (TX < 0 || TX >= Width) continue;
+
+			if (HasLineOfSightToCell(SX, SY, TX, TY, EyeZ))
+			{
+				OwnerBits[CellIndex(TX, TY)] |= StampMask;
+			}
 		}
 	}
+}
+
+bool USeinFogOfWarDefault::HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1, FFixedPoint EyeZ) const
+{
+	if (X0 == X1 && Y0 == Y1) return true;
+
+	// Classic Bresenham — integer-native, symmetric, same walk from either
+	// endpoint. Source cell is the starting point (not tested); target cell
+	// is whatever we're trying to see (not tested — you can always "see"
+	// the thing you're looking at, even if it's a wall). Opacity test
+	// applies to every cell in between.
+	const int32 DX =  FMath::Abs(X1 - X0);
+	const int32 DY = -FMath::Abs(Y1 - Y0);
+	const int32 SXStep = (X0 < X1) ? 1 : -1;
+	const int32 SYStep = (Y0 < Y1) ? 1 : -1;
+	int32 Err = DX + DY;
+	int32 X = X0;
+	int32 Y = Y0;
+
+	while (true)
+	{
+		const int32 E2 = 2 * Err;
+		if (E2 >= DY) { Err += DY; X += SXStep; }
+		if (E2 <= DX) { Err += DX; Y += SYStep; }
+
+		if (X == X1 && Y == Y1) return true;
+		if (IsCellOpaqueToEye(X, Y, EyeZ)) return false;
+	}
+}
+
+bool USeinFogOfWarDefault::IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ) const
+{
+	if (!IsValidCoord(X, Y)) return false;
+	const int32 Idx = CellIndex(X, Y);
+	const FFixedPoint GroundZ  = GroundHeight.IsValidIndex(Idx)  ? GroundHeight[Idx]  : FFixedPoint::Zero;
+	const FFixedPoint BlockerZ = BlockerHeight.IsValidIndex(Idx) ? BlockerHeight[Idx] : FFixedPoint::Zero;
+	// Effective blocker top = max(ground, blocker) — open terrain uses
+	// ground (hills block distant sight); cells with structures use the
+	// blocker top.
+	const FFixedPoint Top = (BlockerZ > GroundZ) ? BlockerZ : GroundZ;
+	return Top > EyeZ;
 }
 
 uint8 USeinFogOfWarDefault::GetCellBitfield(FSeinPlayerID Observer, const FFixedVector& WorldPos) const
 {
 	int32 CX, CY;
 	if (!WorldToGrid(WorldPos, CX, CY)) return 0;
-	return CellBitfield[CellIndex(CX, CY)];
+	const FSeinFogVisionGroup* Group = VisionGroups.Find(Observer);
+	if (!Group) return 0;
+	const int32 Idx = CellIndex(CX, CY);
+	return Group->CellBitfield.IsValidIndex(Idx) ? Group->CellBitfield[Idx] : 0;
 }
 
 void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
@@ -525,8 +626,14 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 	const float CellSizeF = CellSize.ToFloat();
 	const float HalfCellF = CellSizeF * 0.5f;
 
+	// Per-observer bitfield lookup. If the observer has never stamped,
+	// there's no group — treat every cell's V bit as 0 (non-PIE / editor
+	// preview / unknown observer all render as baseline).
+	const FSeinFogVisionGroup* ObserverGroup = VisionGroups.Find(Observer);
+	const TArray<uint8>* ObserverBits = ObserverGroup ? &ObserverGroup->CellBitfield : nullptr;
+
 	// Three-state color scheme (debug proxy buckets by channel pattern):
-	//  cyan  → cell is visible this tick (V bit set)
+	//  cyan  → cell is visible this tick (V bit set for Observer)
 	//  red   → cell is a baked static blocker (no vision this tick)
 	//  black → cell is in-grid with no blocker + no visibility
 	// Cell Z: blocker cells draw at blocker-top (shows the blocker's height);
@@ -540,7 +647,7 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 		for (int32 X = 0; X < Width; ++X)
 		{
 			const int32 Idx = CellIndex(X, Y);
-			const uint8 Bits = CellBitfield[Idx];
+			const uint8 Bits = (ObserverBits && ObserverBits->IsValidIndex(Idx)) ? (*ObserverBits)[Idx] : 0;
 			const bool bVisible = (Bits & SEIN_FOW_BIT_NORMAL) != 0;
 			const bool bHasBlocker = BlockerLayerMask.IsValidIndex(Idx) && BlockerLayerMask[Idx] != 0;
 

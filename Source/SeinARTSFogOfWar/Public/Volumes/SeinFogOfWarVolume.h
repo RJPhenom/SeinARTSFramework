@@ -44,6 +44,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "SeinARTS|Fog Of War|Output")
 	TObjectPtr<USeinFogOfWarAsset> BakedAsset;
 
+	/** If true, the bake's per-cell pass detects static sight blockers
+	 *  (walls, buildings, hedgerows) and stamps them into the asset. If
+	 *  false, the bake only captures grid layout + ground height —
+	 *  BlockerHeight stays zero everywhere and all sight occlusion comes
+	 *  from runtime sources (`USeinVisionBlockerComponent`, designer-
+	 *  authored ability effects, etc.). Set before clicking Bake Fog Of
+	 *  War. When multiple volumes exist on a level, the first one's
+	 *  setting wins — same convention as `CellSize`. */
+	UPROPERTY(EditAnywhere, Category = "Sein Fog Of War Build",
+		meta = (DisplayName = "Bake Static Blockers"))
+	bool bBakeStaticBlockers = true;
+
 	/** Scene-proxy-backed cell viz. Driven by `ShowFlags.FogOfWar` /
 	 *  `SeinARTS.Debug.ShowFogOfWar`; null in shipping. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "SeinARTS|Fog Of War|Debug")

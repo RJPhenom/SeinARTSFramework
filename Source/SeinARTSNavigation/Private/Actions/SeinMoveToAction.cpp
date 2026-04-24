@@ -7,6 +7,8 @@
 #include "Abilities/SeinMoveToProxy.h"
 #include "SeinNavigation.h"
 #include "SeinNavigationSubsystem.h"
+#include "Movement/SeinLocomotion.h"
+#include "Movement/SeinBasicMovement.h"
 
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Components/SeinMovementData.h"
@@ -23,6 +25,7 @@ void USeinMoveToAction::Initialize(const FFixedVector& InDestination, FFixedPoin
 	CurrentWaypointIndex = 0;
 	bPathResolved = false;
 	Path.Clear();
+	Locomotion = nullptr;
 }
 
 bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World)
@@ -41,10 +44,11 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		return true;
 	}
 
-	// Resolve nav + query path once.
+	USeinNavigation* Nav = USeinNavigationSubsystem::GetNavigationForWorld(&World);
+
+	// First-tick setup: resolve path + instantiate the locomotion.
 	if (!bPathResolved)
 	{
-		USeinNavigation* Nav = USeinNavigationSubsystem::GetNavigationForWorld(&World);
 		if (!Nav)
 		{
 			Fail(static_cast<uint8>(ESeinMoveFailureReason::NoNavigation));
@@ -63,76 +67,50 @@ bool USeinMoveToAction::TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& W
 		}
 		bPathResolved = true;
 		CurrentWaypointIndex = 0;
-	}
 
-	// Advance along path: seek toward current waypoint at MoveSpeed. Pop waypoints
-	// we reach within one step; complete when the final waypoint is within
-	// AcceptanceRadius of the entity.
-	FFixedVector Pos = Entity->Transform.GetLocation();
-	FFixedPoint RemainingStep = MoveComp->MoveSpeed * DeltaTime;
-
-	// Planar XY movement only; Z is sampled from nav ground once after the loop.
-	// (Using Target.Z per step causes snap-to-next-waypoint-Z teleports — a unit
-	// approaching a cube-top waypoint would leap to cube top before entering it.)
-	while (RemainingStep > FFixedPoint::Zero && CurrentWaypointIndex < Path.Waypoints.Num())
-	{
-		const FFixedVector Target = Path.Waypoints[CurrentWaypointIndex];
-		FFixedVector Delta = Target - Pos;
-		Delta.Z = FFixedPoint::Zero;
-		const FFixedPoint DistSq = Delta.SizeSquared();
-
-		const bool bIsFinalWaypoint = (CurrentWaypointIndex == Path.Waypoints.Num() - 1);
-		const FFixedPoint ArriveRadiusSq = bIsFinalWaypoint ? AcceptanceRadiusSq : (MoveComp->MoveSpeed * DeltaTime) * (MoveComp->MoveSpeed * DeltaTime);
-
-		if (DistSq <= ArriveRadiusSq)
+		// Resolve the locomotion class. Soft class path on FSeinMovementData
+		// decouples CoreEntity from SeinARTSNavigation (where the locomotion
+		// classes live); TryLoadClass pulls in the resolved UClass* at first use.
+		UClass* LocomotionClass = MoveComp->LocomotionClass.IsValid()
+			? MoveComp->LocomotionClass.TryLoadClass<USeinLocomotion>()
+			: nullptr;
+		if (!LocomotionClass || LocomotionClass->HasAnyClassFlags(CLASS_Abstract))
 		{
-			// Arrived at this waypoint (XY only; Z resolved below).
-			Pos.X = Target.X;
-			Pos.Y = Target.Y;
-			NotifyWaypointReached(CurrentWaypointIndex, Path.Waypoints.Num());
-			++CurrentWaypointIndex;
-			continue;
+			LocomotionClass = USeinBasicMovement::StaticClass();
 		}
-
-		// Step toward target, bounded by remaining movement budget this tick.
-		const FFixedPoint Dist = Delta.Size();
-		const FFixedPoint StepLen = (Dist < RemainingStep) ? Dist : RemainingStep;
-		const FFixedVector Dir = FFixedVector::GetSafeNormal(Delta);
-		Pos.X = Pos.X + Dir.X * StepLen;
-		Pos.Y = Pos.Y + Dir.Y * StepLen;
-
-		RemainingStep = RemainingStep - StepLen;
-
-		// Face movement direction (instant turn — CoH-style infantry feel). Skip
-		// when movement is near-zero to avoid flipping on tiny residuals.
-		if (Dir.SizeSquared() > FFixedPoint::Epsilon)
+		Locomotion = NewObject<USeinLocomotion>(this, LocomotionClass);
+		if (Locomotion)
 		{
-			// Yaw only — keep the entity upright regardless of terrain Z drift.
-			// Compute yaw from atan2(Dir.Y, Dir.X).
-			// TODO: once a fast fixed-point atan2 is wired up we can rotate the
-			// quaternion directly. For MVP we leave rotation alone — the visual
-			// layer reads velocity for facing in most RTS setups anyway.
+			Locomotion->OnMoveBegin(*Entity, *MoveComp, Path);
 		}
 	}
 
-	// Snap Z to the nav's ground height at the agent's *current* XY. This keeps
-	// the unit flush with local terrain instead of popping to an upcoming
-	// waypoint's Z — so obstacles that slipped into a stale bake don't cause
-	// mid-air teleports, and legitimate ramps transition Z at cell boundaries.
-	if (USeinNavigation* Nav = USeinNavigationSubsystem::GetNavigationForWorld(&World))
+	if (!Locomotion)
 	{
-		FFixedPoint GroundZ;
-		if (Nav->GetGroundHeightAt(Pos, GroundZ))
-		{
-			Pos.Z = GroundZ;
-		}
+		// Defensive: should never happen post-bPathResolved, but fail cleanly
+		// rather than crash.
+		Fail(static_cast<uint8>(ESeinMoveFailureReason::NoMovementComponent));
+		return true;
 	}
 
-	Entity->Transform.SetLocation(Pos);
+	// Delegate the per-tick advance. Locomotion mutates Entity.Transform and
+	// CurrentWaypointIndex; returns true when the final waypoint is reached.
+	const int32 PrevWaypoint = CurrentWaypointIndex;
+	const bool bReachedEnd = Locomotion->Tick(
+		*Entity, *MoveComp, Path, CurrentWaypointIndex,
+		AcceptanceRadiusSq, DeltaTime, Nav);
 
-	// Completed if we walked off the end of the path.
-	if (CurrentWaypointIndex >= Path.Waypoints.Num())
+	// Under-reports if the locomotion consumed multiple waypoints in one tick
+	// (only the latest advance fires the notify). Acceptable for MVP; if
+	// per-step granularity ever matters, swap to a TFunctionRef callback.
+	if (CurrentWaypointIndex > PrevWaypoint)
 	{
+		NotifyWaypointReached(CurrentWaypointIndex - 1, Path.Waypoints.Num());
+	}
+
+	if (bReachedEnd)
+	{
+		Locomotion->OnMoveEnd(*Entity);
 		NotifyCompleted();
 		Complete();
 		return true;

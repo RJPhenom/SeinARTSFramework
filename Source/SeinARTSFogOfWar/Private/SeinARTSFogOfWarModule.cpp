@@ -27,6 +27,8 @@
 #include "HAL/IConsoleManager.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "UObject/UObjectIterator.h"
+#include "Debug/SeinFogOfWarDebugComponent.h"
 
 #if WITH_EDITOR
 #include "LevelEditorViewport.h"
@@ -64,6 +66,13 @@ namespace UE::SeinARTSFogOfWar
 namespace
 {
 	IConsoleCommand* GShowFogOfWarCmd = nullptr;
+	IConsoleCommand* GPlayerPerspectiveCmd = nullptr;
+
+	// Debug observer override. -1 = no override (use local PC). 0..255 = pinned
+	// FSeinPlayerID::Value. Lockstep sim is symmetric so every client's
+	// USeinFogOfWarDefault holds every player's VisionGroup; this toggle just
+	// picks which one the proxy renders on THIS client.
+	int32 GDebugObserverOverride = -1;
 
 	/** Set ShowFlags.FogOfWar across all editor + game viewport clients. */
 	static void SetFogOfWarShowFlag(bool bEnable)
@@ -110,6 +119,47 @@ namespace
 		return false;
 	}
 
+	/** Force the fog debug proxies to rebuild so the observer change lands
+	 *  immediately instead of on the next stamp tick. */
+	static void MarkAllFogDebugProxiesDirty()
+	{
+		for (TObjectIterator<USeinFogOfWarDebugComponent> It; It; ++It)
+		{
+			if (IsValid(*It))
+			{
+				It->MarkRenderStateDirty();
+			}
+		}
+	}
+
+	static void OnPlayerPerspectiveCommand(const TArray<FString>& Args, UWorld* /*WorldContext*/)
+	{
+		if (Args.Num() == 0)
+		{
+			// Reset to local PC.
+			GDebugObserverOverride = -1;
+			UE_LOG(LogTemp, Log, TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective = LOCAL (reset)"));
+			MarkAllFogDebugProxiesDirty();
+			return;
+		}
+
+		const int32 Parsed = FCString::Atoi(*Args[0]);
+		if (Parsed < 0 || Parsed > 255)
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective: expected 0-255, got %s"),
+				*Args[0]);
+			return;
+		}
+
+		GDebugObserverOverride = Parsed;
+		UE_LOG(LogTemp, Log,
+			TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective = Player(%d). "
+				 "Use no-args to reset to local PC."),
+			Parsed);
+		MarkAllFogDebugProxiesDirty();
+	}
+
 	static void OnShowFogOfWarCommand(const TArray<FString>& Args, UWorld* /*WorldContext*/)
 	{
 		bool bEnable = !IsFogOfWarShowFlagOn();
@@ -144,6 +194,14 @@ void FSeinARTSFogOfWarModule::StartupModule()
 			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnShowFogOfWarCommand),
 			ECVF_Default);
 	}
+	if (!GPlayerPerspectiveCmd)
+	{
+		GPlayerPerspectiveCmd = IConsoleManager::Get().RegisterConsoleCommand(
+			TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective"),
+			TEXT("Override the fog-of-war debug viewer to render a specific player's vision instead of the local player controller's. The sim is lockstep-symmetric — every client has every player's VisionGroup, so this is a local viewer toggle over shared data. Usage: SeinARTS.Debug.ShowFogOfWar.PlayerPerspective <id 0-255>. No args → reset to local PC. id=0 = neutral (shows only what neutral-owned sources see)."),
+			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnPlayerPerspectiveCommand),
+			ECVF_Default);
+	}
 #endif
 }
 
@@ -155,5 +213,25 @@ void FSeinARTSFogOfWarModule::ShutdownModule()
 		IConsoleManager::Get().UnregisterConsoleObject(GShowFogOfWarCmd);
 		GShowFogOfWarCmd = nullptr;
 	}
+	if (GPlayerPerspectiveCmd)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(GPlayerPerspectiveCmd);
+		GPlayerPerspectiveCmd = nullptr;
+	}
 #endif
+}
+
+namespace UE::SeinARTSFogOfWar
+{
+	bool TryGetDebugObserverOverride(FSeinPlayerID& OutObserver)
+	{
+#if UE_ENABLE_DEBUG_DRAWING
+		if (GDebugObserverOverride >= 0 && GDebugObserverOverride <= 255)
+		{
+			OutObserver = FSeinPlayerID(static_cast<uint8>(GDebugObserverOverride));
+			return true;
+		}
+#endif
+		return false;
+	}
 }

@@ -20,6 +20,7 @@
 #include "SeinMoveToAction.generated.h"
 
 class USeinMoveToProxy;
+class USeinLocomotion;
 
 /** Reasons a move can fail. Passed via USeinLatentAction::Fail() reason code. */
 UENUM(BlueprintType)
@@ -65,6 +66,12 @@ private:
 
 	int32 CurrentWaypointIndex = 0;
 	bool bPathResolved = false;
+
+	/** Instantiated on first tick from FSeinMovementData::LocomotionClass
+	 *  (or USeinBasicMovement if the soft class is null/unresolved). Owns the
+	 *  actual advance-along-path logic. */
+	UPROPERTY()
+	TObjectPtr<USeinLocomotion> Locomotion;
 
 	void NotifyCompleted();
 	void NotifyWaypointReached(int32 Index, int32 Total);

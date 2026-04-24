@@ -36,12 +36,23 @@
 
 #include "CoreMinimal.h"
 #include "SeinFogOfWar.h"
+#include "Core/SeinPlayerID.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
 #include "SeinFogOfWarDefault.generated.h"
 
 class UWorld;
 class USeinFogOfWarDefaultAsset;
+
+/**
+ * Per-observer visibility state. One per FSeinPlayerID; lazily created on
+ * the owner's first stamp. Holds the EVNNNNNN bitfield the player sees —
+ * V bits clear per tick, Explored (bit 0) is sticky for the match.
+ */
+struct FSeinFogVisionGroup
+{
+	TArray<uint8> CellBitfield;
+};
 
 UCLASS(BlueprintType, meta = (DisplayName = "Sein Fog Of War (Default)"))
 class SEINARTSFOGOFWAR_API USeinFogOfWarDefault : public USeinFogOfWar
@@ -128,10 +139,13 @@ private:
 	 *  (e.g. thermal-see-through-smoke) land with the layer pass. */
 	TArray<uint8> BlockerLayerMask;
 
-	/** EVNNNNNN per cell (row-major). MVP uses only bit 0 (Explored, sticky)
-	 *  and bit 1 (V / Normal visibility). Bits 2..7 reserved for future
-	 *  custom-layer support. */
-	TArray<uint8> CellBitfield;
+	/** Per-observer visibility state. Keyed by FSeinPlayerID; lazily
+	 *  created on first stamp by that owner. Each group's CellBitfield is
+	 *  sized Width*Height; bit 0 is sticky Explored, bit 1 is Normal vis
+	 *  (cleared + re-stamped per tick), bits 2..7 reserved for custom
+	 *  layers. Neutral (player ID 0) is a legal key — useful for
+	 *  neutral-owned structures with cheap passive vision. */
+	TMap<FSeinPlayerID, FSeinFogVisionGroup> VisionGroups;
 
 	// ----------------------------------------------------------------------
 	// Bake state
@@ -147,9 +161,30 @@ private:
 
 	bool WorldToGrid(const FFixedVector& WorldPos, int32& OutX, int32& OutY) const;
 
-	/** OR the V + Explored bits into every cell within `Radius` world units
-	 *  of `WorldPos`. Flat circle — no LOS, no lampshade, no layers. */
-	void StampFlatCircle(const FFixedVector& WorldPos, FFixedPoint Radius);
+	/** Get-or-create the VisionGroup for a player. Lazy-inits the bitfield
+	 *  to Width*Height when first observed; reuses across ticks (V bits
+	 *  clear, Explored stays sticky). */
+	FSeinFogVisionGroup& GetOrCreateGroup(FSeinPlayerID PlayerID);
+
+	/** Stamp V + Explored bits into every cell within `Radius` world units
+	 *  of `WorldPos` that the source can actually see — writing into
+	 *  `OwnerPlayer`'s VisionGroup. Lampshade model: source's eye Z =
+	 *  GroundHeight[sourceCell] + EyeHeight; a cell is opaque to this
+	 *  source iff max(GroundHeight, BlockerHeight) at the cell is above
+	 *  eye Z. Per-target LOS uses integer Bresenham — O(R³) per source but
+	 *  symmetric, deterministic, and trivial to verify. Swap to Ford's
+	 *  symmetric shadowcast (O(R²)) when radii grow large. */
+	void StampShadowcast(FSeinPlayerID OwnerPlayer, const FFixedVector& WorldPos,
+		FFixedPoint Radius, FFixedPoint EyeHeight);
+
+	/** Integer Bresenham from (X0,Y0) to (X1,Y1). Returns true if every
+	 *  intermediate cell (excluding both endpoints) is transparent to an
+	 *  eye at `EyeZ`. */
+	bool HasLineOfSightToCell(int32 X0, int32 Y0, int32 X1, int32 Y1, FFixedPoint EyeZ) const;
+
+	/** Cell is opaque to an eye at EyeZ iff its effective top (max of
+	 *  ground + blocker height, both absolute world Z) is above EyeZ. */
+	bool IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ) const;
 
 	/** Hoist baked asset fields into runtime arrays. Called from LoadFromAsset
 	 *  when the asset is a USeinFogOfWarDefaultAsset. */

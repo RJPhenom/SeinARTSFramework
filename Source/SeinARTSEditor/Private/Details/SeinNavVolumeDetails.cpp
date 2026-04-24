@@ -66,7 +66,7 @@ void FSeinNavVolumeDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 				.OnClicked_Raw(this, &FSeinNavVolumeDetails::OnRebuildClicked)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("RebuildButton", "Rebuild Sein Nav"))
+					.Text(LOCTEXT("RebuildButton", "Bake Navigation"))
 				]
 			]
 		]

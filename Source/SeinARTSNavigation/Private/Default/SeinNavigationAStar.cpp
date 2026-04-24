@@ -410,6 +410,14 @@ USeinNavigationAStarAsset* USeinNavigationAStar::CreateOrLoadAsset(UWorld* World
 	UPackage* Package = CreatePackage(*PackagePath);
 	if (!Package) return nullptr;
 
+	// Force full load before rewriting. UE's SavePackage refuses to save a
+	// "partially loaded" package — which is the state we're in when (a) the
+	// asset exists on disk from a previous bake and hasn't been fully pulled
+	// into memory yet, or (b) the cell struct schema drifted (e.g., new
+	// Connections field) since the last bake, leaving stale data in a
+	// partial state. FullyLoad resolves both.
+	Package->FullyLoad();
+
 	USeinNavigationAStarAsset* Existing = FindObject<USeinNavigationAStarAsset>(Package, *AssetName);
 	if (Existing) return Existing;
 

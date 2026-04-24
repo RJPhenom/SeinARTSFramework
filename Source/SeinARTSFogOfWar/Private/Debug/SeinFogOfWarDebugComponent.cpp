@@ -26,9 +26,13 @@
 #include "SeinFogOfWar.h"
 #include "SeinFogOfWarSubsystem.h"
 #include "SeinFogOfWarTypes.h"
+#include "SeinARTSFogOfWarModule.h"
 #include "Volumes/SeinFogOfWarVolume.h"
+#include "Core/SeinPlayerID.h"
 
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "UObject/UnrealType.h"
 
 #if UE_ENABLE_DEBUG_DRAWING
 #include "Engine/Engine.h"
@@ -47,6 +51,34 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinFogOfWarDebug, Log, All);
 
 namespace
 {
+	/** Reflectively look up the local player controller's `SeinPlayerID`
+	 *  property, if it has one. Avoids a SeinARTSFramework module dep (the
+	 *  PC's concrete class lives there, below us in the dep graph). Returns
+	 *  neutral (id 0) when no PIE is running, no local PC exists, or the
+	 *  PC's class doesn't expose a `SeinPlayerID` FStructProperty. */
+	static FSeinPlayerID ResolveLocalObserverPlayerID(UWorld* World)
+	{
+		if (!World) return FSeinPlayerID();
+		APlayerController* LocalPC = nullptr;
+		for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+		{
+			APlayerController* PC = It->Get();
+			if (PC && PC->IsLocalPlayerController())
+			{
+				LocalPC = PC;
+				break;
+			}
+		}
+		if (!LocalPC) return FSeinPlayerID();
+		FStructProperty* Prop = FindFProperty<FStructProperty>(LocalPC->GetClass(), TEXT("SeinPlayerID"));
+		if (!Prop || Prop->Struct != FSeinPlayerID::StaticStruct()) return FSeinPlayerID();
+		if (const FSeinPlayerID* Value = Prop->ContainerPtrToValuePtr<FSeinPlayerID>(LocalPC))
+		{
+			return *Value;
+		}
+		return FSeinPlayerID();
+	}
+
 	/** Query the custom ShowFlags.FogOfWar state on an FEngineShowFlags.
 	 *  `FindIndexByName` handles both engine and custom flags — it falls
 	 *  through to the custom-flag lookup internally and returns a raw bit
@@ -309,10 +341,17 @@ FPrimitiveSceneProxy* USeinFogOfWarDebugComponent::CreateSceneProxy()
 		{
 			if (Fog->HasRuntimeData())
 			{
-				// TODO(ownership): pass the local PC's FSeinPlayerID so the
-				// impl scopes to that observer. MVP impl is global so the
-				// Observer arg is ignored.
-				Fog->CollectDebugCellQuads(FSeinPlayerID(), AllCenters, AllColors, HalfExtent);
+				// Observer precedence: console override
+				// (`SeinARTS.Debug.ShowFogOfWar.PlayerPerspective <id>`) wins,
+				// otherwise the local PC's FSeinPlayerID. Non-PIE with no
+				// override falls through to neutral → every cell renders as
+				// blocker (red) or default (black) baseline.
+				FSeinPlayerID Observer;
+				if (!UE::SeinARTSFogOfWar::TryGetDebugObserverOverride(Observer))
+				{
+					Observer = ResolveLocalObserverPlayerID(World);
+				}
+				Fog->CollectDebugCellQuads(Observer, AllCenters, AllColors, HalfExtent);
 			}
 		}
 	}
