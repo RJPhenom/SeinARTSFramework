@@ -28,6 +28,15 @@ void USeinAbility::InitializeAbility(FSeinEntityHandle Owner, USeinWorldSubsyste
 	DeductedCost.Amounts.Empty();
 }
 
+UWorld* USeinAbility::GetWorld() const
+{
+	// Skip during CDO construction — UObject systems probe GetWorld() while
+	// laying out the class default object, before any subsystem is bound. The
+	// nullptr return matches the UObject default for CDOs.
+	if (HasAnyFlags(RF_ClassDefaultObject)) { return nullptr; }
+	return WorldSubsystem ? WorldSubsystem->GetWorld() : nullptr;
+}
+
 void USeinAbility::ActivateAbility(FSeinEntityHandle Target, FFixedVector Location)
 {
 	TargetEntity = Target;

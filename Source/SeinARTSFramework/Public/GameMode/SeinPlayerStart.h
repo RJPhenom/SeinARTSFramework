@@ -10,6 +10,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinFactionID.h"
+#include "Types/Vector.h"
 #include "SeinPlayerStart.generated.h"
 
 class ASeinActor;
@@ -79,4 +80,19 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|PlayerStart")
 	TSubclassOf<ASeinActor> SpawnEntity;
+
+	/** Editor-baked snapshot of this start's spawn location — see
+	 *  `ASeinActor::PlacedSimLocation` for the cross-platform-determinism
+	 *  rationale. PostEditMove writes; SeinGameMode reads at sim-spawn
+	 *  time. Migration: `bSimLocationBaked` distinguishes fresh placements
+	 *  from legacy levels. */
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	FFixedVector PlacedSimLocation = FFixedVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	bool bSimLocationBaked = false;
+
+#if WITH_EDITOR
+	virtual void PostEditMove(bool bFinished) override;
+#endif
 };

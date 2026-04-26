@@ -20,7 +20,7 @@ class UUserWidget;
  * RTS HUD that draws the marquee selection box and resolves actors
  * within the box when the mouse is released.
  *
- * Also renders the debug command log panel (toggle: SeinARTS.Debug.CommandLog)
+ * Also renders the debug command log panel (toggle: Sein.Commands.ShowLog)
  * as a semi-transparent console-style overlay.
  */
 UCLASS(Blueprintable)

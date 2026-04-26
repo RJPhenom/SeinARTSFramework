@@ -38,6 +38,14 @@ public:
 	// AActor interface
 	virtual void BeginPlay() override;
 
+#if WITH_EDITOR
+	/** Edit-time snapshot of the actor's sim location. Fires every time
+	 *  the designer drags the actor in the level editor; result is
+	 *  serialized to the .umap so all clients later load the same bytes,
+	 *  no per-platform FromFloat conversion at runtime. */
+	virtual void PostEditMove(bool bFinished) override;
+#endif
+
 	/**
 	 * Initialize this actor with a simulation entity.
 	 * Called automatically when spawned from archetype.
@@ -63,6 +71,38 @@ public:
 	/** Archetype definition: sim components, display info, icons. Edit on BP defaults. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "SeinARTS|Entity")
 	TObjectPtr<USeinArchetypeDefinition> ArchetypeDefinition;
+
+	/** Owner slot for level-placed instances (1-based; 0 = neutral). Read by
+	 *  `USeinActorBridgeSubsystem::OnWorldBeginPlay` and stamped onto the
+	 *  spawned sim entity. EditInstanceOnly because ownership is per-placement
+	 *  — BP class defaults must not carry an owner. Slot value maps directly
+	 *  to `FSeinPlayerID(slot)`, matching the convention in
+	 *  `ASeinGameMode::HandleStartingNewPlayer_Implementation`. Faction/team
+	 *  are derived from the owning player's state, not stored per-entity. */
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "SeinARTS|Ownership", meta = (ClampMin = "0", ClampMax = "8"))
+	int32 PlayerSlot = 0;
+
+	/** Editor-baked snapshot of this actor's sim location, computed at edit
+	 *  time via `FFixedVector::FromVector(GetActorLocation())` whenever the
+	 *  actor moves in the editor (`PostEditMove`). Auto-registered placed
+	 *  actors (`USeinActorBridgeSubsystem::OnWorldBeginPlay`) read this
+	 *  value at spawn time instead of the actor's float transform — the
+	 *  conversion happens once in the editor process and the resulting
+	 *  FFixedVector is serialized to the .umap, so all client platforms
+	 *  load identical bytes regardless of CPU arch / compiler / FPU mode.
+	 *  This is what makes lockstep cross-platform safe (PC ↔ ARM Mac ↔
+	 *  mobile ↔ console). `bSimLocationBaked` flips true on first
+	 *  PostEditMove — runtime warns + falls back to FromFloat if a placed
+	 *  actor's snapshot is stale. */
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	FFixedVector PlacedSimLocation = FFixedVector::ZeroVector;
+
+	/** True once `PlacedSimLocation` has been baked from the actor's
+	 *  current world transform. Catches "actor placed before this property
+	 *  existed" — runtime checks this to know whether to trust the
+	 *  snapshot or warn the designer + fall back. */
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	bool bSimLocationBaked = false;
 
 protected:
 	/** Bridge component linking this actor to its simulation entity. */

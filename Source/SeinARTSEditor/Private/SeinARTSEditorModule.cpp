@@ -31,8 +31,14 @@
 #include "Details/SeinInstancedStructDetails.h"
 #include "Details/SeinNavVolumeDetails.h"
 #include "Details/SeinFogOfWarVolumeDetails.h"
-#include "Details/SeinVisionLayerRadiusDetails.h"
 #include "Details/SeinVisionDataDetails.h"
+#include "Details/SeinVisionStampDetails.h"
+#include "Details/SeinExtentsDataDetails.h"
+#include "Details/SeinMovementDataDetails.h"
+#include "Visualizers/SeinExtentsComponentVisualizer.h"
+#include "Components/ActorComponents/SeinExtentsComponent.h"
+#include "UnrealEdGlobals.h"
+#include "Editor/UnrealEdEngine.h"
 #include "Volumes/SeinNavVolume.h"
 #include "Volumes/SeinFogOfWarVolume.h"
 #include "Brokers/SeinStructAssetBroker.h"
@@ -125,12 +131,20 @@ void FSeinARTSEditorModule::StartupModule()
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinInstancedStructDetails::MakeInstance));
 
 		PropertyModule.RegisterCustomPropertyTypeLayout(
-			TEXT("SeinVisionLayerRadius"),
-			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinVisionLayerRadiusDetails::MakeInstance));
-
-		PropertyModule.RegisterCustomPropertyTypeLayout(
 			TEXT("SeinVisionData"),
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinVisionDataDetails::MakeInstance));
+
+		PropertyModule.RegisterCustomPropertyTypeLayout(
+			TEXT("SeinVisionStamp"),
+			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinVisionStampDetails::MakeInstance));
+
+		PropertyModule.RegisterCustomPropertyTypeLayout(
+			TEXT("SeinExtentsData"),
+			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinExtentsDataDetails::MakeInstance));
+
+		PropertyModule.RegisterCustomPropertyTypeLayout(
+			TEXT("SeinMovementData"),
+			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinMovementDataDetails::MakeInstance));
 
 		PropertyModule.RegisterCustomClassLayout(
 			ASeinNavVolume::StaticClass()->GetFName(),
@@ -142,6 +156,16 @@ void FSeinARTSEditorModule::StartupModule()
 
 		PropertyModule.NotifyCustomizationModuleChanged();
 	}
+
+	// Component visualizers — drawn in the BP/level editor viewport when the
+	// owning component is selected. Lets designers eyeball Extents shapes
+	// without opening PIE.
+	if (GUnrealEd != nullptr)
+	{
+		TSharedPtr<FComponentVisualizer> ExtentsViz = MakeShared<FSeinExtentsComponentVisualizer>();
+		GUnrealEd->RegisterComponentVisualizer(USeinExtentsComponent::StaticClass()->GetFName(), ExtentsViz);
+		ExtentsViz->OnRegister();
+	}
 }
 
 void FSeinARTSEditorModule::ShutdownModule()
@@ -151,10 +175,17 @@ void FSeinARTSEditorModule::ShutdownModule()
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("FixedPoint"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("InstancedStruct"));
-		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionLayerRadius"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionData"));
+		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionStamp"));
+		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinExtentsData"));
+		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinMovementData"));
 		PropertyModule.UnregisterCustomClassLayout(ASeinNavVolume::StaticClass()->GetFName());
 		PropertyModule.UnregisterCustomClassLayout(ASeinFogOfWarVolume::StaticClass()->GetFName());
+	}
+
+	if (GUnrealEd != nullptr)
+	{
+		GUnrealEd->UnregisterComponentVisualizer(USeinExtentsComponent::StaticClass()->GetFName());
 	}
 
 	if (SeinPinFactory.IsValid())

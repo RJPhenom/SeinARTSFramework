@@ -19,6 +19,7 @@
 #include "Core/SeinPlayerState.h"
 #include "Core/SeinTickPhase.h"
 #include "Simulation/ComponentStorage.h"
+#include "Simulation/SeinSpatialHash.h"
 #include "Input/SeinCommand.h"
 #include "Events/SeinVisualEvent.h"
 #include "Components/SeinContainmentTypes.h"
@@ -274,6 +275,23 @@ public:
 	FSeinEntityHandle SpawnEntity(TSubclassOf<ASeinActor> ActorClass, const FFixedTransform& SpawnTransform, FSeinPlayerID OwnerPlayerID);
 
 	/**
+	 * Spawn a sim entity for an already-existing (level-placed) ASeinActor.
+	 * Walks the LIVE actor's USeinActorComponents (not the CDO) so per-
+	 * instance edits in the level are captured into sim component storage.
+	 * Uses the actor's world transform as the sim transform.
+	 *
+	 * Skips the EntitySpawned visual event — the actor is already in the
+	 * world, so we don't want the bridge spawning a duplicate. Caller is
+	 * responsible for `RegisterActor + InitializeWithEntity` to link the
+	 * existing actor to the new entity.
+	 *
+	 * Used by USeinActorBridgeSubsystem::OnWorldBeginPlay to auto-register
+	 * placed actors. Returns invalid handle if PlacedActor is null or has
+	 * no ArchetypeDefinition.
+	 */
+	FSeinEntityHandle SpawnEntityFromPlacedActor(ASeinActor* PlacedActor, FSeinPlayerID OwnerPlayerID);
+
+	/**
 	 * Spawn an abstract sim entity (no BP class, no render actor). Used for
 	 * command brokers, scenario owners, squad containers — anything that needs
 	 * pooled handle + component storage but zero render presence. The caller is
@@ -306,6 +324,12 @@ public:
 	/** Get the entity pool (for direct iteration). */
 	FSeinEntityPool& GetEntityPool() { return EntityPool; }
 	const FSeinEntityPool& GetEntityPool() const { return EntityPool; }
+
+	/** Spatial hash for proximity queries. Rebuilt each tick by
+	 *  `FSeinSpatialHashSystem` (PreTick phase). Used by avoidance + future
+	 *  cross-cutting systems that need "find entities near point P." */
+	FSeinSpatialHash& GetSpatialHash() { return SpatialHash; }
+	const FSeinSpatialHash& GetSpatialHash() const { return SpatialHash; }
 
 	/** Get the Blueprint actor class stored for an entity (for actor bridge spawning). */
 	TSubclassOf<ASeinActor> GetEntityActorClass(FSeinEntityHandle Handle) const;
@@ -625,6 +649,12 @@ public:
 private:
 	// Entity pool (replaces TMap<FSeinID, FSeinEntity>)
 	FSeinEntityPool EntityPool;
+
+	// Spatial hash — pure C++, rebuilt each tick by FSeinSpatialHashSystem.
+	// Lives next to the entity pool because its lifetime is identical and
+	// its callers (sim systems + locomotions) need a stable, world-scoped
+	// query surface. Initialized in Initialize().
+	FSeinSpatialHash SpatialHash;
 
 	// Component storage registry (slot-indexed, keyed by UScriptStruct*)
 	TMap<UScriptStruct*, ISeinComponentStorage*> ComponentStorages;

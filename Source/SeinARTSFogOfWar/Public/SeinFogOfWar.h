@@ -39,6 +39,7 @@
 
 class UWorld;
 class USeinFogOfWarAsset;
+class USeinWorldSubsystem;
 
 /** Fired when the fog-of-war's baked or runtime state mutates (bake
  *  finished, asset swap, dynamic blocker change). Debug viz + cached UI
@@ -176,6 +177,20 @@ public:
 	 *  (impls override; tests / fog-less games leave this permissive). */
 	virtual bool IsEntityVisibleTo(FSeinPlayerID Observer, FSeinEntityHandle Target) const { return true; }
 
+	/** Compute the OR of EVNNNNNN bits visible to `Observer` across the
+	 *  target entity's volumetric footprint. Replaces the legacy single-
+	 *  point check at the entity's transform — a wide tank whose center sits
+	 *  one cell off from a watching infantry would otherwise read as
+	 *  invisible despite being right there.
+	 *
+	 *  Subclasses iterate the entity's `FSeinExtentsData::Stamps` (if
+	 *  present) and OR the bitfields of every covered cell. This base impl
+	 *  falls back to a single-point query at the entity transform —
+	 *  preserves correctness for entities without an extents component
+	 *  (props, projectiles, etc. that don't need volumetric checks). */
+	virtual uint8 GetEntityVisibleBits(FSeinPlayerID Observer,
+		USeinWorldSubsystem& Sim, FSeinEntityHandle Target) const;
+
 	// ----------------------------------------------------------------------
 	// Debug
 	// ----------------------------------------------------------------------
@@ -188,7 +203,7 @@ public:
 	/** Collect cell geometry for scene-proxy rendering, for one observer's
 	 *  VisionGroup. `VisibleBitIndex` in [0, 7] selects which EVNNNNNN bit
 	 *  paints as "visible" (0 = E, 1 = V, 2..7 = N0..N5); driven by
-	 *  `SeinARTS.Debug.ShowFogOfWar.LayerPerspective`. Default impls emit
+	 *  `Sein.FogOfWar.Show.Layer`. Default impls emit
 	 *  one quad per cell with per-cell color derived from which bits are
 	 *  set (visible / blocker / default). Default virtual: no cells. */
 	virtual void CollectDebugCellQuads(FSeinPlayerID Observer,

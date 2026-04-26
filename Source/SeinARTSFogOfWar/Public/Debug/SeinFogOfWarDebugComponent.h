@@ -6,7 +6,7 @@
  *          Attached to ASeinFogOfWarVolume in the actor's constructor.
  *          Proxy emits one batched mesh of red cell quads gated by the
  *          custom `ShowFlags.FogOfWar` (registered by the module; toggled
- *          by `SeinARTS.Debug.ShowFogOfWar`). Non-PIE path rasterizes the
+ *          by `Sein.FogOfWar.Show`). Non-PIE path rasterizes the
  *          owner volume's bounds into cells at the volume's resolved cell
  *          size so designers get immediate viz without needing a bake.
  *

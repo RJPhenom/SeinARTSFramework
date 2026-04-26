@@ -29,6 +29,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "SeinARTSNet",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "SeinARTSEditor",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit"

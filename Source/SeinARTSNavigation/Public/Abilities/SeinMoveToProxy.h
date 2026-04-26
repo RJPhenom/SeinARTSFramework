@@ -4,11 +4,16 @@
  * @brief   Blueprint async action node — the framework's AIMoveTo equivalent.
  *
  * Usage in an ability BP graph:
- *   [OnActivate] -> [Sein Move To (Dest, Radius)]
+ *   [OnActivate] -> [Sein Move To (Dest)]
  *                       |- Completed       -> EndAbility
  *                       |- Failed (Reason) -> handle failure
  *                       |- WaypointReached -> play step SFX, etc.
  *                       |- Cancelled       -> cleanup
+ *
+ * Acceptance radius is sourced from the unit's
+ * `FSeinMovementData::AcceptanceRadius` — a footprint/turn-radius property
+ * of the unit, not the call site. Tune it on the movement component, not
+ * here.
  */
 
 #pragma once
@@ -38,21 +43,15 @@ public:
 	UPROPERTY(BlueprintAssignable) FSeinMoveToWaypointDelegate OnWaypointReached;
 	UPROPERTY(BlueprintAssignable) FSeinMoveToSimpleDelegate   OnCancelled;
 
-	/** Move the ability's owning entity to Destination using its movement profile.
-	 *  AcceptanceRadius is in world units (cm under UE's convention). The action
-	 *  clamps it at runtime to >= half the nav-grid's cell size — values smaller
-	 *  than that are practically impossible to reach (the unit's per-tick step
-	 *  is bigger than the radius), so they get bumped with a warning. Reasonable
-	 *  starting point for most grids is around half a cell; designers should set
-	 *  this per ability based on the unit's footprint and how forgiving the
-	 *  "arrived" semantics should feel. */
+	/** Move the ability's owning entity to Destination using its movement
+	 *  profile. Acceptance radius is read from the unit's
+	 *  `FSeinMovementData::AcceptanceRadius`. */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Ability|Movement",
 	          meta = (BlueprintInternalUseOnly = "true", DefaultToSelf = "Ability",
 	                  DisplayName = "Move To"))
 	static USeinMoveToProxy* SeinMoveTo(
 		USeinAbility* Ability,
-		FFixedVector Destination,
-		FFixedPoint AcceptanceRadius);
+		FFixedVector Destination);
 
 	virtual void Activate() override;
 
@@ -65,7 +64,6 @@ public:
 private:
 	UPROPERTY() TObjectPtr<USeinAbility> CachedAbility;
 	FFixedVector CachedDestination;
-	FFixedPoint  CachedAcceptanceRadius;
 
 	UPROPERTY() TObjectPtr<USeinMoveToAction> RunningAction;
 

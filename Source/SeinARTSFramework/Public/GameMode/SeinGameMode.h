@@ -12,7 +12,9 @@
 #include "GameplayTagContainer.h"
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinFactionID.h"
+#include "Data/SeinMatchSettings.h"
 #include "Player/SeinPlayerController.h"
+#include "Types/FixedPoint.h"
 #include "SeinGameMode.generated.h"
 
 class ASeinPlayerStart;
@@ -57,16 +59,30 @@ public:
 	 * at player registration. Keyed by resource tag (SeinARTS.Resource.*).
 	 * Leave empty to use faction-kit defaults. Match-settings-level tweaks will
 	 * eventually supersede this per §18; see PLAN.md Session 5.3.
+	 *
+	 * Value type is `FFixedPoint` (not `float`) because these values feed sim
+	 * starting state — designer types fixed-point amounts directly so no
+	 * runtime FromFloat happens on the spawn path. Cross-arch lockstep safe.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "SeinARTS|GameMode",
 		meta = (Categories = "SeinARTS.Resource"))
-	TMap<FGameplayTag, float> StartingResources;
+	TMap<FGameplayTag, FFixedPoint> StartingResources;
 
 	// ========== Runtime State ==========
 
 	/** Next player ID to assign. Incremented per player. 0 = Neutral (reserved). */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|GameMode")
 	uint8 NextPlayerIDValue = 1;
+
+	/** Match-settings snapshot resolved at BeginPlay from `ASeinWorldSettings`.
+	 *  Empty `Slots` ⇒ no manifest configured ⇒ legacy per-controller flow.
+	 *  Future: GameInstance runtime override + plugin-settings PIE default
+	 *  precede the WorldSettings lookup. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|GameMode")
+	FSeinMatchSettings ResolvedMatchSettings;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|GameMode")
+	bool bMatchSettingsResolved = false;
 
 	// ========== Helpers ==========
 
@@ -91,10 +107,21 @@ public:
 protected:
 	virtual AActor* ChoosePlayerStart_Implementation(AController* Player) override;
 
+	/** Resolve per-level match settings from `ASeinWorldSettings`. Returns nullptr
+	 *  if the level uses a non-Sein WorldSettings class. */
+	const FSeinMatchSettings* ResolveMatchSettingsForWorld() const;
+
+	/** Walk `ResolvedMatchSettings.Slots` and pre-register Human/AI slots:
+	 *  RegisterPlayer + SpawnStartEntity at the matching SeinPlayerStart. Slots
+	 *  are NOT added to `ClaimedSlots` here — that happens when a controller
+	 *  binds in HandleStartingNewPlayer. */
+	void PreRegisterMatchSlots();
+
 	/** Whether simulation has been started. */
 	bool bSimulationStarted = false;
 
-	/** Tracks which SeinPlayerStart actors have been claimed, keyed by PlayerSlot. */
+	/** Slots that have been bound to a connecting controller. Drives
+	 *  ChoosePlayerStart's "find next available Human slot" iteration. */
 	UPROPERTY()
 	TMap<int32, FSeinPlayerID> ClaimedSlots;
 

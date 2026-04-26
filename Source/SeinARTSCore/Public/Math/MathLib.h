@@ -463,34 +463,63 @@ namespace SeinMath
 		return Sin(Radians) / CosVal;
 	}
 
-	// Inverse Trigonometry using polynomial approximation for determinism
-	// Atan using polynomial approximation (for values in [-1, 1])
+	// Inverse Trigonometry — three-stage range reduction so the polynomial
+	// always operates on a small argument (|A| <= 1/3 worst case), where the
+	// truncated Maclaurin series is accurate to ~10⁻⁶. WITHOUT the half-angle
+	// step the polynomial near |x|=1 had ~0.09 rad error (1/11 from truncating
+	// at x⁹/9), which manifested as a periodic per-tick yaw twitch in the
+	// wheeled-vehicle YawFromRotation read-back path — same forward vector
+	// went in, slightly-wrong yaw came out.
+	//
+	// Reductions, in order:
+	//   1. Sign:        atan(-x) = -atan(x)               (handle negation)
+	//   2. Reciprocal:  atan(x) = π/2 - atan(1/x)         for |x| > 1
+	//   3. Half-angle:  atan(A) = π/4 + atan((A-1)/(A+1)) for A > 1/2
+	// After (3), the polynomial input is always in (-1/3, 1/2].
 	FORCEINLINE FFixedPoint Atan(FFixedPoint X)
 	{
-		const int64 AbsX = X < 0 ? -X : X;
-		
-		if (AbsX > FFixedPoint::One)
+		// 1. Sign — atan is odd.
+		bool bNegate = false;
+		FFixedPoint A = X;
+		if (A < FFixedPoint::Zero) { A = -A; bNegate = true; }
+
+		// 2. Reciprocal — collapse |x| > 1 to (0, 1].
+		bool bComplement = false;
+		if (A > FFixedPoint::One)
 		{
-			// Use identity: atan(x) = π/2 - atan(1/x) for |x| > 1
-			FFixedPoint Recip = FFixedPoint::One / X;
-			FFixedPoint Result = FFixedPoint::HalfPi - Atan(Recip);
-			return Result;
+			A = FFixedPoint::One / A;
+			bComplement = true;
 		}
-		
-		// Polynomial approximation for |x| <= 1
-		// atan(x) ≈ x - x³/3 + x⁵/5 - x⁷/7 + x⁹/9
-		const FFixedPoint X2 = X * X;
-		const FFixedPoint X3 = X * X2;
-		const FFixedPoint X5 = X3 * X2;
-		const FFixedPoint X7 = X5 * X2;
-		const FFixedPoint X9 = X7 * X2;
-		
-		FFixedPoint Result = X;
-		Result = Result - X3 / FFixedPoint(3 * FFixedPoint::One);
-		Result = Result + X5 / FFixedPoint(5 * FFixedPoint::One);
-		Result = Result - X7 / FFixedPoint(7 * FFixedPoint::One);
-		Result = Result + X9 / FFixedPoint(9 * FFixedPoint::One);
-		
+
+		// 3. Half-angle — the load-bearing fix. Without this, A in [0.5, 1]
+		//    feeds the polynomial near its convergence boundary and accumulates
+		//    error on the order of 1/(2N+1) where N = polynomial order.
+		bool bHalfAngle = false;
+		if (A > FFixedPoint::Half)
+		{
+			A = (A - FFixedPoint::One) / (A + FFixedPoint::One);
+			bHalfAngle = true;
+		}
+
+		// Polynomial: atan(A) ≈ A - A³/3 + A⁵/5 - A⁷/7 + A⁹/9
+		// For |A| <= 1/3 (our worst case after reductions), 5 terms gives
+		// ~10⁻⁶ absolute error — comfortably below sin/cos table precision.
+		const FFixedPoint A2 = A * A;
+		const FFixedPoint A3 = A * A2;
+		const FFixedPoint A5 = A3 * A2;
+		const FFixedPoint A7 = A5 * A2;
+		const FFixedPoint A9 = A7 * A2;
+
+		FFixedPoint Result = A;
+		Result = Result - A3 / FFixedPoint(3 * FFixedPoint::One);
+		Result = Result + A5 / FFixedPoint(5 * FFixedPoint::One);
+		Result = Result - A7 / FFixedPoint(7 * FFixedPoint::One);
+		Result = Result + A9 / FFixedPoint(9 * FFixedPoint::One);
+
+		// Unwind reductions in reverse.
+		if (bHalfAngle)  Result = Result + FFixedPoint::QuarterPi;
+		if (bComplement) Result = FFixedPoint::HalfPi - Result;
+		if (bNegate)     Result = -Result;
 		return Result;
 	}
 

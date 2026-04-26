@@ -46,22 +46,51 @@ FBox ASeinNavVolume::GetVolumeWorldBounds() const
 	return FBox(ForceInit);
 }
 
-float ASeinNavVolume::GetResolvedCellSize() const
+#if WITH_EDITOR
+void ASeinNavVolume::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	const FBox WorldBounds = GetVolumeWorldBounds();
+	if (WorldBounds.IsValid)
+	{
+		// Editor-process FromFloat conversion. Result is serialized to the
+		// .umap; all client platforms load identical bytes — no per-arch
+		// drift at level load. Cross-platform-deterministic.
+		PlacedBoundsMin = FFixedVector(
+			FFixedPoint::FromFloat(WorldBounds.Min.X),
+			FFixedPoint::FromFloat(WorldBounds.Min.Y),
+			FFixedPoint::FromFloat(WorldBounds.Min.Z));
+		PlacedBoundsMax = FFixedVector(
+			FFixedPoint::FromFloat(WorldBounds.Max.X),
+			FFixedPoint::FromFloat(WorldBounds.Max.Y),
+			FFixedPoint::FromFloat(WorldBounds.Max.Z));
+		bBoundsBaked = true;
+
+		if (bFinished)
+		{
+			MarkPackageDirty();
+		}
+	}
+}
+#endif
+
+FFixedPoint ASeinNavVolume::GetResolvedCellSize() const
 {
 	if (bOverrideCellSize) return CellSize;
 	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
 	{
 		return Settings->DefaultCellSize;
 	}
-	return 100.0f;
+	return FFixedPoint::FromInt(100);
 }
 
-float ASeinNavVolume::GetResolvedMaxStepHeight() const
+FFixedPoint ASeinNavVolume::GetResolvedMaxStepHeight() const
 {
 	if (bOverrideMaxStepHeight) return MaxStepHeight;
 	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
 	{
 		return Settings->DefaultMaxStepHeight;
 	}
-	return 50.0f;
+	return FFixedPoint::FromInt(50);
 }

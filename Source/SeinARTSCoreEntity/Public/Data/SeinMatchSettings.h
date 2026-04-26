@@ -10,9 +10,64 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/SeinFactionID.h"
+#include "GameplayTagContainer.h"
 #include "Types/FixedPoint.h"
 #include "StructUtils/InstancedStruct.h"
 #include "SeinMatchSettings.generated.h"
+
+/**
+ * Slot occupancy state. Drives whether the game mode spawns the slot's
+ * PlayerStart entity at world begin and how a connecting controller is
+ * bound. Open and Closed slots produce no spawn.
+ */
+UENUM(BlueprintType)
+enum class ESeinSlotState : uint8
+{
+	/** Joinable but currently empty. No spawn until a controller claims it. */
+	Open,
+	/** Human player expected. Spawn at world begin; controller binds on connect. */
+	Human,
+	/** AI fills this slot. Spawn at world begin; AI controller registers later (DESIGN §16). */
+	AI,
+	/** Locked out. No spawn, no controller binding. */
+	Closed,
+};
+
+/**
+ * Per-slot match manifest entry. SlotIndex maps 1:1 to
+ * `ASeinPlayerStart::PlayerSlot` for spawn-location lookup. Faction/team here
+ * are the runtime source of truth — PlayerStart's same-named fields are
+ * legacy/anchor metadata only.
+ */
+USTRUCT(BlueprintType, meta = (SeinDeterministic))
+struct SEINARTSCOREENTITY_API FSeinMatchSlot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match",
+		meta = (ClampMin = "1", ClampMax = "8"))
+	int32 SlotIndex = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match")
+	ESeinSlotState State = ESeinSlotState::Open;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match")
+	FSeinFactionID FactionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match",
+		meta = (ClampMin = "0"))
+	uint8 TeamID = 0;
+
+	/** Lobby/scoreboard label ("RJ", "AI - Hard", "Open"). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match")
+	FText DisplayName;
+
+	/** Optional AI personality tag (DESIGN §16 — designer-extended namespace). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match",
+		meta = (Categories = "SeinARTS.AI"))
+	FGameplayTag AIProfile;
+};
 
 /**
  * Match flow state (DESIGN §18).
@@ -90,6 +145,14 @@ USTRUCT(BlueprintType, meta = (SeinDeterministic))
 struct SEINARTSCOREENTITY_API FSeinMatchSettings
 {
 	GENERATED_BODY()
+
+	// Slot manifest -------------------------------------------------------
+
+	/** Per-slot occupancy + faction/team. Lobby builds at runtime; for PIE
+	 *  testing, `ASeinWorldSettings` provides the level-scoped fallback.
+	 *  Game mode walks this at world-begin to spawn HQs for Human/AI slots. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "SeinARTS|Match")
+	TArray<FSeinMatchSlot> Slots;
 
 	// Resource & combat ---------------------------------------------------
 

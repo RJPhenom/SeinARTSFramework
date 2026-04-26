@@ -157,6 +157,12 @@ public:
 	UPROPERTY(Transient)
 	TObjectPtr<USeinWorldSubsystem> WorldSubsystem;
 
+	/** Route GetWorld() through the cached WorldSubsystem so BP graphs in
+	 *  ability subclasses can call WorldContext-tagged BPFLs (Spawn Entity,
+	 *  Get Entity Owner, etc.) without manually wiring the World Context Object
+	 *  pin — UE's BP node hides the pin when self->GetWorld() resolves. */
+	virtual UWorld* GetWorld() const override;
+
 	// ─── Lifecycle (Blueprint implementable) ───
 
 	/** Override to add custom activation checks beyond the declarative target

@@ -151,12 +151,18 @@ void FSeinVisionDataDetails::CustomizeHeader(
 	FDetailWidgetRow& HeaderRow,
 	IPropertyTypeCustomizationUtils& /*CustomizationUtils*/)
 {
-	// Default header — struct name on the left, no value content.
-	HeaderRow
-	.NameContent()
-	[
-		PropertyHandle->CreatePropertyNameWidget()
-	];
+	// Skip the header row when the owning property uses ShowOnlyInnerProperties
+	// (USeinVisionComponent::Data). Without this, the customization would
+	// re-introduce a "Data" wrapper that the inline meta was supposed to skip.
+	const bool bShowOnlyInner = PropertyHandle->HasMetaData(TEXT("ShowOnlyInnerProperties"));
+	if (!bShowOnlyInner)
+	{
+		HeaderRow
+		.NameContent()
+		[
+			PropertyHandle->CreatePropertyNameWidget()
+		];
+	}
 }
 
 void FSeinVisionDataDetails::CustomizeChildren(
@@ -171,10 +177,10 @@ void FSeinVisionDataDetails::CustomizeChildren(
 		TSharedPtr<IPropertyHandle> ChildHandle = PropertyHandle->GetChildHandle(i);
 		if (!ChildHandle.IsValid() || !ChildHandle->GetProperty()) continue;
 
-		// EmissionLayerMask → custom dropdown with dynamic labels.
-		// Everything else (VisionRadius, EyeHeight, LayerSlots) → default
-		// UI, which still picks up the FSeinVisionLayerRadius element
-		// customization for LayerSlots automatically.
+		// EmissionLayerMask → custom dropdown with dynamic labels (same
+		// labels feed FSeinVisionStamp::LayerMask too — both are EVNNNNNN
+		// bitmask fields and pick up the BitmaskEnum metadata directly).
+		// Everything else (EyeHeight, Stamps array) → default UI.
 		if (ChildHandle->GetProperty()->GetFName() == TEXT("EmissionLayerMask"))
 		{
 			AddEmissionMaskRow(ChildHandle.ToSharedRef(), ChildBuilder);

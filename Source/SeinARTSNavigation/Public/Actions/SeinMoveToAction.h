@@ -41,7 +41,9 @@ class SEINARTSNAVIGATION_API USeinMoveToAction : public USeinLatentAction
 
 public:
 
-	void Initialize(const FFixedVector& InDestination, FFixedPoint InAcceptanceRadius = FFixedPoint::One);
+	/** Set up a move toward `InDestination`. Acceptance radius is read from
+	 *  `FSeinMovementData::AcceptanceRadius` on first TickAction. */
+	void Initialize(const FFixedVector& InDestination);
 
 	virtual bool TickAction(FFixedPoint DeltaTime, USeinWorldSubsystem& World) override;
 	virtual void OnCancel() override;
@@ -62,10 +64,17 @@ public:
 private:
 
 	FFixedVector Destination;
-	FFixedPoint AcceptanceRadiusSq;
+
+	/** Resolved at first TickAction from MoveData.AcceptanceRadius. */
+	FFixedPoint AcceptanceRadiusSq = FFixedPoint::Zero;
 
 	int32 CurrentWaypointIndex = 0;
 	bool bPathResolved = false;
+
+	/** Time since the last repath fired (Interval mode). Reset to zero
+	 *  whenever a fresh path is committed. Compared against
+	 *  `MoveData.RepathInterval`. */
+	FFixedPoint TimeSinceLastRepath = FFixedPoint::Zero;
 
 	/** Instantiated on first tick from FSeinMovementData::LocomotionClass
 	 *  (or USeinBasicMovement if the soft class is null/unresolved). Owns the

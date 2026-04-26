@@ -44,6 +44,7 @@ class SEINARTSCOREENTITY_API USeinActorBridgeSubsystem : public UTickableWorldSu
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	// UTickableWorldSubsystem interface
 	virtual void Tick(float DeltaTime) override;

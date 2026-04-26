@@ -108,8 +108,17 @@ void ASeinHUD::ResolveMarqueeSelection()
 	const FVector2D Start = PC->MarqueeStart;
 	const FVector2D End = PC->MarqueeCurrent;
 
+	// `bIncludeNonCollidingComponents = true` is REQUIRED for RTS-style
+	// selection. UE's default (false) only walks components with collision
+	// enabled — a unit whose skeletal mesh has CollisionEnabled = NoCollision
+	// (a normal RTS pattern, since collision is sim-side, not render-side)
+	// produces FBox(ForceInit) bounds. All such actors then project to
+	// world origin's screen point, and the marquee selects either all of
+	// them or none depending on whether origin lands in the rectangle.
+	// Passing true uses visual (non-colliding) bounds — every unit gets a
+	// real screen-space box around its mesh.
 	TArray<ASeinActor*> ActorsInBox;
-	GetActorsInSelectionRectangle<ASeinActor>(Start, End, ActorsInBox, false, false);
+	GetActorsInSelectionRectangle<ASeinActor>(Start, End, ActorsInBox, true, false);
 
 	PC->ReceiveMarqueeSelection(ActorsInBox);
 }

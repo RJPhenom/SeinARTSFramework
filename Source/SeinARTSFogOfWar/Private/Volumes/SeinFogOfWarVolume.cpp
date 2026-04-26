@@ -47,12 +47,40 @@ FBox ASeinFogOfWarVolume::GetVolumeWorldBounds() const
 	return FBox(ForceInit);
 }
 
-float ASeinFogOfWarVolume::GetResolvedCellSize() const
+#if WITH_EDITOR
+void ASeinFogOfWarVolume::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	const FBox WorldBounds = GetVolumeWorldBounds();
+	if (WorldBounds.IsValid)
+	{
+		// Editor-process conversion. All clients later load these int64
+		// bits from disk — no per-platform FromFloat at runtime.
+		PlacedBoundsMin = FFixedVector(
+			FFixedPoint::FromFloat(WorldBounds.Min.X),
+			FFixedPoint::FromFloat(WorldBounds.Min.Y),
+			FFixedPoint::FromFloat(WorldBounds.Min.Z));
+		PlacedBoundsMax = FFixedVector(
+			FFixedPoint::FromFloat(WorldBounds.Max.X),
+			FFixedPoint::FromFloat(WorldBounds.Max.Y),
+			FFixedPoint::FromFloat(WorldBounds.Max.Z));
+		bBoundsBaked = true;
+
+		if (bFinished)
+		{
+			MarkPackageDirty();
+		}
+	}
+}
+#endif
+
+FFixedPoint ASeinFogOfWarVolume::GetResolvedCellSize() const
 {
 	if (bOverrideCellSize) return CellSize;
 	if (const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>())
 	{
 		return Settings->VisionCellSize;
 	}
-	return 400.0f;
+	return FFixedPoint::FromInt(400);
 }

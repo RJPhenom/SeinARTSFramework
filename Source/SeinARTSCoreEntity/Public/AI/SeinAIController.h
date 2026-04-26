@@ -69,6 +69,11 @@ public:
 	UPROPERTY(Transient)
 	TObjectPtr<USeinWorldSubsystem> WorldSubsystem;
 
+	/** Route GetWorld() through the cached WorldSubsystem so BP graphs in
+	 *  AI subclasses can call WorldContext-tagged BPFLs without manually
+	 *  wiring the World Context Object pin. */
+	virtual UWorld* GetWorld() const override;
+
 	// Lifecycle ------------------------------------------------------------
 
 	/** Called once on registration. Override in BP/C++ to seed state. */

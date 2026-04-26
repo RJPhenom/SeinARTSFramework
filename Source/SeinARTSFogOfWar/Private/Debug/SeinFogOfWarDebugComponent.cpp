@@ -85,7 +85,9 @@ namespace
 		const FBox Bounds = Volume->GetVolumeWorldBounds();
 		if (!Bounds.IsValid || Bounds.GetSize().IsNearlyZero()) return;
 
-		const float CellSize = Volume->GetResolvedCellSize();
+		// Render-side path: pulled to float here, no determinism concern —
+		// debug viz only.
+		const float CellSize = Volume->GetResolvedCellSize().ToFloat();
 		if (CellSize <= 0.0f) return;
 		// 0.9 inset — matches the impl's CollectDebugCellQuads so the no-bake
 		// fallback path reads the same "grid of squares" as the baked path.

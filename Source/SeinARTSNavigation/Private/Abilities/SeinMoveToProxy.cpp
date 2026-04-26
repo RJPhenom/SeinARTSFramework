@@ -12,12 +12,11 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Engine/World.h"
 
-USeinMoveToProxy* USeinMoveToProxy::SeinMoveTo(USeinAbility* Ability, FFixedVector Destination, FFixedPoint AcceptanceRadius)
+USeinMoveToProxy* USeinMoveToProxy::SeinMoveTo(USeinAbility* Ability, FFixedVector Destination)
 {
 	USeinMoveToProxy* Proxy = NewObject<USeinMoveToProxy>();
 	Proxy->CachedAbility = Ability;
 	Proxy->CachedDestination = Destination;
-	Proxy->CachedAcceptanceRadius = AcceptanceRadius;
 	return Proxy;
 }
 
@@ -53,7 +52,7 @@ void USeinMoveToProxy::Activate()
 	Action->OwningAbility = CachedAbility;
 	Action->OwnerEntity = CachedAbility->OwnerEntity;
 	Action->Observer = this;
-	Action->Initialize(CachedDestination, CachedAcceptanceRadius);
+	Action->Initialize(CachedDestination);
 
 	SimWorld->LatentActionManager->RegisterAction(Action);
 	RunningAction = Action;

@@ -34,6 +34,15 @@ struct SEINARTSNAVIGATION_API FSeinPathRequest
 	/** Terrain tags this agent treats as impassable. Empty = no filter. */
 	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
 	FGameplayTagContainer BlockedTerrainTags;
+
+	/** Agent layer mask — which layer bits identify the requesting agent
+	 *  for nav-blocker intersection. The pathfinder skips dynamic blockers
+	 *  whose `BlockedNavLayerMask & AgentNavLayerMask == 0`. Default 0xFF
+	 *  (matches all blockers — preserves single-layer behavior when the
+	 *  caller doesn't fill this in). MoveToAction populates from
+	 *  FSeinMovementData::NavLayerMask at request time. */
+	UPROPERTY(BlueprintReadWrite, Category = "SeinARTS|Navigation|Path")
+	uint8 AgentNavLayerMask = 0xFF;
 };
 
 /** Path query result. Waypoints are world-space, ordered Start → End. */

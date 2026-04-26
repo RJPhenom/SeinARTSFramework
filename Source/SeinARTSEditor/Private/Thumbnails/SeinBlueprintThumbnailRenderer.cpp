@@ -41,6 +41,17 @@ void USeinBlueprintThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, ui
 		return;
 	}
 
+	// Unit BPs render their actual mesh hierarchy via the default thumbnail scene
+	// when the CDO has anything renderable. Super::CanVisualizeAsset reuses the
+	// engine's component walk + FBlueprintThumbnailScene::IsValidComponentForVisualization,
+	// so we cleanly fall through to the flat Unit icon for data-only Unit BPs
+	// (no mesh yet → would otherwise render as empty grey).
+	if (AssetType == ESeinAssetType::Unit && Super::CanVisualizeAsset(Object))
+	{
+		Super::Draw(Object, X, Y, Width, Height, RenderTarget, Canvas, bAdditionalViewFamily);
+		return;
+	}
+
 	// ---- Dark background ----
 	{
 		FCanvasTileItem BgItem(

@@ -43,17 +43,30 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinNavDebug, Log, All);
 // Scene proxy (debug-only — class doesn't exist in shipping)
 // ============================================================================
 
+/** One color group of blocker cells for the proxy. CollectDebugBlockerCells
+ *  emits per-cell colors; CreateSceneProxy buckets them into these groups so
+ *  GetDynamicMeshElements can render one batched mesh per color. */
+struct FSeinNavBlockerBucket
+{
+	FLinearColor Color;
+	TArray<FVector> Centers;
+};
+
 class FSeinNavDebugProxy final : public FPrimitiveSceneProxy
 {
 public:
 	FSeinNavDebugProxy(UPrimitiveComponent* InComponent,
 	                   TArray<FVector>&& InWalkable,
 	                   TArray<FVector>&& InBlocked,
-	                   float InHalfExtent)
+	                   TArray<FSeinNavBlockerBucket>&& InBlockerBuckets,
+	                   float InHalfExtent,
+	                   float InBlockerHalfExtent)
 		: FPrimitiveSceneProxy(InComponent)
 		, WalkableCenters(MoveTemp(InWalkable))
 		, BlockedCenters(MoveTemp(InBlocked))
+		, BlockerBuckets(MoveTemp(InBlockerBuckets))
 		, HalfExtent(InHalfExtent)
+		, BlockerHalfExtent(InBlockerHalfExtent)
 	{
 		bWillEverBeLit = false;
 	}
@@ -66,7 +79,15 @@ public:
 
 	virtual uint32 GetMemoryFootprint() const override
 	{
-		return sizeof(*this) + WalkableCenters.GetAllocatedSize() + BlockedCenters.GetAllocatedSize();
+		uint32 Bytes = sizeof(*this)
+		     + WalkableCenters.GetAllocatedSize()
+		     + BlockedCenters.GetAllocatedSize()
+		     + BlockerBuckets.GetAllocatedSize();
+		for (const FSeinNavBlockerBucket& B : BlockerBuckets)
+		{
+			Bytes += B.Centers.GetAllocatedSize();
+		}
+		return Bytes;
 	}
 
 	virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override
@@ -105,11 +126,10 @@ public:
 				BaseProxy, FLinearColor(0.0f, 0.7f, 0.0f, 0.35f));
 			const FColoredMaterialRenderProxy* RedMat = &Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
 				BaseProxy, FLinearColor(0.85f, 0.0f, 0.0f, 0.6f));
-
 			if (WalkableCenters.Num() > 0)
 			{
 				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, WalkableCenters);
+				EmitQuads(Builder, WalkableCenters, HalfExtent);
 				Builder.GetMesh(FMatrix::Identity, GreenMat, SDPG_World,
 					true /*bDisableBackfaceCulling*/, false /*bReceivesDecals*/,
 					ViewIdx, Collector);
@@ -117,8 +137,20 @@ public:
 			if (BlockedCenters.Num() > 0)
 			{
 				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
-				EmitQuads(Builder, BlockedCenters);
+				EmitQuads(Builder, BlockedCenters, HalfExtent);
 				Builder.GetMesh(FMatrix::Identity, RedMat, SDPG_World,
+					true, false, ViewIdx, Collector);
+			}
+			// One mesh per blocker color bucket. Typical scene has 1-3 buckets
+			// (single layer most blockers) so the per-view cost stays small.
+			for (const FSeinNavBlockerBucket& Bucket : BlockerBuckets)
+			{
+				if (Bucket.Centers.Num() == 0) continue;
+				const FColoredMaterialRenderProxy* BucketMat = &Collector.AllocateOneFrameResource<FColoredMaterialRenderProxy>(
+					BaseProxy, Bucket.Color);
+				FDynamicMeshBuilder Builder(View->GetFeatureLevel());
+				EmitQuads(Builder, Bucket.Centers, BlockerHalfExtent);
+				Builder.GetMesh(FMatrix::Identity, BucketMat, SDPG_World,
 					true, false, ViewIdx, Collector);
 			}
 		}
@@ -126,7 +158,7 @@ public:
 
 private:
 
-	void EmitQuads(FDynamicMeshBuilder& Builder, const TArray<FVector>& Centers) const
+	void EmitQuads(FDynamicMeshBuilder& Builder, const TArray<FVector>& Centers, float QuadHalfExtent) const
 	{
 		Builder.ReserveVertices(Centers.Num() * 4);
 		Builder.ReserveTriangles(Centers.Num() * 2);
@@ -138,10 +170,10 @@ private:
 		for (const FVector& C : Centers)
 		{
 			FDynamicMeshVertex V0, V1, V2, V3;
-			V0.Position = FVector3f(C + FVector(-HalfExtent, -HalfExtent, 0));
-			V1.Position = FVector3f(C + FVector( HalfExtent, -HalfExtent, 0));
-			V2.Position = FVector3f(C + FVector( HalfExtent,  HalfExtent, 0));
-			V3.Position = FVector3f(C + FVector(-HalfExtent,  HalfExtent, 0));
+			V0.Position = FVector3f(C + FVector(-QuadHalfExtent, -QuadHalfExtent, 0));
+			V1.Position = FVector3f(C + FVector( QuadHalfExtent, -QuadHalfExtent, 0));
+			V2.Position = FVector3f(C + FVector( QuadHalfExtent,  QuadHalfExtent, 0));
+			V3.Position = FVector3f(C + FVector(-QuadHalfExtent,  QuadHalfExtent, 0));
 			V0.TextureCoordinate[0] = FVector2f(0, 0);
 			V1.TextureCoordinate[0] = FVector2f(1, 0);
 			V2.TextureCoordinate[0] = FVector2f(1, 1);
@@ -162,7 +194,9 @@ private:
 
 	TArray<FVector> WalkableCenters;
 	TArray<FVector> BlockedCenters;
+	TArray<FSeinNavBlockerBucket> BlockerBuckets;
 	float HalfExtent;
+	float BlockerHalfExtent;
 };
 
 #endif // UE_ENABLE_DEBUG_DRAWING
@@ -205,11 +239,6 @@ FPrimitiveSceneProxy* USeinNavDebugComponent::CreateSceneProxy()
 	TArray<FColor> Colors;
 	float HalfExtent = 0.0f;
 	Nav->CollectDebugCellQuads(Centers, Colors, HalfExtent);
-	if (Centers.Num() == 0)
-	{
-		UE_LOG(LogSeinNavDebug, Verbose, TEXT("CreateSceneProxy: nav returned 0 cells"));
-		return nullptr;
-	}
 
 	TArray<FVector> Walkable;
 	TArray<FVector> Blocked;
@@ -221,10 +250,48 @@ FPrimitiveSceneProxy* USeinNavDebugComponent::CreateSceneProxy()
 		else Walkable.Add(Centers[i]);
 	}
 
-	UE_LOG(LogSeinNavDebug, Verbose, TEXT("CreateSceneProxy: %d walkable + %d blocked cells, halfExtent=%.1f"),
-		Walkable.Num(), Blocked.Num(), HalfExtent);
+	// Dynamic blocker cells (overlay above static cells). Routed through the
+	// same scene proxy — folds the previously-per-frame DrawDebugSolidBox
+	// path into the batched mesh rebuild that fires on OnNavigationMutated.
+	// Per-cell colors come from the nav (resolved against plugin-settings
+	// layer colors so a Default-only blocker reads red, an N0 blocker reads
+	// N0's color, etc.) — bucketed below for efficient batched rendering.
+	TArray<FVector> BlockerCenters;
+	TArray<FColor> BlockerColors;
+	float BlockerHalfExtent = 0.0f;
+	Nav->CollectDebugBlockerCells(BlockerCenters, BlockerColors, BlockerHalfExtent);
 
-	return new FSeinNavDebugProxy(this, MoveTemp(Walkable), MoveTemp(Blocked), HalfExtent);
+	TArray<FSeinNavBlockerBucket> BlockerBuckets;
+	if (BlockerCenters.Num() == BlockerColors.Num())
+	{
+		for (int32 i = 0; i < BlockerCenters.Num(); ++i)
+		{
+			const FColor& Col = BlockerColors[i];
+			FSeinNavBlockerBucket* Match = BlockerBuckets.FindByPredicate(
+				[&Col](const FSeinNavBlockerBucket& B) { return B.Color.ToFColor(true) == Col; });
+			if (!Match)
+			{
+				FSeinNavBlockerBucket NewBucket;
+				NewBucket.Color = FLinearColor(Col);
+				Match = &BlockerBuckets.Add_GetRef(MoveTemp(NewBucket));
+			}
+			Match->Centers.Add(BlockerCenters[i]);
+		}
+	}
+
+	if (Centers.Num() == 0 && BlockerCenters.Num() == 0)
+	{
+		UE_LOG(LogSeinNavDebug, Verbose, TEXT("CreateSceneProxy: nav returned 0 static + 0 blocker cells"));
+		return nullptr;
+	}
+
+	UE_LOG(LogSeinNavDebug, Verbose,
+		TEXT("CreateSceneProxy: %d walkable + %d blocked + %d blocker cells in %d color buckets, staticHE=%.1f blockerHE=%.1f"),
+		Walkable.Num(), Blocked.Num(), BlockerCenters.Num(), BlockerBuckets.Num(), HalfExtent, BlockerHalfExtent);
+
+	return new FSeinNavDebugProxy(this,
+		MoveTemp(Walkable), MoveTemp(Blocked), MoveTemp(BlockerBuckets),
+		HalfExtent, BlockerHalfExtent);
 #else
 	return nullptr;
 #endif

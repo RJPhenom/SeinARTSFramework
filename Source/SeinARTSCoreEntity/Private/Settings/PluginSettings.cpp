@@ -23,10 +23,22 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// (SeinARTSCoreEntity) intentionally does NOT depend on SeinARTSNavigation —
 	// the decoupling is the whole point of the pluggable nav architecture.
 	, NavigationClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinNavigationAStar")))
+	, DefaultCellSize(FFixedPoint::FromInt(100))
+	, DefaultMaxStepHeight(FFixedPoint::FromInt(50))
+	// Network defaults — see PluginSettings.h for rationale on each. Soft path
+	// for the relay class follows the established nav/fog decoupling: this
+	// module deliberately does NOT depend on SeinARTSNet. Initializer order
+	// here MUST match the field-declaration order in the header (Network is
+	// declared between Navigation and Vision).
+	, bNetworkingEnabled(true)
+	, TurnRate(10)
+	, InputDelayTurns(3)
+	, MaxPlayers(8)
+	, RelayActorClass(FSoftClassPath(TEXT("/Script/SeinARTSNet.SeinNetRelay")))
+	, bDeterminismChecksEnabled(true)
+	, DeterminismCheckIntervalTurns(10)
 	, FogOfWarClass(FSoftClassPath(TEXT("/Script/SeinARTSFogOfWar.SeinFogOfWarDefault")))
-	, DefaultCellSize(100.0f)
-	, DefaultMaxStepHeight(50.0f)
-	, VisionCellSize(100.0f)
+	, VisionCellSize(FFixedPoint::FromInt(100))
 	, VisionTickInterval(3)
 	, FogRenderTickRate(10.0f)
 #if WITH_EDITORONLY_DATA
@@ -45,6 +57,10 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// Note: we SetNum + seed here, but config load after the ctor can stomp
 	// this — PostInitProperties reconciles.
 	VisionLayers.SetNum(6);
+
+	// Nav layers: 7 slots (bits 1..7). Default is reserved as bit 0. Same
+	// stability + opt-in story as vision layers.
+	NavLayers.SetNum(7);
 }
 
 namespace
@@ -63,6 +79,23 @@ namespace
 		FLinearColor(FColor::FromHex(TEXT("FF5A72"))),
 		FLinearColor(FColor::FromHex(TEXT("D4FF83"))),
 		FLinearColor(FColor::FromHex(TEXT("00FFA1"))),
+	};
+
+	// Per-slot canonical nav-layer colors. Warm / pink-red / earth-tone
+	// spectrum — intentionally avoids greens and cyans (those clash with the
+	// vision-layer palette and the static nav cell green/red). Each slot is
+	// distinct enough at-a-glance for layered debug viz to read clearly.
+	//  Slot 0 (N0) FFA500 · Slot 1 (N1) FFD600 · Slot 2 (N2) FA8072
+	//  Slot 3 (N3) DDA0DD · Slot 4 (N4) FF6347 · Slot 5 (N5) C71585
+	//  Slot 6 (N6) 8B4513
+	static const FLinearColor DefaultNavLayerColors[7] = {
+		FLinearColor(FColor::FromHex(TEXT("FFA500"))),
+		FLinearColor(FColor::FromHex(TEXT("FFD600"))),
+		FLinearColor(FColor::FromHex(TEXT("FA8072"))),
+		FLinearColor(FColor::FromHex(TEXT("DDA0DD"))),
+		FLinearColor(FColor::FromHex(TEXT("FF6347"))),
+		FLinearColor(FColor::FromHex(TEXT("C71585"))),
+		FLinearColor(FColor::FromHex(TEXT("8B4513"))),
 	};
 }
 
@@ -84,6 +117,20 @@ void USeinARTSCoreSettings::PostInitProperties()
 		if (VisionLayers[i].DebugColor == FLinearColor::White)
 		{
 			VisionLayers[i].DebugColor = DefaultLayerColors[i];
+		}
+	}
+
+	// Same reconcile pattern for nav layers — enforce slot count, re-seed
+	// any white DebugColor to the canonical per-slot value.
+	if (NavLayers.Num() != 7)
+	{
+		NavLayers.SetNum(7);
+	}
+	for (int32 i = 0; i < 7; ++i)
+	{
+		if (NavLayers[i].DebugColor == FLinearColor::White)
+		{
+			NavLayers[i].DebugColor = DefaultNavLayerColors[i];
 		}
 	}
 }

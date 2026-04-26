@@ -14,6 +14,7 @@
 #include "Events/SeinVisualEvent.h"
 #include "Types/FixedPoint.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSeinBridge, Log, All);
 
@@ -29,6 +30,60 @@ void USeinActorBridgeSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 
 	UE_LOG(LogSeinBridge, Log, TEXT("SeinActorBridgeSubsystem initialized"));
+}
+
+void USeinActorBridgeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+
+	if (!SimSubsystem.IsValid()) return;
+
+	// Auto-register every pre-placed ASeinActor instance as a sim entity.
+	// Without this hook, designers placing a SeinActor in the level get a
+	// render-only actor — no sim presence, no component data injection,
+	// no fog blocker / vision / abilities. Walking the world's actor list
+	// once at begin-play closes that gap: every placed SeinActor gets a
+	// sim entity bound to its level transform, with all its
+	// USeinActorComponents' payloads injected into component storage.
+	int32 NumRegistered = 0;
+	int32 NumSkipped = 0;
+	for (TActorIterator<ASeinActor> It(&InWorld); It; ++It)
+	{
+		ASeinActor* PlacedActor = *It;
+		if (!PlacedActor) continue;
+
+		// Skip actors already linked to an entity. Includes the case where
+		// the bridge's own SpawnActorForEntity created the actor in
+		// response to a runtime SpawnEntity — that path stamps the entity
+		// handle on the actor before it ever begin-plays.
+		if (PlacedActor->HasValidEntity())
+		{
+			++NumSkipped;
+			continue;
+		}
+
+		// Read the per-instance ownership slot set in the level editor.
+		// PlayerSlot 0 = neutral (decoration, props, capture points before
+		// capture). PlayerSlot N>0 stamps the entity for FSeinPlayerID(N).
+		// Note: this fires before any player has connected via
+		// HandleStartingNewPlayer, so the player state for slot N may not
+		// exist yet — RegisterPlayer creates it later. Anything querying
+		// owner state in that window must handle a missing FSeinPlayerState.
+		const FSeinPlayerID PlacedOwner = PlacedActor->PlayerSlot > 0
+			? FSeinPlayerID(static_cast<uint8>(PlacedActor->PlayerSlot))
+			: FSeinPlayerID::Neutral();
+		const FSeinEntityHandle Handle = SimSubsystem->SpawnEntityFromPlacedActor(
+			PlacedActor, PlacedOwner);
+		if (!Handle.IsValid()) continue;
+
+		RegisterActor(Handle, PlacedActor);
+		PlacedActor->InitializeWithEntity(Handle);
+		++NumRegistered;
+	}
+
+	UE_LOG(LogSeinBridge, Log,
+		TEXT("OnWorldBeginPlay: auto-registered %d placed ASeinActor(s); %d already had entities"),
+		NumRegistered, NumSkipped);
 }
 
 void USeinActorBridgeSubsystem::Deinitialize()

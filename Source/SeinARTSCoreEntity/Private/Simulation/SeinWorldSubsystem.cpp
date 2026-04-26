@@ -44,6 +44,8 @@
 #include "Simulation/Systems/SeinCommandBrokerSystem.h"
 #include "Simulation/Systems/SeinProductionSystem.h"
 #include "Simulation/Systems/SeinResourceSystem.h"
+#include "Simulation/Systems/SeinPenetrationResolutionSystem.h"
+#include "Simulation/Systems/SeinSpatialHashSystem.h"
 #include "Simulation/Systems/SeinStateHashSystem.h"
 #include "Simulation/Systems/SeinLifespanSystem.h"
 
@@ -67,14 +69,21 @@ void USeinWorldSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
 	FixedDeltaTimeSeconds = 1.0f / static_cast<float>(Settings->SimulationTickRate);
 
+	// Spatial hash — cell size 200 cm balances bucket fan-out cost against
+	// query precision. Origin = world (0,0,0); levels offset from origin
+	// just produce sparse buckets at high indices, no correctness impact.
+	SpatialHash.Initialize(FFixedPoint::FromInt(200), FFixedVector::ZeroVector);
+
 	// Register built-in systems
 	BuiltInSystems.Add(new FSeinEffectTickSystem());
+	BuiltInSystems.Add(new FSeinSpatialHashSystem());
 	BuiltInSystems.Add(new FSeinCooldownSystem());
 	BuiltInSystems.Add(new FSeinAbilityTickSystem());
 	BuiltInSystems.Add(new FSeinProductionSystem());
 	BuiltInSystems.Add(new FSeinResourceSystem());
 	BuiltInSystems.Add(new FSeinLifespanSystem());
 	BuiltInSystems.Add(new FSeinCommandBrokerSystem());
+	BuiltInSystems.Add(new FSeinPenetrationResolutionSystem());
 	BuiltInSystems.Add(new FSeinStateHashSystem());
 
 	for (ISeinSystem* Sys : BuiltInSystems)
@@ -217,7 +226,7 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 		// breaks. Gated off in shipping builds so the hash walk doesn't
 		// cost production CPU.
 		{
-			static IConsoleVariable* CVarLog = IConsoleManager::Get().FindConsoleVariable(TEXT("SeinARTS.Debug.StateHash.Log"));
+			static IConsoleVariable* CVarLog = IConsoleManager::Get().FindConsoleVariable(TEXT("Sein.Sim.StateHash.Log"));
 			if (CVarLog && CVarLog->GetInt() != 0)
 			{
 				UE_LOG(LogSeinSim, Log, TEXT("StateHash[tick %d] = 0x%08x"),
@@ -1037,6 +1046,106 @@ FSeinEntityHandle USeinWorldSubsystem::SpawnEntity(
 
 	UE_LOG(LogSeinSim, Log, TEXT("Spawned entity %s from %s (owner: %s)"),
 		*Handle.ToString(), *ActorClass->GetName(), *OwnerPlayerID.ToString());
+
+	return Handle;
+}
+
+FSeinEntityHandle USeinWorldSubsystem::SpawnEntityFromPlacedActor(
+	ASeinActor* PlacedActor,
+	FSeinPlayerID OwnerPlayerID)
+{
+	if (!PlacedActor)
+	{
+		UE_LOG(LogSeinSim, Error, TEXT("SpawnEntityFromPlacedActor: null actor"));
+		return FSeinEntityHandle::Invalid();
+	}
+	if (!PlacedActor->ArchetypeDefinition)
+	{
+		UE_LOG(LogSeinSim, Error,
+			TEXT("SpawnEntityFromPlacedActor: actor %s has no ArchetypeDefinition"),
+			*PlacedActor->GetName());
+		return FSeinEntityHandle::Invalid();
+	}
+
+	const USeinArchetypeDefinition* ArchetypeDef = PlacedActor->ArchetypeDefinition;
+
+	// Sim transform = editor-baked snapshot. The conversion from float
+	// FVector to FFixedVector ran once in the editor process when the
+	// designer placed/moved the actor (`PostEditMove`); the int64 bits
+	// were serialized to the .umap. We just read them here — no FromFloat
+	// at runtime, so cross-arch clients (PC + ARM Mac + mobile + console)
+	// land on identical sim transforms.
+	//
+	// Migration path: actors placed before `PlacedSimLocation` existed
+	// have `bSimLocationBaked == false`. We log a warning and fall back
+	// to FromFloat — single-platform tests still work, but cross-arch
+	// lockstep needs the designer to re-save the level (or run the
+	// "Bake Determinism Snapshots" menu when it lands).
+	FFixedVector SimLocation;
+	if (PlacedActor->bSimLocationBaked)
+	{
+		SimLocation = PlacedActor->PlacedSimLocation;
+	}
+	else
+	{
+		UE_LOG(LogSeinSim, Warning,
+			TEXT("SpawnEntityFromPlacedActor: %s has no baked PlacedSimLocation — "
+				 "falling back to runtime FromFloat. Re-save the level (or nudge "
+				 "the actor in editor) to bake the snapshot. NOT cross-arch deterministic."),
+			*PlacedActor->GetName());
+		SimLocation = FFixedVector::FromVector(PlacedActor->GetActorLocation());
+	}
+	const FFixedTransform SimTransform(SimLocation);
+
+	FSeinEntityHandle Handle = EntityPool.Acquire(SimTransform, OwnerPlayerID);
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogSeinSim, Error,
+			TEXT("SpawnEntityFromPlacedActor: pool.Acquire failed for %s"),
+			*PlacedActor->GetName());
+		return FSeinEntityHandle::Invalid();
+	}
+
+	EntityActorClassMap.Add(Handle, PlacedActor->GetClass());
+
+	// Walk the LIVE actor's USeinActorComponents — captures per-instance
+	// edits beyond CDO defaults. Designers can drop a placed actor and
+	// tune its Vision Radius / Blocker Height / etc. on the level
+	// instance; this path picks those up correctly.
+	TArray<USeinActorComponent*> SimACs;
+	PlacedActor->GetComponents<USeinActorComponent>(SimACs);
+	for (USeinActorComponent* AC : SimACs)
+	{
+		if (!AC) continue;
+		const FInstancedStruct Payload = AC->GetSimComponent();
+		if (!Payload.IsValid()) continue;
+
+		UScriptStruct* ComponentType = const_cast<UScriptStruct*>(Payload.GetScriptStruct());
+		ISeinComponentStorage* Storage = GetOrCreateStorageForType(ComponentType);
+		if (Storage)
+		{
+			Storage->AddComponent(Handle, Payload.GetMemory());
+		}
+	}
+
+	InitializeEntityAbilities(Handle);
+
+	if (FSeinTagData* TagComp = GetComponent<FSeinTagData>(Handle))
+	{
+		if (ArchetypeDef->ArchetypeTag.IsValid())
+		{
+			TagComp->BaseTags.AddTag(ArchetypeDef->ArchetypeTag);
+		}
+		SeedEntityTagsFromBase(Handle);
+	}
+
+	// Deliberately NO EnqueueVisualEvent — placed actors already exist in
+	// the world. Firing EntitySpawned would make the actor bridge spawn a
+	// second render actor in addition to the one the designer placed.
+
+	UE_LOG(LogSeinSim, Log,
+		TEXT("Auto-registered placed actor %s as entity %s (owner: %s)"),
+		*PlacedActor->GetName(), *Handle.ToString(), *OwnerPlayerID.ToString());
 
 	return Handle;
 }

@@ -4,9 +4,9 @@
  * @brief   Module startup + debug toggle.
  *
  *          Registers `ShowFlags.FogOfWar` (custom show flag — UE doesn't
- *          ship one out of the box) and the `SeinARTS.Debug.ShowFogOfWar`
+ *          ship one out of the box) and the `Sein.FogOfWar.Show`
  *          console command that toggles it across all viewports — same UX
- *          as nav's `SeinARTS.Debug.ShowNavigation` against the built-in
+ *          as nav's `Sein.Nav.Show` against the built-in
  *          `ShowFlags.Navigation`. Menu-item icon resolves via
  *          `ShowFlagsMenu.FogOfWar` in the SeinARTSEditor style set
  *          (SeinGrayIcon16.svg).
@@ -149,7 +149,7 @@ namespace
 		if (Args.Num() == 0)
 		{
 			GDebugLayerOverride = -1;
-			UE_LOG(LogTemp, Log, TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective = V (reset to Normal)"));
+			UE_LOG(LogTemp, Log, TEXT("Sein.FogOfWar.Show.Layer = V (reset to Normal)"));
 			MarkAllFogDebugProxiesDirty();
 			return;
 		}
@@ -157,7 +157,7 @@ namespace
 		if (Parsed < 0 || Parsed > 7)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective: expected 0-7 (0=E, 1=V, 2..7=N0..N5), got %s"),
+				TEXT("Sein.FogOfWar.Show.Layer: expected 0-7 (0=E, 1=V, 2..7=N0..N5), got %s"),
 				*Args[0]);
 			return;
 		}
@@ -167,7 +167,7 @@ namespace
 			TEXT("N0"), TEXT("N1"), TEXT("N2"), TEXT("N3"), TEXT("N4"), TEXT("N5")
 		};
 		UE_LOG(LogTemp, Log,
-			TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective = bit %d (%s). Use no-args to reset to V."),
+			TEXT("Sein.FogOfWar.Show.Layer = bit %d (%s). Use no-args to reset to V."),
 			Parsed, LayerNames[Parsed]);
 		MarkAllFogDebugProxiesDirty();
 	}
@@ -178,7 +178,7 @@ namespace
 		{
 			// Reset to local PC.
 			GDebugObserverOverride = -1;
-			UE_LOG(LogTemp, Log, TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective = LOCAL (reset)"));
+			UE_LOG(LogTemp, Log, TEXT("Sein.FogOfWar.Show.Player = LOCAL (reset)"));
 			MarkAllFogDebugProxiesDirty();
 			return;
 		}
@@ -187,14 +187,14 @@ namespace
 		if (Parsed < 0 || Parsed > 255)
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective: expected 0-255, got %s"),
+				TEXT("Sein.FogOfWar.Show.Player: expected 0-255, got %s"),
 				*Args[0]);
 			return;
 		}
 
 		GDebugObserverOverride = Parsed;
 		UE_LOG(LogTemp, Log,
-			TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective = Player(%d). "
+			TEXT("Sein.FogOfWar.Show.Player = Player(%d). "
 				 "Use no-args to reset to local PC."),
 			Parsed);
 		MarkAllFogDebugProxiesDirty();
@@ -216,7 +216,7 @@ namespace
 			}
 		}
 		SetFogOfWarShowFlag(bEnable);
-		UE_LOG(LogTemp, Log, TEXT("SeinARTS.Debug.ShowFogOfWar = %s (ShowFlags.FogOfWar)"),
+		UE_LOG(LogTemp, Log, TEXT("Sein.FogOfWar.Show = %s (ShowFlags.FogOfWar)"),
 			bEnable ? TEXT("ON") : TEXT("OFF"));
 	}
 }
@@ -229,24 +229,24 @@ void FSeinARTSFogOfWarModule::StartupModule()
 	if (!GShowFogOfWarCmd)
 	{
 		GShowFogOfWarCmd = IConsoleManager::Get().RegisterConsoleCommand(
-			TEXT("SeinARTS.Debug.ShowFogOfWar"),
-			TEXT("Toggle ShowFlags.FogOfWar across all viewports (same UX as SeinARTS.Debug.ShowNavigation). Drives the fog-of-war debug viz: non-PIE = whole grid red, PIE = local player controller's visible + explored cells. Usage: SeinARTS.Debug.ShowFogOfWar [0|1|on|off]."),
+			TEXT("Sein.FogOfWar.Show"),
+			TEXT("Toggle ShowFlags.FogOfWar across all viewports (same UX as Sein.Nav.Show). Drives the fog-of-war debug viz: non-PIE = whole grid red, PIE = local player controller's visible + explored cells. Usage: Sein.FogOfWar.Show [0|1|on|off]."),
 			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnShowFogOfWarCommand),
 			ECVF_Default);
 	}
 	if (!GPlayerPerspectiveCmd)
 	{
 		GPlayerPerspectiveCmd = IConsoleManager::Get().RegisterConsoleCommand(
-			TEXT("SeinARTS.Debug.ShowFogOfWar.PlayerPerspective"),
-			TEXT("Override the fog-of-war debug viewer to render a specific player's vision instead of the local player controller's. The sim is lockstep-symmetric — every client has every player's VisionGroup, so this is a local viewer toggle over shared data. Usage: SeinARTS.Debug.ShowFogOfWar.PlayerPerspective <id 0-255>. No args → reset to local PC. id=0 = neutral (shows only what neutral-owned sources see)."),
+			TEXT("Sein.FogOfWar.Show.Player"),
+			TEXT("Override the fog-of-war debug viewer to render a specific player's vision instead of the local player controller's. The sim is lockstep-symmetric — every client has every player's VisionGroup, so this is a local viewer toggle over shared data. Usage: Sein.FogOfWar.Show.Player <id 0-255>. No args → reset to local PC. id=0 = neutral (shows only what neutral-owned sources see)."),
 			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnPlayerPerspectiveCommand),
 			ECVF_Default);
 	}
 	if (!GLayerPerspectiveCmd)
 	{
 		GLayerPerspectiveCmd = IConsoleManager::Get().RegisterConsoleCommand(
-			TEXT("SeinARTS.Debug.ShowFogOfWar.LayerPerspective"),
-			TEXT("Override the fog-of-war debug viewer to paint cells through a specific EVNNNNNN layer bit. Usage: SeinARTS.Debug.ShowFogOfWar.LayerPerspective <bit 0-7>. 0 = E (Explored, yellow), 1 = V (Normal, cyan — default), 2..7 = N0..N5 (colors from VisionLayers settings). Blockers still render red when the baked BlockerLayerMask occludes the selected bit. No args → reset to V."),
+			TEXT("Sein.FogOfWar.Show.Layer"),
+			TEXT("Override the fog-of-war debug viewer to paint cells through a specific EVNNNNNN layer bit. Usage: Sein.FogOfWar.Show.Layer <bit 0-7>. 0 = E (Explored, yellow), 1 = V (Normal, cyan — default), 2..7 = N0..N5 (colors from VisionLayers settings). Blockers still render red when the baked BlockerLayerMask occludes the selected bit. No args → reset to V."),
 			FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&OnLayerPerspectiveCommand),
 			ECVF_Default);
 	}

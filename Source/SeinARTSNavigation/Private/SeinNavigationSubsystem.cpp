@@ -10,6 +10,7 @@
 #include "Volumes/SeinNavVolume.h"
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Simulation/Systems/SeinNavBlockerStampSystem.h"
 
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -49,6 +50,22 @@ void USeinNavigationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void USeinNavigationSubsystem::Deinitialize()
 {
+	// Tear down the stamping system before nulling Navigation — the system
+	// holds a weak nav ref but would still leak its own memory if dropped
+	// without unregister-from-world.
+	if (NavBlockerStampSystem)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (USeinWorldSubsystem* Sim = World->GetSubsystem<USeinWorldSubsystem>())
+			{
+				Sim->UnregisterSystem(NavBlockerStampSystem);
+			}
+		}
+		delete NavBlockerStampSystem;
+		NavBlockerStampSystem = nullptr;
+	}
+
 	if (Navigation)
 	{
 		Navigation->OnNavigationDeinitialized();
@@ -93,6 +110,19 @@ void USeinNavigationSubsystem::BindSimDelegates(UWorld& World)
 			if (!Nav || !Nav->HasRuntimeData()) return true; // no data = permit (tests, nav-less games)
 			return Nav->IsReachable(FromWorld, ToWorld, AgentTags);
 		});
+
+	// Hand the dynamic-blocker stamping over to the sim's tick loop. PreTick
+	// priority 7 → after spatial-hash rebuild, before AbilityExecution where
+	// MoveToAction's TickAction calls FindPath. Re-register-safe: unregister
+	// any prior instance first so a level reload doesn't leak.
+	if (NavBlockerStampSystem)
+	{
+		Sim->UnregisterSystem(NavBlockerStampSystem);
+		delete NavBlockerStampSystem;
+		NavBlockerStampSystem = nullptr;
+	}
+	NavBlockerStampSystem = new FSeinNavBlockerStampSystem(Navigation);
+	Sim->RegisterSystem(NavBlockerStampSystem);
 }
 
 USeinNavigation* USeinNavigationSubsystem::GetNavigationForWorld(const UObject* WorldContextObject)

@@ -20,6 +20,7 @@
 
 class USeinNavigation;
 class USeinNavigationAsset;
+class ISeinSystem;
 
 UCLASS()
 class SEINARTSNAVIGATION_API USeinNavigationSubsystem : public UWorldSubsystem
@@ -64,4 +65,12 @@ private:
 	/** Binds cross-module delegates on USeinWorldSubsystem so sim code can
 	 *  query nav reachability without importing nav headers. */
 	void BindSimDelegates(UWorld& World);
+
+	/** Sim-tick system that gathers FSeinExtentsData entities (those with
+	 *  bBlocksNav set) each PreTick
+	 *  and pushes them into Navigation->SetDynamicBlockers. Owned here so
+	 *  Navigation stays a pure data/query object — the world subsystem just
+	 *  ticks it. Created at OnWorldBeginPlay (when SeinWorldSubsystem is
+	 *  available); torn down at Deinitialize. */
+	ISeinSystem* NavBlockerStampSystem = nullptr;
 };

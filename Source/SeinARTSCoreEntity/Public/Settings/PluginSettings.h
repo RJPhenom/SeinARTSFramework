@@ -14,8 +14,10 @@
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
 #include "UObject/SoftObjectPath.h"
+#include "Types/FixedPoint.h"
 #include "Data/SeinResourceTypes.h"
 #include "Data/SeinVisionLayerDefinition.h"
+#include "Data/SeinNavLayerDefinition.h"
 #include "PluginSettings.generated.h"
 
 class USeinCommandBrokerResolver;
@@ -123,8 +125,8 @@ public:
 	 * volume overrides supported). Pick a value matching your smallest agent
 	 * scale — infantry-centric RTS: ~100 (1 m); massive-unit RTS: ~800 (8 m).
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "800"))
-	float DefaultCellSize;
+	UPROPERTY(Config, EditAnywhere, Category = "Navigation")
+	FFixedPoint DefaultCellSize;
 
 	/**
 	 * Project-wide fallback for vertical step height (world units) an agent
@@ -133,10 +135,113 @@ public:
 	 * overriding volume use that volume's value, everything else uses this.
 	 * Typical: ~half the cell size.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Navigation", meta = (ClampMin = "0.0", UIMin = "10", UIMax = "200"))
-	float DefaultMaxStepHeight;
+	UPROPERTY(Config, EditAnywhere, Category = "Navigation")
+	FFixedPoint DefaultMaxStepHeight;
 
-	// Vision / Fog of War Settings
+	/**
+	 * Designer-configurable N-layers for the agent/blocker nav layer mask.
+	 * Slot 0 → bit 1, slot 6 → bit 7. Exactly 7 slots, framework-enforced.
+	 *
+	 * The framework-default "Default" layer is NOT in this array — it's
+	 * reserved as bit 0 and always present. These 7 slots are exclusively
+	 * for additional agent classes a game needs beyond generic pathing:
+	 * Amphibious, HeavyVehicle, FriendlyFaction, InfantryOnly, etc. All 7
+	 * ship disabled — opt in by naming + enabling slots your game uses.
+	 *
+	 * Pathing is gated by intersection: `(AgentMask & BlockedMask) != 0`
+	 * → blocked. So an amphibious unit whose NavLayerMask drops the
+	 * Default bit and adds the "Amphibious" bit ignores a water blocker
+	 * authored as Default-only; multi-class agents OR multiple bits.
+	 *
+	 * Renaming a slot is safe. Reordering / inserting mid-array shifts
+	 * every higher-slot bit → breaks replays + saves. Only append or rename.
+	 */
+	UPROPERTY(Config, EditAnywhere, EditFixedSize, Category = "Navigation",
+		meta = (TitleProperty = "LayerName"))
+	TArray<FSeinNavLayerDefinition> NavLayers;
+
+	// Network / Lockstep Settings (DESIGN §TBD — Phase 0 spike)
+	// ====================================================================================================
+
+	/**
+	 * Master enable for the lockstep network layer. When false, the
+	 * `SeinARTSNet` module's USeinNetSubsystem becomes a no-op even if a
+	 * NetDriver is present — useful for shipping a single-player build that
+	 * still has the module compiled in. Independent of the world's NetMode:
+	 * the subsystem additionally requires `World->GetNetMode() != NM_Standalone`
+	 * before any RPC traffic flows.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network")
+	bool bNetworkingEnabled;
+
+	/**
+	 * Network turn rate in Hz. The lockstep layer aggregates player commands
+	 * into "turns" at this cadence; sim ticks are unaffected and continue at
+	 * `SimulationTickRate`. A turn is `SimulationTickRate / TurnRate` sim
+	 * ticks long (must divide evenly — runtime asserts).
+	 *
+	 * Defaults: 30 Hz sim / 10 Hz turns = 3 sim ticks per turn (~100 ms turn
+	 * length). RTS-genre standard. Lower turn rate = lower bandwidth + higher
+	 * input latency floor; higher = the inverse.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "60", UIMin = "5", UIMax = "30"))
+	int32 TurnRate;
+
+	/**
+	 * Input delay measured in turns. Locally captured commands target turn
+	 * `current + InputDelayTurns`, hiding network latency by deferring sim
+	 * effect. UX target: 200–300 ms (= 2–3 turns at 10 Hz). Players don't
+	 * notice the delay if local feedback (audio cue, ground marker, selection
+	 * ring) is fired immediately on input — that's the framework's job, not
+	 * this setting's.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "10", UIMin = "2", UIMax = "5"))
+	int32 InputDelayTurns;
+
+	/**
+	 * Maximum simultaneous players a single lockstep session supports. Drives
+	 * slot allocation in `USeinNetSubsystem` and bounds the per-turn command
+	 * gather. Bumping past 8 needs validation that the host's RPC bandwidth
+	 * still fits an Unreal channel — peer-relay traffic scales O(N²).
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "16", UIMin = "2", UIMax = "8"))
+	int32 MaxPlayers;
+
+	/**
+	 * Pluggable relay actor class. Spawned once on the host at session start
+	 * (replicated to clients via `bAlwaysRelevant`); carries the
+	 * Server_SubmitCommands + Multicast_BroadcastTurn RPCs. Designers can
+	 * subclass to layer custom telemetry / encryption / per-game packet
+	 * shaping without touching framework code.
+	 *
+	 * Soft path so SeinARTSCoreEntity stays decoupled from SeinARTSNet (same
+	 * pattern as `NavigationClass` / `FogOfWarClass`). Empty path = framework
+	 * default `ASeinNetRelay`.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network",
+		meta = (DisplayName = "Relay Actor Class",
+				MetaClass = "/Script/SeinARTSNet.SeinNetRelay"))
+	FSoftClassPath RelayActorClass;
+
+	/**
+	 * Periodic determinism gossip enable. When true, every Nth turn
+	 * (`DeterminismCheckIntervalTurns`) every client hashes its world state
+	 * and sends the digest to the host; the host fans the digest back so
+	 * peers can compare. Mismatch → freeze sim, dump state, log. Phase 3
+	 * landing — Phase 0 just wires the settings.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network")
+	bool bDeterminismChecksEnabled;
+
+	/**
+	 * Cadence of state-hash gossip in turns. Lower = catches desyncs sooner
+	 * but more bandwidth + CPU on the hash. 10 turns (= ~1 s at 10 Hz) is a
+	 * sane starting point; tighten to 1 during desync hunts.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "300", UIMin = "1", UIMax = "60", EditCondition = "bDeterminismChecksEnabled"))
+	int32 DeterminismCheckIntervalTurns;
+
+	// Fog Of War Settings
 	// ====================================================================================================
 
 	/**
@@ -149,7 +254,7 @@ public:
 	 * TrueSight behavior). Game teams can subclass or replace entirely without
 	 * touching any other framework code — fog is independent of nav.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+	UPROPERTY(Config, EditAnywhere, Category = "Fog Of War",
 		meta = (DisplayName = "Fog Of War Class", MetaClass = "/Script/SeinARTSFogOfWar.SeinFogOfWar"))
 	FSoftClassPath FogOfWarClass;
 
@@ -160,8 +265,8 @@ public:
 	 * sub-meter granularity. Smaller values = crisper fog edges + higher
 	 * memory; larger = cheaper stamps + chunkier edges.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Vision", meta = (ClampMin = "10.0", UIMin = "50", UIMax = "1600"))
-	float VisionCellSize;
+	UPROPERTY(Config, EditAnywhere, Category = "Fog Of War")
+	FFixedPoint VisionCellSize;
 
 	/**
 	 * Designer-configurable N-layers for the EVNNNNNN cell bitfield. Slot 0 →
@@ -185,7 +290,7 @@ public:
 	 * Renaming a slot is safe. Reordering / inserting mid-array shifts every
 	 * higher-slot bit → breaks replays + saves. Only append or rename.
 	 */
-	UPROPERTY(Config, EditAnywhere, EditFixedSize, Category = "Vision",
+	UPROPERTY(Config, EditAnywhere, EditFixedSize, Category = "Fog Of War",
 		meta = (TitleProperty = "LayerName"))
 	TArray<FSeinVisionLayerDefinition> VisionLayers;
 
@@ -198,7 +303,7 @@ public:
 	 * be deterministic across clients, so this is plugin-scoped — never
 	 * per-machine.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+	UPROPERTY(Config, EditAnywhere, Category = "Fog Of War",
 		meta = (ClampMin = "1", ClampMax = "60", UIMin = "1", UIMax = "10"))
 	int32 VisionTickInterval;
 
@@ -208,7 +313,7 @@ public:
 	 * The sim-tick path is always deterministic; the render path runs on
 	 * wall-clock and can lag freely.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category = "Vision",
+	UPROPERTY(Config, EditAnywhere, Category = "Fog Of War",
 		meta = (ClampMin = "1.0", ClampMax = "60.0", UIMin = "5.0", UIMax = "30.0"))
 	float FogRenderTickRate;
 

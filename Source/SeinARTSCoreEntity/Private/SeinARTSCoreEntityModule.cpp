@@ -25,7 +25,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinStateHashCmd, Log, All);
 // this on and diff the logs; any divergence localizes the desync tick.
 // Stripped in shipping.
 static TAutoConsoleVariable<int32> CVarSeinLogStateHash(
-	TEXT("SeinARTS.Debug.StateHash.Log"),
+	TEXT("Sein.Sim.StateHash.Log"),
 	0,
 	TEXT("If nonzero, log the sim state hash each tick. Determinism-verification tool — diff logs across two PIE clients to find the tick where lockstep broke."),
 	ECVF_Default);
@@ -33,7 +33,7 @@ static TAutoConsoleVariable<int32> CVarSeinLogStateHash(
 // One-shot: dump the current state hash on demand. Useful for pause-and-
 // compare debugging without spamming logs.
 static FAutoConsoleCommandWithWorldAndArgs CmdSeinDumpStateHash(
-	TEXT("SeinARTS.Debug.StateHash"),
+	TEXT("Sein.Sim.StateHash"),
 	TEXT("Log the current USeinWorldSubsystem::ComputeStateHash() value once."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
 		[](const TArray<FString>& /*Args*/, UWorld* World)

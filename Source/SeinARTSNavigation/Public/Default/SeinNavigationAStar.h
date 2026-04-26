@@ -42,7 +42,7 @@ public:
 	float BakeTraceHeadroom = 200.0f;
 
 	/** Emit cell quads (green = walkable, red = blocked) for the nav debug
-	 *  scene proxy. Gated by `ShowFlags.Navigation` / `SeinARTS.Debug.ShowNavigation`. */
+	 *  scene proxy. Gated by `ShowFlags.Navigation` / `Sein.Nav.Show`. */
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDrawCellsInDebug = true;
 
@@ -62,6 +62,7 @@ public:
 	virtual bool IsPassable(const FFixedVector& WorldPos) const override;
 	virtual bool ProjectPointToNav(const FFixedVector& WorldPos, FFixedVector& OutProjected) const override;
 	virtual bool GetGroundHeightAt(const FFixedVector& WorldPos, FFixedPoint& OutZ) const override;
+	virtual void SetDynamicBlockers(const TArray<FSeinDynamicBlocker>& InBlockers) override;
 
 	// Debug collectors — declarations stay in all build configs (ABI); bodies
 	// are compiled out in shipping via UE_ENABLE_DEBUG_DRAWING in the .cpp.
@@ -72,6 +73,10 @@ public:
 		int32 CurrentWaypointIndex,
 		TArray<FVector>& OutRemainingCells,
 		TArray<FVector>& OutCurrentTargetCell,
+		float& OutHalfExtent) const override;
+	virtual void CollectDebugBlockerCells(
+		TArray<FVector>& OutCenters,
+		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const override;
 
 private:
@@ -97,10 +102,24 @@ private:
 	 *  enforced at runtime. */
 	TArray<uint8> CellConnections;
 
-	/** Precomputed tan²(MaxWalkableSlopeDegrees). Used only at bake time when
-	 *  computing cell connectivity — the A* pathing reads CellConnections bits
-	 *  rather than re-checking slope live. */
-	FFixedPoint MaxSlopeTanSq = FFixedPoint::One;
+	/** Runtime list of dynamic blockers, refreshed each PreTick by the
+	 *  nav-blocker stamping system. FindPath rebuilds the per-call
+	 *  DynamicBlocked overlay from this list (excluding the requester so
+	 *  a unit can path out of its own footprint). */
+	TArray<FSeinDynamicBlocker> DynamicBlockers;
+
+	/** Per-cell flag (1 = dynamically blocked for this FindPath, 0 = clear).
+	 *  Mutable so it can be rebuilt inside the const FindPath. Single-threaded
+	 *  sim guarantees no concurrent FindPath; the buffer is reused across
+	 *  calls to avoid per-call allocations. */
+	mutable TArray<uint8> DynamicBlocked;
+
+	/** Fingerprint of the last DynamicBlockers list pushed via SetDynamicBlockers.
+	 *  XOR-fold of per-blocker pose + mask + shape hash. SetDynamicBlockers
+	 *  only broadcasts OnNavigationMutated when the new hash differs — gates
+	 *  the debug scene-proxy rebuild to actual mutations instead of every
+	 *  per-tick push. */
+	uint32 LastBlockerHash = 0;
 
 	// ----------------------------------------------------------------------
 	// Bake state
@@ -119,6 +138,25 @@ private:
 		const uint8 C = CellCost[CellIndex(X, Y)];
 		return C > 0 && C < 255;
 	}
+
+	/** Effective passability for a FindPath in progress: static cell + the
+	 *  current request's dynamic-blocked overlay. DynamicBlocked is rebuilt
+	 *  at the top of FindPath (with the requester excluded + agent mask
+	 *  applied), so callers inside that scope (A*, HasLineOfSight) can use
+	 *  this directly. */
+	FORCEINLINE bool IsCellPassableForPath(int32 X, int32 Y) const
+	{
+		if (!IsCellPassable(X, Y)) return false;
+		if (DynamicBlocked.Num() == 0) return true;
+		return DynamicBlocked[CellIndex(X, Y)] == 0;
+	}
+
+	/** Stamp DynamicBlockers (skipping `Exclude` + filtering to those whose
+	 *  BlockedNavLayerMask intersects `AgentNavLayerMask`) into DynamicBlocked.
+	 *  Called at the top of FindPath so the overlay matches BOTH the
+	 *  requester (self-exclusion) AND the agent's layer (water blocker
+	 *  doesn't stamp for amphibious agents). */
+	void BuildDynamicBlockedOverlay(FSeinEntityHandle Exclude, uint8 AgentNavLayerMask) const;
 
 	bool WorldToGrid(const FFixedVector& WorldPos, int32& OutX, int32& OutY) const;
 	FFixedVector GridToWorld(int32 X, int32 Y) const;

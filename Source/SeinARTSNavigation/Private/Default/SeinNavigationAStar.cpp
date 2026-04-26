@@ -7,6 +7,12 @@
 #include "Default/SeinNavigationAStarAsset.h"
 #include "Volumes/SeinNavVolume.h"
 #include "Settings/PluginSettings.h"
+#include "Data/SeinNavLayerDefinition.h"
+#include "Actor/SeinActor.h"
+#include "Data/SeinArchetypeDefinition.h"
+#include "Components/ActorComponents/SeinMovementComponent.h"
+#include "Stamping/SeinStampUtils.h"
+#include "SeinARTSNavigationModule.h"
 
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -100,8 +106,10 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 	// Resolve bake parameters from the first volume (per-volume overrides
 	// shadow plugin-settings defaults; later volumes use their own resolved
 	// values for their region — MVP uses a single global CellSize).
-	const float CellSizeF = Volumes[0]->GetResolvedCellSize();
-	const FFixedPoint BakedCellSize = FFixedPoint::FromFloat(CellSizeF);
+	// Getter returns FFixedPoint directly — the only float touched here is
+	// the bake-time trace-math float, computed once via ToFloat().
+	const FFixedPoint BakedCellSize = Volumes[0]->GetResolvedCellSize();
+	const float CellSizeF = BakedCellSize.ToFloat();
 
 	const int32 GridW = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.X - UnionBounds.Min.X) / CellSizeF));
 	const int32 GridH = FMath::Max(1, FMath::CeilToInt((UnionBounds.Max.Y - UnionBounds.Min.Y) / CellSizeF));
@@ -138,6 +146,54 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 	{
 		if (Vol) QP.AddIgnoredActor(Vol);
 	}
+
+	// Per-archetype skip list. Two reasons to exclude an ASeinActor's geometry
+	// from the static bake:
+	//   1) Designer flagged the archetype as `bBakesIntoNav = false` (e.g. a
+	//      decorative prop, a lampshade, an entity that should be walkable
+	//      through). Hard override.
+	//   2) Mobile heuristic — the archetype CDO carries a USeinMovementComponent.
+	//      Vehicles, infantry, and any other unit that runs locomotion should
+	//      not carve their pose-at-bake-time into the static nav. Designers
+	//      who DO want a stationary unit baked can flip `bBakesIntoNav` off
+	//      on a non-mobile archetype, or simply not give it a movement
+	//      component.
+	// `QP.AddIgnoredActor` ignores every primitive on the actor (skeletal
+	// meshes, collision capsules, brush components — the lot), so the bake
+	// trace passes through cleanly regardless of how the BP is composed.
+	int32 NumIgnoredActors = 0;
+	for (TActorIterator<ASeinActor> It(World); It; ++It)
+	{
+		ASeinActor* SeinActor = *It;
+		if (!SeinActor) continue;
+
+		bool bSkip = false;
+
+		// Hard-override flag.
+		if (const USeinArchetypeDefinition* ArchDef = SeinActor->ArchetypeDefinition)
+		{
+			if (!ArchDef->bBakesIntoNav)
+			{
+				bSkip = true;
+			}
+		}
+
+		// Mobile heuristic — any USeinMovementComponent present means the
+		// archetype is locomotion-driven, so its at-bake pose is irrelevant.
+		if (!bSkip && SeinActor->FindComponentByClass<USeinMovementComponent>())
+		{
+			bSkip = true;
+		}
+
+		if (bSkip)
+		{
+			QP.AddIgnoredActor(SeinActor);
+			++NumIgnoredActors;
+		}
+	}
+	UE_LOG(LogSeinNavAStar, Log,
+		TEXT("Bake: ignoring %d SeinActor(s) (mobile + bBakesIntoNav=false)"),
+		NumIgnoredActors);
 
 	// Diagnostic counters. Log at end-of-bake. Turn to Verbose to silence later.
 	int32 BakeMissed = 0, BakeWalkable = 0, BakeBlocked = 0;
@@ -212,8 +268,7 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 		// volumes, tens of thousands of cells). If that ever shifts, swap to a
 		// spatial hash of volume bounds.
 		const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
-		const float FallbackStepF = Settings ? Settings->DefaultMaxStepHeight : 50.0f;
-		const FFixedPoint FallbackStepFP = FFixedPoint::FromFloat(FallbackStepF);
+		const FFixedPoint FallbackStepFP = Settings ? Settings->DefaultMaxStepHeight : FFixedPoint::FromInt(50);
 
 		TArray<FFixedPoint> CellMaxStep;
 		CellMaxStep.SetNum(GridW * GridH);
@@ -233,7 +288,7 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 					// its step rule regardless of Z.
 					if (CX >= VB.Min.X && CX <= VB.Max.X && CY >= VB.Min.Y && CY <= VB.Max.Y)
 					{
-						CellStep = FFixedPoint::FromFloat(Vol->GetResolvedMaxStepHeight());
+						CellStep = Vol->GetResolvedMaxStepHeight();
 						break; // first match wins
 					}
 				}
@@ -322,7 +377,7 @@ bool USeinNavigationAStar::DoSyncBake(UWorld* World, USeinNavigationAStarAsset*&
 		}
 
 		UE_LOG(LogSeinNavAStar, Log, TEXT("Bake connectivity: edges=%d blocked_edges=%d FallbackStep=%.1f"),
-			BakeEdges, BakeBlockedEdges, FallbackStepF);
+			BakeEdges, BakeBlockedEdges, FallbackStepFP.ToFloat());
 	}
 
 	// ========================================================================
@@ -530,11 +585,6 @@ void USeinNavigationAStar::ApplyAssetData(const USeinNavigationAStarAsset* Asset
 		CellConnections[i] = Asset->Cells[i].Connections;
 	}
 
-	// Precompute tan²(MaxWalkableSlopeDegrees) for the A* neighbor-transition
-	// slope gate. Computing at load time (not per-query) keeps A* deterministic
-	// + cheap; the float→fixed conversion is stable across machines.
-	const float Tan = FMath::Tan(FMath::DegreesToRadians(MaxWalkableSlopeDegrees));
-	MaxSlopeTanSq = FFixedPoint::FromFloat(Tan * Tan);
 }
 
 // ============================================================================
@@ -570,10 +620,77 @@ bool USeinNavigationAStar::IsPassable(const FFixedVector& WorldPos) const
 	return IsCellPassable(X, Y);
 }
 
+void USeinNavigationAStar::SetDynamicBlockers(const TArray<FSeinDynamicBlocker>& InBlockers)
+{
+	DynamicBlockers = InBlockers;
+
+	// Hash the new list so we only broadcast OnNavigationMutated when the
+	// blocker set actually changed. The stamping system pushes every PreTick
+	// regardless of motion; an unconditional broadcast here would invalidate
+	// the debug scene proxy ~60×/sec for static scenes — wasted mesh builds.
+	// XOR-fold is order-independent (matches the spatial-hash insertion-order
+	// pattern) so the same set in any iteration order produces the same hash.
+	uint32 NewHash = 0;
+	for (const FSeinDynamicBlocker& B : InBlockers)
+	{
+		NewHash ^= GetTypeHash(B.Owner.Index);
+		NewHash ^= GetTypeHash(B.EntityCenter.X.Value);
+		NewHash ^= GetTypeHash(B.EntityCenter.Y.Value);
+		NewHash ^= GetTypeHash(B.EntityCenter.Z.Value);
+		NewHash ^= GetTypeHash(B.Shape);
+		NewHash ^= static_cast<uint32>(B.BlockedNavLayerMask);
+	}
+	if (NewHash != LastBlockerHash)
+	{
+		LastBlockerHash = NewHash;
+		OnNavigationMutated.Broadcast();
+	}
+}
+
+void USeinNavigationAStar::BuildDynamicBlockedOverlay(FSeinEntityHandle Exclude, uint8 AgentNavLayerMask) const
+{
+	const int32 N = Width * Height;
+	if (DynamicBlocked.Num() != N) DynamicBlocked.SetNumUninitialized(N);
+	FMemory::Memzero(DynamicBlocked.GetData(), DynamicBlocked.Num());
+
+	if (DynamicBlockers.Num() == 0 || N == 0) return;
+
+	for (const FSeinDynamicBlocker& B : DynamicBlockers)
+	{
+		// Self-exclusion: a unit pathing out of its own footprint must not see
+		// its own blocker stamped — A* would never find a start cell otherwise.
+		if (B.Owner == Exclude) continue;
+
+		// Layer-mask filter: blocker only affects this agent if their bits
+		// intersect. Water (mask = Default) skips amphibious agent
+		// (mask = N0) because the AND is zero.
+		if ((B.BlockedNavLayerMask & AgentNavLayerMask) == 0) continue;
+
+		// Shape iteration handles all three kinds (radial / rect / cone) plus
+		// LocalOffset / YawOffset pose composition.
+		SeinStampUtils::ForEachCoveredCell(
+			B.Shape, B.EntityCenter, B.EntityRotation,
+			CellSize, Origin, Width, Height,
+			[this](int32 X, int32 Y)
+			{
+				DynamicBlocked[CellIndex(X, Y)] = 1;
+			});
+	}
+}
+
 bool USeinNavigationAStar::GetGroundHeightAt(const FFixedVector& WorldPos, FFixedPoint& OutZ) const
 {
 	int32 X, Y;
 	if (!WorldToGrid(WorldPos, X, Y)) return false;
+	// Refuse to report height for blocked cells — pruned cube tops, platform
+	// interiors, and wall footprints all have their geometry's Z stored on
+	// the cell. Without this gate, a unit whose XY momentarily crosses a
+	// blocked cell (path smoother corner-cut, wheeled vehicle's turn radius
+	// arc, footstep on a wall edge) Z-snaps to that blocked cell's surface
+	// and visibly pops onto the wall. Returning false here makes locomotion
+	// preserve the previous tick's Z (floor level), so the unit slides
+	// through the blocked-cell sliver at its current height instead.
+	if (!IsCellPassable(X, Y)) return false;
 	OutZ = CellHeight[CellIndex(X, Y)];
 	return true;
 }
@@ -647,7 +764,7 @@ TArray<FIntPoint> USeinNavigationAStar::AStarSearch(FIntPoint Start, FIntPoint E
 {
 	TArray<FIntPoint> Result;
 	if (!IsValidCoord(Start.X, Start.Y) || !IsValidCoord(End.X, End.Y)) return Result;
-	if (!IsCellPassable(Start.X, Start.Y) || !IsCellPassable(End.X, End.Y)) return Result;
+	if (!IsCellPassableForPath(Start.X, Start.Y) || !IsCellPassableForPath(End.X, End.Y)) return Result;
 
 	const int32 N = Width * Height;
 	TArray<int32> GCosts; GCosts.Init(INT32_MAX, N);
@@ -704,7 +821,7 @@ TArray<FIntPoint> USeinNavigationAStar::AStarSearch(FIntPoint Start, FIntPoint E
 
 			const int32 NX = CX + NeighborDX[n];
 			const int32 NY = CY + NeighborDY[n];
-			if (!IsCellPassable(NX, NY)) continue; // defensive; connectivity should already guarantee this
+			if (!IsCellPassableForPath(NX, NY)) continue; // static + dynamic blocker check
 
 			const int32 NIdx = CellIndex(NX, NY);
 
@@ -762,7 +879,7 @@ bool USeinNavigationAStar::HasLineOfSight(int32 X0, int32 Y0, int32 X1, int32 Y1
 
 	while (true)
 	{
-		if (!IsCellPassable(X, Y)) return false;
+		if (!IsCellPassableForPath(X, Y)) return false;
 		if (X == X1 && Y == Y1) return true;
 
 		int32 NextX = X, NextY = Y;
@@ -788,6 +905,22 @@ bool USeinNavigationAStar::HasLineOfSight(int32 X0, int32 Y0, int32 X1, int32 Y1
 		{
 			const uint8 Conn = CellConnections[CellIndex(X, Y)];
 			if ((Conn & (1 << DirIdx)) == 0) return false;
+			// Diagonal anti-squeeze — mirrors A*'s rule. The diagonal
+			// connectivity bit alone says "midpoint trace passed slope+step
+			// gates," but a paired-cardinal blockage (the two cells the
+			// diagonal step skims past) means the line physically crosses
+			// blocked terrain even if the bake's midpoint sample was happy.
+			// Without this, path smoothing can collapse around wall corners
+			// A* carefully routed around — visible as paths cutting through
+			// red-blocked cells at platform edges.
+			if (DirIdx >= 4)
+			{
+				static const uint8 CardinalA[4] = { 0, 0, 1, 1 };
+				static const uint8 CardinalB[4] = { 2, 3, 2, 3 };
+				const uint8 AIdx = CardinalA[DirIdx - 4];
+				const uint8 BIdx = CardinalB[DirIdx - 4];
+				if ((Conn & (1 << AIdx)) == 0 || (Conn & (1 << BIdx)) == 0) return false;
+			}
 		}
 
 		X = NextX;
@@ -839,6 +972,14 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 	OutPath.Clear();
 	if (!HasRuntimeData()) return false;
 
+	// Rebuild the dynamic-blocker overlay for this request. Excludes the
+	// requesting entity's own blocker so a unit can path out of its own
+	// footprint, AND filters by agent layer mask so terrain-class blockers
+	// (water blocks Default, ignore amphibious) don't apply universally.
+	// Done first so every passability check below — source projection, A*,
+	// smoothing — sees the same overlay.
+	BuildDynamicBlockedOverlay(Request.Requester, Request.AgentNavLayerMask);
+
 	int32 SX, SY;
 	if (!WorldToGrid(Request.Start, SX, SY))
 	{
@@ -853,7 +994,10 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 	}
 
 	// Source projection: if the unit's physical cell is blocked (e.g. stuck on
-	// a pruned island from a stale bake), ring-scan for a nearby walkable cell.
+	// a pruned island from a stale bake, or boxed in by other units' blocker
+	// stamps), ring-scan for a nearby walkable cell. Uses static-only
+	// passability — ProjectPointToNav doesn't see the dynamic overlay; if it
+	// did, a tank surrounded by other blockers couldn't even start a path.
 	if (!IsCellPassable(SX, SY))
 	{
 		FFixedVector Snapped;
@@ -869,7 +1013,7 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 	// itself is always permissive: the MoveToAction's contract is to get
 	// somewhere sensible along the straight line toward the click.
 	TArray<FIntPoint> CellPath;
-	if (IsCellPassable(EX, EY))
+	if (IsCellPassableForPath(EX, EY))
 	{
 		CellPath = AStarSearch(FIntPoint(SX, SY), FIntPoint(EX, EY));
 	}
@@ -903,7 +1047,7 @@ bool USeinNavigationAStar::FindPath(const FSeinPathRequest& Request, FSeinPath& 
 			if (E2 > -DY) { Err -= DY; X += SXs; }
 			if (E2 < DX)  { Err += DX; Y += SYs; }
 
-			if (!IsValidCoord(X, Y) || !IsCellPassable(X, Y)) continue;
+			if (!IsValidCoord(X, Y) || !IsCellPassableForPath(X, Y)) continue;
 
 			TArray<FIntPoint> Candidate = AStarSearch(FIntPoint(SX, SY), FIntPoint(X, Y));
 			if (Candidate.Num() > 0)
@@ -972,6 +1116,115 @@ void USeinNavigationAStar::CollectDebugCellQuads(TArray<FVector>& OutCenters, TA
 				CellHeight[I].ToFloat() + 2.0f);
 		}
 	}
+#endif
+}
+
+void USeinNavigationAStar::CollectDebugBlockerCells(
+	TArray<FVector>& OutCenters,
+	TArray<FColor>& OutColors,
+	float& OutHalfExtent) const
+{
+#if UE_ENABLE_DEBUG_DRAWING
+	UE_LOG(LogSeinNavAStar, Verbose,
+		TEXT("CollectDebugBlockerCells: ENTERED (HasRuntimeData=%d, DynamicBlockers=%d)"),
+		HasRuntimeData() ? 1 : 0, DynamicBlockers.Num());
+
+	OutCenters.Reset();
+	OutColors.Reset();
+	OutHalfExtent = 0.0f;
+	if (!HasRuntimeData() || DynamicBlockers.Num() == 0) return;
+
+	const float CS = CellSize.ToFloat();
+	OutHalfExtent = CS * 0.5f * 0.9f;
+
+	// Dedup cells when multiple blockers overlap — without this an overlapping
+	// pair stamps shared cells twice and the alpha stacks, which reads as
+	// "this cell is double-blocked" when really it's just the viz folding
+	// two stamps onto one cell. First-blocker-wins for the color (rare
+	// overlap case).
+	TArray<bool> Stamped;
+	Stamped.Init(false, Width * Height);
+
+	const float OriginXF = Origin.X.ToFloat();
+	const float OriginYF = Origin.Y.ToFloat();
+
+	// Layer-perspective filter from the `Sein.Nav.Show.Layer` console command.
+	// When set, blockers whose BlockedNavLayerMask doesn't intersect the
+	// filter bit are skipped entirely AND the visible blockers all render
+	// in the filter layer's color (uniform "this is what blocks layer X" viz).
+	// When no filter, each blocker renders in its OWN dominant-bit color
+	// (lowest set bit) — so a Default-only blocker shows red, an N0 blocker
+	// shows N0's settings color, etc. This matches the user mental model
+	// where Sein.Nav.Show and Sein.Nav.Show.Layer 0 produce identical output
+	// when every blocker happens to be on the Default layer.
+	int32 FilterBit = -1;
+	const bool bLayerFilter = UE::SeinARTSNavigation::TryGetDebugNavLayerOverride(FilterBit);
+	const uint8 FilterBitMask = bLayerFilter ? static_cast<uint8>(1u << FilterBit) : uint8(0xFF);
+
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+
+	auto ColorForBit = [&](int32 Bit) -> FColor
+	{
+		// Bit 0 (Default) → red, matching the static blocker red so dynamic
+		// and static "Default-blocking" cells visually merge.
+		if (Bit == 0) return FColor(217, 0, 0, 128);
+		if (Bit >= 1 && Bit <= 7 && Settings && Settings->NavLayers.IsValidIndex(Bit - 1))
+		{
+			FLinearColor C = Settings->NavLayers[Bit - 1].DebugColor;
+			C.A = 0.5f;
+			return C.ToFColor(true);
+		}
+		// Fallback (no settings entry) — catch-all orange.
+		return FColor(255, 140, 0, 128);
+	};
+
+	const FColor FilterColor = bLayerFilter ? ColorForBit(FilterBit) : FColor::Magenta;
+
+	for (const FSeinDynamicBlocker& B : DynamicBlockers)
+	{
+		if (bLayerFilter && (B.BlockedNavLayerMask & FilterBitMask) == 0) continue;
+
+		// Resolve cell color for this blocker:
+		//   filter active → uniform filter color (everything visible affects
+		//                    that layer, render in its color).
+		//   no filter     → blocker's own dominant-bit color (lowest set bit).
+		FColor BlockerColor;
+		if (bLayerFilter)
+		{
+			BlockerColor = FilterColor;
+		}
+		else
+		{
+			int32 LowestBit = 0;
+			for (int32 Bit = 0; Bit < 8; ++Bit)
+			{
+				if (B.BlockedNavLayerMask & (1u << Bit)) { LowestBit = Bit; break; }
+			}
+			BlockerColor = ColorForBit(LowestBit);
+		}
+
+		// One pass per stamp. Same cell-iteration helper used by the FindPath
+		// overlay rebuild — viz exactly matches what pathing sees.
+		SeinStampUtils::ForEachCoveredCell(
+			B.Shape, B.EntityCenter, B.EntityRotation,
+			CellSize, Origin, Width, Height,
+			[&](int32 X, int32 Y)
+			{
+				const int32 Idx = CellIndex(X, Y);
+				if (Stamped[Idx]) return;
+				Stamped[Idx] = true;
+				const float CellCX = OriginXF + (X + 0.5f) * CS;
+				const float CellCY = OriginYF + (Y + 0.5f) * CS;
+				// +15cm Z bias so blocker quads layer cleanly above the
+				// static cell quads (which render at +2cm).
+				OutCenters.Emplace(CellCX, CellCY, CellHeight[Idx].ToFloat() + 15.0f);
+				OutColors.Add(BlockerColor);
+			});
+	}
+
+	UE_LOG(LogSeinNavAStar, Verbose,
+		TEXT("CollectDebugBlockerCells: %d blocker(s) → %d unique cell(s) (filter=%d)"),
+		DynamicBlockers.Num(), OutCenters.Num(), bLayerFilter ? FilterBit : -1);
 #endif
 }
 

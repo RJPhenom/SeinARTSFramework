@@ -13,14 +13,14 @@ public:
 namespace UE::SeinARTSFogOfWar
 {
 	/** Debug proxy observer override, driven by the
-	 *  `SeinARTS.Debug.ShowFogOfWar.PlayerPerspective <id>` console command.
+	 *  `Sein.FogOfWar.Show.Player <id>` console command.
 	 *  Writes OutObserver + returns true when an override is active (the
 	 *  debug component should render that player's view instead of the
 	 *  local PC's). Returns false in default state. Shipping: no-op false. */
 	SEINARTSFOGOFWAR_API bool TryGetDebugObserverOverride(FSeinPlayerID& OutObserver);
 
 	/** Debug proxy layer override, driven by the
-	 *  `SeinARTS.Debug.ShowFogOfWar.LayerPerspective <bit>` console command.
+	 *  `Sein.FogOfWar.Show.Layer <bit>` console command.
 	 *  OutBitIndex is in [0, 7]: 0=E (Explored), 1=V (Normal), 2..7=N0..N5.
 	 *  Returns false in default state → impl uses the V bit.
 	 *  Shipping: no-op false. */

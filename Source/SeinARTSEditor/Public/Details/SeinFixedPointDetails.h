@@ -1,9 +1,12 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinFixedPointDetails.h
- * @brief   Property type customization for FFixedPoint. Shows two integer entry
- *          fields (Integer, Fraction) instead of the raw int64 storage, matching
- *          the convention used by MakeFixedPointFromParts / BreakFixedPointToParts.
+ * @brief   Property type customization for FFixedPoint. Shows the value as a
+ *          single decimal float input — designer-friendly. Underlying storage
+ *          is still 32.32 fixed-point (deterministic); the float field is just
+ *          a presentation layer that converts via ToFloat / FromFloat on the
+ *          edit boundary. For programmatic precision use the
+ *          MakeFixedPointFromParts / BreakFixedPointToParts BPFL.
  */
 
 #pragma once
@@ -25,15 +28,9 @@ public:
 private:
 	TSharedPtr<IPropertyHandle> ValueHandle;
 
-	int64 GetValue() const;
-	void  SetValue(int64 NewVal) const;
+	int64 GetRawValue() const;
+	void  SetRawValue(int64 NewVal) const;
 
-	TOptional<int32> GetIntegerPart() const;
-	TOptional<int32> GetFractionPart() const;
-
-	void SetIntegerPart(int32 NewInt);
-	void SetFractionPart(int32 NewFrac);
-
-	void OnIntegerCommitted(int32 NewValue, ETextCommit::Type CommitType);
-	void OnFractionCommitted(int32 NewValue, ETextCommit::Type CommitType);
+	TOptional<float> GetFloatValue() const;
+	void OnFloatCommitted(float NewValue, ETextCommit::Type CommitType);
 };

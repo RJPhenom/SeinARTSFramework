@@ -15,6 +15,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Volume.h"
+#include "Types/FixedPoint.h"
+#include "Types/Vector.h"
 #include "SeinNavVolume.generated.h"
 
 class USeinNavigationAsset;
@@ -34,8 +36,8 @@ public:
 	bool bOverrideCellSize = false;
 
 	UPROPERTY(EditAnywhere, Category = "SeinARTS|Navigation|Overrides",
-		meta = (EditCondition = "bOverrideCellSize", ClampMin = "10.0"))
-	float CellSize = 100.0f;
+		meta = (EditCondition = "bOverrideCellSize"))
+	FFixedPoint CellSize = FFixedPoint::FromInt(100);
 
 	/** Maximum vertical step (world units) an agent can traverse between
 	 *  adjacent cells. Blocks "jumps" across gaps where two cells happen to
@@ -47,8 +49,8 @@ public:
 	bool bOverrideMaxStepHeight = false;
 
 	UPROPERTY(EditAnywhere, Category = "SeinARTS|Navigation|Overrides",
-		meta = (EditCondition = "bOverrideMaxStepHeight", ClampMin = "0.0"))
-	float MaxStepHeight = 50.0f;
+		meta = (EditCondition = "bOverrideMaxStepHeight"))
+	FFixedPoint MaxStepHeight = FFixedPoint::FromInt(50);
 
 	/** Baked nav data for this level. Assigned by the bake pipeline; shared
 	 *  across all NavVolumes on the level (last-baked wins). Polymorphic —
@@ -57,17 +59,38 @@ public:
 	TObjectPtr<USeinNavigationAsset> BakedAsset;
 
 	/** Scene-proxy-backed cell viz. Driven by `ShowFlags.Navigation` /
-	 *  `SeinARTS.Debug.ShowNavigation`; null in shipping. */
+	 *  `Sein.Nav.Show`; null in shipping. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "SeinARTS|Navigation|Debug")
 	TObjectPtr<USeinNavDebugComponent> DebugComponent;
 
-	/** World-space AABB of this volume's brush. */
+	/** Editor-baked AABB snapshot — see ASeinFogOfWarVolume header for the
+	 *  cross-platform-determinism rationale. PostEditMove writes; nav grid
+	 *  init reads. Migration: `bBoundsBaked` distinguishes fresh actors
+	 *  from legacy data. */
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	FFixedVector PlacedBoundsMin = FFixedVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	FFixedVector PlacedBoundsMax = FFixedVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "SeinARTS|Determinism")
+	bool bBoundsBaked = false;
+
+#if WITH_EDITOR
+	virtual void PostEditMove(bool bFinished) override;
+#endif
+
+	/** World-space AABB of this volume's brush (float, render-side). Use
+	 *  `PlacedBounds*` for sim-side reads. */
 	FBox GetVolumeWorldBounds() const;
 
-	/** Per-volume cell size with plugin-settings fallback. */
-	float GetResolvedCellSize() const;
+	/** Per-volume cell size with plugin-settings fallback. Returns
+	 *  FFixedPoint so consumers stay deterministic — no FromFloat needed
+	 *  on the runtime path. */
+	FFixedPoint GetResolvedCellSize() const;
 
 	/** Per-volume max-step-height with plugin-settings fallback
-	 *  (`USeinARTSCoreSettings::DefaultMaxStepHeight`). */
-	float GetResolvedMaxStepHeight() const;
+	 *  (`USeinARTSCoreSettings::DefaultMaxStepHeight`). Returns
+	 *  FFixedPoint for the same reason as `GetResolvedCellSize`. */
+	FFixedPoint GetResolvedMaxStepHeight() const;
 };

@@ -1,9 +1,9 @@
 /**
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinFixedPointDetails.cpp
- * @brief   Split the FFixedPoint details UI into Integer + Fraction fields,
- *          matching the MakeFixedPointFromParts / BreakFixedPointToParts
- *          convention (int32 high bits, uint32 low bits as int32).
+ * @brief   Single decimal-float field for FFixedPoint properties. The
+ *          underlying storage is still 32.32 fixed-point — only the editor
+ *          presentation is via float.
  */
 
 #include "Details/SeinFixedPointDetails.h"
@@ -16,6 +16,14 @@
 
 #define LOCTEXT_NAMESPACE "SeinFixedPointDetails"
 
+namespace SeinFixedPointDetails_Private
+{
+	// Round-trip conversion factor — must match FFixedPoint::FromFloat /
+	// FFixedPoint::ToFloat. Hard-coded as a double literal so the customization
+	// stays self-contained.
+	constexpr double kFixedPointScale = 4294967296.0; // 2^32
+}
+
 TSharedRef<IPropertyTypeCustomization> FSeinFixedPointDetails::MakeInstance()
 {
 	return MakeShared<FSeinFixedPointDetails>();
@@ -26,8 +34,31 @@ void FSeinFixedPointDetails::CustomizeHeader(
 	FDetailWidgetRow& HeaderRow,
 	IPropertyTypeCustomizationUtils& CustomizationUtils)
 {
-	// FFixedPoint has a single int64 "Value" member we need to edit as two ints.
 	ValueHandle = PropertyHandle->GetChildHandle(TEXT("Value"));
+
+	// Honor ClampMin / ClampMax / UIMin / UIMax meta tags if the property
+	// declares them, so the float field clamps the same way an int32 property
+	// would. Missing metadata = unbounded.
+	TOptional<float> MinValue;
+	TOptional<float> MaxValue;
+	TOptional<float> UIMin;
+	TOptional<float> UIMax;
+	if (PropertyHandle->HasMetaData(TEXT("ClampMin")))
+	{
+		MinValue = FCString::Atof(*PropertyHandle->GetMetaData(TEXT("ClampMin")));
+	}
+	if (PropertyHandle->HasMetaData(TEXT("ClampMax")))
+	{
+		MaxValue = FCString::Atof(*PropertyHandle->GetMetaData(TEXT("ClampMax")));
+	}
+	if (PropertyHandle->HasMetaData(TEXT("UIMin")))
+	{
+		UIMin = FCString::Atof(*PropertyHandle->GetMetaData(TEXT("UIMin")));
+	}
+	if (PropertyHandle->HasMetaData(TEXT("UIMax")))
+	{
+		UIMax = FCString::Atof(*PropertyHandle->GetMetaData(TEXT("UIMax")));
+	}
 
 	HeaderRow
 	.NameContent()
@@ -35,53 +66,21 @@ void FSeinFixedPointDetails::CustomizeHeader(
 		PropertyHandle->CreatePropertyNameWidget()
 	]
 	.ValueContent()
-	.MinDesiredWidth(220.f)
-	.MaxDesiredWidth(420.f)
+	.MinDesiredWidth(120.f)
+	.MaxDesiredWidth(220.f)
 	[
-		SNew(SHorizontalBox)
-
-		// Integer label
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		.Padding(0.f, 0.f, 4.f, 0.f)
-		[
-			SNew(STextBlock)
-			.Text(LOCTEXT("IntLabel", "Integer"))
-			.ToolTipText(LOCTEXT("IntTooltip", "Integer part (high 32 bits)."))
-		]
-
-		// Integer entry (plain numeric field — no spin slider)
-		+ SHorizontalBox::Slot()
-		.FillWidth(1.f)
-		.Padding(0.f, 0.f, 8.f, 0.f)
-		[
-			SNew(SNumericEntryBox<int32>)
-			.Value(this, &FSeinFixedPointDetails::GetIntegerPart)
-			.OnValueCommitted(this, &FSeinFixedPointDetails::OnIntegerCommitted)
-		]
-
-		// Fraction label
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		.Padding(0.f, 0.f, 4.f, 0.f)
-		[
-			SNew(STextBlock)
-			.Text(LOCTEXT("FracLabel", "Fraction"))
-			.ToolTipText(LOCTEXT("FracTooltip",
-				"Fractional part (low 32 bits as signed int32). "
-				"0 = .0, 2147483648 = .5, 4294967295 = ~.999..."))
-		]
-
-		// Fraction entry
-		+ SHorizontalBox::Slot()
-		.FillWidth(1.f)
-		[
-			SNew(SNumericEntryBox<int32>)
-			.Value(this, &FSeinFixedPointDetails::GetFractionPart)
-			.OnValueCommitted(this, &FSeinFixedPointDetails::OnFractionCommitted)
-		]
+		SNew(SNumericEntryBox<float>)
+			.AllowSpin(true)
+			.Value(this, &FSeinFixedPointDetails::GetFloatValue)
+			.OnValueCommitted(this, &FSeinFixedPointDetails::OnFloatCommitted)
+			.MinValue(MinValue)
+			.MaxValue(MaxValue)
+			.MinSliderValue(UIMin.IsSet() ? UIMin : MinValue)
+			.MaxSliderValue(UIMax.IsSet() ? UIMax : MaxValue)
+			.ToolTipText(LOCTEXT("FixedPointTooltip",
+				"Decimal display of the underlying 32.32 fixed-point value. "
+				"Editing converts via FromFloat — for bit-exact authoring, "
+				"use Make Fixed Point From Parts in a Blueprint."))
 	];
 }
 
@@ -93,7 +92,7 @@ void FSeinFixedPointDetails::CustomizeChildren(
 	// No child rows — the Value field is fully represented in the header.
 }
 
-int64 FSeinFixedPointDetails::GetValue() const
+int64 FSeinFixedPointDetails::GetRawValue() const
 {
 	int64 Result = 0;
 	if (ValueHandle.IsValid())
@@ -103,7 +102,7 @@ int64 FSeinFixedPointDetails::GetValue() const
 	return Result;
 }
 
-void FSeinFixedPointDetails::SetValue(int64 NewVal) const
+void FSeinFixedPointDetails::SetRawValue(int64 NewVal) const
 {
 	if (ValueHandle.IsValid())
 	{
@@ -111,38 +110,19 @@ void FSeinFixedPointDetails::SetValue(int64 NewVal) const
 	}
 }
 
-TOptional<int32> FSeinFixedPointDetails::GetIntegerPart() const
+TOptional<float> FSeinFixedPointDetails::GetFloatValue() const
 {
-	return static_cast<int32>(GetValue() >> 32);
+	const int64 Raw = GetRawValue();
+	return static_cast<float>(static_cast<double>(Raw) / SeinFixedPointDetails_Private::kFixedPointScale);
 }
 
-TOptional<int32> FSeinFixedPointDetails::GetFractionPart() const
+void FSeinFixedPointDetails::OnFloatCommitted(float NewValue, ETextCommit::Type /*CommitType*/)
 {
-	return static_cast<int32>(static_cast<uint32>(GetValue() & 0xFFFFFFFF));
-}
-
-void FSeinFixedPointDetails::SetIntegerPart(int32 NewInt)
-{
-	const int64 Frac = static_cast<int64>(static_cast<uint32>(GetValue() & 0xFFFFFFFF));
-	const int64 NewVal = (static_cast<int64>(NewInt) << 32) | Frac;
-	SetValue(NewVal);
-}
-
-void FSeinFixedPointDetails::SetFractionPart(int32 NewFrac)
-{
-	const int64 IntHi = GetValue() & ~static_cast<int64>(0xFFFFFFFF);
-	const int64 NewVal = IntHi | static_cast<int64>(static_cast<uint32>(NewFrac));
-	SetValue(NewVal);
-}
-
-void FSeinFixedPointDetails::OnIntegerCommitted(int32 NewValue, ETextCommit::Type /*CommitType*/)
-{
-	SetIntegerPart(NewValue);
-}
-
-void FSeinFixedPointDetails::OnFractionCommitted(int32 NewValue, ETextCommit::Type /*CommitType*/)
-{
-	SetFractionPart(NewValue);
+	// FromFloat semantics: raw = (int64)(value * 2^32). Use double for the
+	// multiply so we don't lose precision for values like 0.1 that have
+	// inexact float representations.
+	const int64 Raw = static_cast<int64>(static_cast<double>(NewValue) * SeinFixedPointDetails_Private::kFixedPointScale);
+	SetRawValue(Raw);
 }
 
 #undef LOCTEXT_NAMESPACE

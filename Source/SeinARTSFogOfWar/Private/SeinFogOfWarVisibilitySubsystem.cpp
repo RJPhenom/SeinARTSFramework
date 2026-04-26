@@ -10,6 +10,7 @@
 #include "SeinFogOfWarTypes.h"
 #include "SeinARTSFogOfWarModule.h"
 #include "Components/SeinVisionData.h"
+#include "Components/SeinExtentsData.h"
 
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Simulation/SeinActorBridgeSubsystem.h"
@@ -70,16 +71,18 @@ void USeinFogOfWarVisibilitySubsystem::Tick(float DeltaTime)
 
 	const FSeinPlayerID Observer = UE::SeinARTSFogOfWar::ResolveLocalObserverPlayerID(World);
 
-	// Cache the FSeinVisionData storage once; we touch it per-entity for
-	// emission mask lookups.
+	// Cache the FSeinVisionData + FSeinExtentsData storages once; we touch
+	// them per-entity for emission mask lookups + always-visible blocker
+	// exemption.
 	const ISeinComponentStorage* VisionStorage = Sim->GetComponentStorageRaw(FSeinVisionData::StaticStruct());
+	const ISeinComponentStorage* ExtentsStorage = Sim->GetComponentStorageRaw(FSeinExtentsData::StaticStruct());
 
 	// Walk live entities. Bridge lookup is O(log N) per entity; per-frame
 	// cost is O(N) over live entities. 1000 entities × 60 FPS = 60k
 	// lookups/sec — comfortably under a millisecond on modern hardware.
 	const bool bDisableColl = bDisableCollisionWhenHidden;
 	Sim->GetEntityPool().ForEachEntity(
-		[this, Sim, Bridge, Fog, VisionStorage, Observer, bDisableColl](FSeinEntityHandle Handle, FSeinEntity& Entity)
+		[this, Sim, Bridge, Fog, VisionStorage, ExtentsStorage, Observer, bDisableColl](FSeinEntityHandle Handle, FSeinEntity& Entity)
 		{
 			ASeinActor* Actor = Bridge->GetActorForEntity(Handle);
 			if (!Actor) return; // abstract entity (broker/squad) or not yet bridged
@@ -89,6 +92,27 @@ void USeinFogOfWarVisibilitySubsystem::Tick(float DeltaTime)
 			// edge case where a unit hasn't stamped yet on tick 0.
 			const FSeinPlayerID OwnerPlayer = Sim->GetEntityOwner(Handle);
 			bool bVisible = (Observer.IsValid() && OwnerPlayer == Observer);
+
+			// Entities with FSeinExtentsData::bAlwaysVisible render regardless
+			// of fog (smoke clouds, persistent destructibles). Without this,
+			// smoke would hide itself: its stamps blockers at every cell in
+			// the cloud, LOS through the cloud fails, smoke cell is never
+			// stamped visible, and the visibility subsystem would hide the
+			// smoke actor. The render-side niagara is a physical world
+			// object — sight lines past it are blocked (algorithm handles
+			// that correctly), but the smoke itself stays rendered.
+			if (!bVisible && ExtentsStorage)
+			{
+				if (const void* Raw = ExtentsStorage->GetComponentRaw(Handle))
+				{
+					const FSeinExtentsData* Extents = static_cast<const FSeinExtentsData*>(Raw);
+					if (Extents && Extents->bAlwaysVisible)
+					{
+						bVisible = true;
+					}
+				}
+			}
+
 			if (!bVisible)
 			{
 				// Target's emission mask — which layer bits need to be
@@ -110,7 +134,10 @@ void USeinFogOfWarVisibilitySubsystem::Tick(float DeltaTime)
 				}
 				else
 				{
-					const uint8 ObserverBits = Fog->GetCellBitfield(Observer, Entity.Transform.GetLocation());
+					// Volumetric query — ORs cell bits across the entity's
+					// extents footprint. Single-point fallback when no
+					// FSeinExtentsData is present (props, projectiles).
+					const uint8 ObserverBits = Fog->GetEntityVisibleBits(Observer, *Sim, Handle);
 					bVisible = (ObserverBits & EmissionMask) != 0;
 				}
 			}

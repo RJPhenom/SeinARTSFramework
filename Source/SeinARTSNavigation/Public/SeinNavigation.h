@@ -29,6 +29,9 @@
 #include "UObject/Object.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
+#include "Types/Quat.h"
+#include "Types/Entity.h"
+#include "Stamping/SeinStampShape.h"
 #include "GameplayTagContainer.h"
 #include "SeinPathTypes.h"
 #include "SeinNavigation.generated.h"
@@ -36,6 +39,33 @@
 class UWorld;
 class ASeinNavVolume;
 class USeinNavigationAsset;
+
+/**
+ * One runtime path blocker = one FSeinStampShape posed at an entity. Multiple
+ * stamps on the same entity produce multiple FSeinDynamicBlocker entries,
+ * each carrying the same Owner so pathing self-exclusion works uniformly.
+ *
+ * Carrying the entity's transform (not just the stamp's world position) lets
+ * the consumer apply LocalOffset/YawOffset deterministically inside their own
+ * cell-iteration pass — the stamping system doesn't pre-compute world poses,
+ * so blocker re-stamping at FindPath time stays consistent.
+ *
+ * Owner identifies the blocking entity so per-FindPath self-exclusion can
+ * skip a unit's own blocker stamps — without it, a tank pathing from inside
+ * its own footprint would never find a path out.
+ */
+struct FSeinDynamicBlocker
+{
+	FSeinStampShape Shape;
+	FFixedVector EntityCenter;
+	FFixedQuaternion EntityRotation;
+	FSeinEntityHandle Owner;
+
+	/** Layer mask of agents this blocker affects. Pathfinding gates via
+	 *  intersection with the requesting agent's NavLayerMask. Default 0xFF
+	 *  (blocks everyone) if the owning entity didn't author a mask. */
+	uint8 BlockedNavLayerMask = 0xFF;
+};
 
 /** Fired when the nav's baked data mutates (bake finished, asset re-loaded,
  *  dynamic obstacle change). Cached plans must re-query on this signal. */
@@ -115,6 +145,16 @@ public:
 	 *  Default: false. Subclasses override. */
 	virtual bool IsPassable(const FFixedVector& WorldPos) const { return false; }
 
+	/** Refresh the runtime dynamic-blocker set. Called by the nav stamping
+	 *  system each PreTick from entities carrying FSeinExtentsData with
+	 *  bBlocksNav set. Subclasses store the list and consume it during
+	 *  FindPath (typically rebuilding a dynamic-blocked overlay per call
+	 *  so the requester's own blocker can be excluded + the agent's layer
+	 *  mask can filter out terrain that doesn't apply to this agent class).
+	 *  Default: no-op — subclasses without dynamic blocker support are
+	 *  unaffected. */
+	virtual void SetDynamicBlockers(const TArray<FSeinDynamicBlocker>& /*Blockers*/) {}
+
 	/** Snap an arbitrary world-space point to the nearest walkable location.
 	 *  Returns false if no walkable point is within the nav's reachable region.
 	 *  Default: passes the point through unchanged + returns HasRuntimeData(). */
@@ -179,6 +219,21 @@ public:
 		int32 CurrentWaypointIndex,
 		TArray<FVector>& OutRemainingCells,
 		TArray<FVector>& OutCurrentTargetCell,
+		float& OutHalfExtent) const {}
+
+	/** Collect cells currently stamped by dynamic nav blockers (tanks,
+	 *  vehicles, buildings under construction, etc.). Called per-frame from
+	 *  the debug ticker while `ShowFlags.Navigation` is on so blocker stamps
+	 *  appear live in the debug grid view. Emits one (Center, Color) pair
+	 *  per cell — Color resolves from the blocker's BlockedNavLayerMask
+	 *  against plugin-settings layer colors so the viz uniformly reflects
+	 *  what each blocker is gating, regardless of whether the layer-
+	 *  perspective filter is on. Subclasses with no dynamic-blocker support
+	 *  emit nothing (default). Same shipping-strip convention as the other
+	 *  debug collectors. */
+	virtual void CollectDebugBlockerCells(
+		TArray<FVector>& OutCenters,
+		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const {}
 
 	// ----------------------------------------------------------------------

@@ -3,7 +3,7 @@
  * @file    SeinCommandLogSubsystem.h
  * @brief   Debug subsystem that captures command transactions from the sim
  *          and provides data for the HUD overlay to render.
- *          Toggle: SeinARTS.Debug.CommandLog  |  Clear: SeinARTS.Debug.CommandLog.Clear
+ *          Toggle: Sein.Commands.ShowLog  |  Clear: Sein.Commands.ClearLog
  */
 
 #pragma once

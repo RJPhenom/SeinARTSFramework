@@ -39,19 +39,64 @@
 #include "Core/SeinPlayerID.h"
 #include "Types/FixedPoint.h"
 #include "Types/Vector.h"
+#include "Types/Quat.h"
 #include "SeinFogOfWarDefault.generated.h"
 
 class UWorld;
 class USeinFogOfWarDefaultAsset;
+struct FSeinVisionData;
+struct FSeinStampShape;
 
 /**
  * Per-observer visibility state. One per FSeinPlayerID; lazily created on
- * the owner's first stamp. Holds the EVNNNNNN bitfield the player sees —
- * V bits clear per tick, Explored (bit 0) is sticky for the match.
+ * the owner's first stamp.
+ *
+ *  - CellBitfield: the EVNNNNNN byte the player sees per cell. Bit 0
+ *    (Explored) is sticky for the match. Bits 1-7 are derived from the
+ *    refcount arrays — set when a bit's refcount goes 0→1, cleared when
+ *    it goes 1→0. Direct readers (LOS resolver, BPFL, debug) never see
+ *    refcounts; they just read this byte.
+ *  - RefCounts[bit]: how many sources currently stamp `bit` at each cell.
+ *    Indexed [1..7] (bit 0 unused — Explored is sticky, no refcount).
+ *    Lazily allocated per-bit: only bits actually stamped allocate their
+ *    W*H array. uint16 caps simultaneous overlap at 65535 sources/cell —
+ *    well above any realistic RTS scenario.
  */
 struct FSeinFogVisionGroup
 {
 	TArray<uint8> CellBitfield;
+	TArray<uint16> RefCounts[8];
+};
+
+/**
+ * Per-source memo of the last stamped state for delta-refcount updates.
+ * One per live FSeinEntityHandle that carries FSeinVisionData.
+ *
+ * Each tick: a source whose pose AND stamp set hash to the last-tick value
+ * skips entirely (the big perf win — most units don't move per tick). On
+ * change: we walk the stored Footprints to decrement old refcounts, then
+ * re-stamp every shape and accumulate footprints into the new arrays.
+ *
+ * Cache key is pose (WorldPos + Rotation, since shaped stamps care about
+ * orientation) + EyeHeight + a hash of the Stamps array (shape geometry
+ * + per-stamp layer mask + bEnabled). When any of those changes the source
+ * does the full rebuild.
+ */
+struct FSeinFogSourceState
+{
+	bool bValid = false;
+	FSeinPlayerID Owner;
+	FFixedVector WorldPos;
+	FFixedQuaternion Rotation;
+	FFixedPoint EyeHeight;
+	uint32 StampsHash = 0;
+
+	/** Cells this source last stamped per bit (1-7). Aggregated across all
+	 *  the source's stamps that emitted on that bit — a building with two
+	 *  separate cone stamps both on V folds both footprints into
+	 *  Footprints[1]. Empty for bits the source doesn't emit. Bit 0
+	 *  (Explored) not tracked — sticky. */
+	TArray<int32> Footprints[8];
 };
 
 UCLASS(BlueprintType, meta = (DisplayName = "Sein Fog Of War (Default)"))
@@ -109,6 +154,8 @@ public:
 	virtual void TickStamps(UWorld* World) override;
 
 	virtual uint8 GetCellBitfield(FSeinPlayerID Observer, const FFixedVector& WorldPos) const override;
+	virtual uint8 GetEntityVisibleBits(FSeinPlayerID Observer,
+		USeinWorldSubsystem& Sim, FSeinEntityHandle Target) const override;
 
 	virtual void CollectDebugCellQuads(FSeinPlayerID Observer,
 		int32 VisibleBitIndex,
@@ -142,7 +189,7 @@ private:
 
 	/** Dynamic blocker overlay — absolute world Z of any runtime-authored
 	 *  blocker (smoke grenades, destructibles in progress) at this cell.
-	 *  Rebuilt each `TickStamps` from entities carrying `FSeinVisionBlockerData`
+	 *  Rebuilt each `TickStamps` from entities carrying `FSeinExtentsData` with bBlocksFogOfWar set
 	 *  in sim component storage. Zero = no dynamic blocker this tick.
 	 *  LOS tests static + dynamic independently (per-blocker layer mask
 	 *  is honored separately — see IsCellOpaqueToEye). */
@@ -154,13 +201,27 @@ private:
 	 *  masks). */
 	TArray<uint8> DynamicBlockerLayerMask;
 
+	/** Fingerprint of last tick's dynamic-blocker entity set (XOR-folded
+	 *  per-entity hash of pos + height + radius + mask). Used by
+	 *  RebuildDynamicBlockers to detect smoke-changed-since-last-tick
+	 *  and force a full source-state invalidation when it does. */
+	uint32 LastDynamicBlockerHash = 0;
+
 	/** Per-observer visibility state. Keyed by FSeinPlayerID; lazily
 	 *  created on first stamp by that owner. Each group's CellBitfield is
-	 *  sized Width*Height; bit 0 is sticky Explored, bit 1 is Normal vis
-	 *  (cleared + re-stamped per tick), bits 2..7 reserved for custom
-	 *  layers. Neutral (player ID 0) is a legal key — useful for
-	 *  neutral-owned structures with cheap passive vision. */
+	 *  sized Width*Height; bit 0 is sticky Explored, bits 1..7 are
+	 *  refcount-managed (set on 0→1, cleared on 1→0). Neutral (player ID
+	 *  0) is a legal key — useful for neutral-owned structures with cheap
+	 *  passive vision. */
 	TMap<FSeinPlayerID, FSeinFogVisionGroup> VisionGroups;
+
+	/** Per-source last-stamped memo. Drives the delta-refcount path:
+	 *  TickStamps walks live entities, calls UpdateSourceStamp which
+	 *  short-circuits on identical inputs, otherwise removes the old
+	 *  footprint + re-stamps. Sources that vanish (entity destroyed,
+	 *  vision component removed) get their footprint torn down on the
+	 *  next tick. */
+	TMap<FSeinEntityHandle, FSeinFogSourceState> SourceStates;
 
 	// ----------------------------------------------------------------------
 	// Bake state
@@ -181,23 +242,52 @@ private:
 	 *  clear, Explored stays sticky). */
 	FSeinFogVisionGroup& GetOrCreateGroup(FSeinPlayerID PlayerID);
 
-	/** Stamp `StampBit` + Explored bits into every cell within `Radius`
-	 *  world units of `WorldPos` that the source can actually see —
-	 *  writing into `OwnerPlayer`'s VisionGroup. `StampBit` ∈ [1, 7]:
-	 *  1 = V (Normal), 2..7 = N0..N5 custom layers. Lampshade model:
-	 *  source eye Z = `WorldPos.Z + EyeHeight` (unit's actual sim Z,
-	 *  tracked by nav path — NOT the cell's baked GroundHeight, which
-	 *  stores the terrain beneath any blocker and would place a unit
-	 *  standing on a climbable platform below its walls). Terrain
-	 *  (GroundHeight) occludes layer-agnostically; static blockers only
-	 *  occlude if their `BlockerLayerMask` covers this layer's bit —
-	 *  which means, for example, smoke tagged to block Normal but not
-	 *  Thermal will let a Thermal stamp pass through. Per-target LOS uses
-	 *  integer Bresenham — O(R³) per source but symmetric, deterministic,
-	 *  and trivial to verify. Swap to Ford's symmetric shadowcast (O(R²))
-	 *  when radii grow large. */
-	void StampShadowcast(FSeinPlayerID OwnerPlayer, const FFixedVector& WorldPos,
-		FFixedPoint Radius, FFixedPoint EyeHeight, uint8 StampBit);
+	/** Per-tick entry — change-detect against the source's last stamp
+	 *  state. Identical inputs ⇒ no work. Changed inputs ⇒ remove the
+	 *  old footprint, compute the new one, apply refcount deltas. The
+	 *  stable-source path is the entire point of opt 2: most units don't
+	 *  cross cells per tick, so most UpdateSourceStamp calls return
+	 *  early after a few compares. */
+	void UpdateSourceStamp(FSeinEntityHandle Handle, const FSeinVisionData& VData,
+		const FFixedVector& WorldPos, const FFixedQuaternion& Rotation,
+		FSeinPlayerID Owner);
+
+	/** Tear down a source's footprints — decrement refcounts on every
+	 *  stamped cell, clear bits where refcount hits 0, erase the state
+	 *  entry. Called when an entity vanishes (destroyed, vision data
+	 *  stripped) and during re-stamps from UpdateSourceStamp. Explored
+	 *  bit is sticky and never decremented. */
+	void RemoveSourceStamp(FSeinEntityHandle Handle);
+
+	/** Compute one stamp × one layer-bit footprint and apply refcount deltas
+	 *  to `Group`. The stamp's geometry (radial / rect / cone) determines
+	 *  which cells are CANDIDATES; LOS from the stamp's apex to each
+	 *  candidate gates final visibility per cell.
+	 *
+	 *  Pose: the stamp's apex world position is `EntityWorldPos +
+	 *  Quat(EntityYaw)·LocalOffset` — so a building window cone casts from
+	 *  the window, not the building center. EntityRotation also drives
+	 *  rect/cone facing alongside the stamp's YawOffsetDegrees.
+	 *
+	 *  StampBit ∈ [1, 7]: 1 = V (Normal), 2..7 = N0..N5 custom layers.
+	 *  Lampshade model: eye Z = `EntityWorldPos.Z + EyeHeight` — the
+	 *  unit's actual sim Z (NOT the cell's baked GroundHeight, which
+	 *  stores terrain BENEATH any blocker; a unit standing on a climbable
+	 *  platform sees from its standing surface). Terrain occludes
+	 *  layer-agnostically; static / dynamic blockers only occlude when
+	 *  their LayerMask covers this stamp's bit — smoke that blocks Normal
+	 *  but not Thermal lets a Thermal stamp pass through.
+	 *
+	 *  Per-target LOS is integer Bresenham (O(R³) per stamp; deterministic
+	 *  and trivial to verify). Cells covered are appended to OutFootprint
+	 *  so the caller's source-state record knows what to undo on next
+	 *  re-stamp / removal. */
+	void StampLayerFootprint(FSeinFogVisionGroup& Group,
+		const FSeinStampShape& Shape,
+		const FFixedVector& EntityWorldPos,
+		const FFixedQuaternion& EntityRotation,
+		FFixedPoint EyeHeight, uint8 StampBit,
+		TArray<int32>& OutFootprint);
 
 	/** Integer-Bresenham LOS from (X0,Y0,EyeZ) to (X1,Y1,TargetZ). At each
 	 *  intermediate cell the ray's Z is linearly interpolated between
@@ -222,19 +312,32 @@ private:
 	bool IsCellOpaqueToEye(int32 X, int32 Y, FFixedPoint EyeZ, uint8 StampBitMask) const;
 
 	/** Clear the dynamic blocker overlay, then walk every entity carrying
-	 *  `FSeinVisionBlockerData` and disc-stamp its contribution into the
+	 *  `FSeinExtentsData` (with bBlocksFogOfWar) and stamp its shape contribution into the
 	 *  overlay. Runs at the top of TickStamps so the vision passes below
-	 *  see the freshest occlusion state. */
-	void RebuildDynamicBlockers(UWorld* World);
+	 *  see the freshest occlusion state. Returns true if the overlay's
+	 *  contents differ from last tick — TickStamps uses that to invalidate
+	 *  every source's stable-fast-path cache (otherwise a smoke grenade
+	 *  appearing on a sightline wouldn't update LOS until the source
+	 *  itself moved or changed props). */
+	bool RebuildDynamicBlockers(UWorld* World);
 
-	/** Stamp a disc of effective height + layer mask into the dynamic
-	 *  blocker overlay. `Height` is blocker height above ground; at each
-	 *  covered cell the stored value is `GroundHeight[Idx] + Height`
-	 *  (absolute world Z of the blocker top, matching the static array
-	 *  convention). Multiple overlapping disc stamps take the taller
-	 *  height + OR'd layer mask per cell. */
-	void StampDynamicBlockerDisc(const FFixedVector& WorldPos,
-		FFixedPoint Radius, FFixedPoint HeightAboveGround, uint8 LayerMask);
+	/** Walk every per-bit footprint stored on `State`, decrement the
+	 *  matching refcount in `Group`, clear bits where refcount hits 0,
+	 *  and reset the footprint arrays. Explored bit is sticky and never
+	 *  touched. Used by RemoveSourceStamp + UpdateSourceStamp's
+	 *  "old-then-new" path. */
+	void DecrementFootprintsForState(FSeinFogSourceState& State, FSeinFogVisionGroup& Group);
+
+	/** Stamp one shape's footprint of effective height + layer mask into
+	 *  the dynamic blocker overlay. `HeightAboveGround` applies uniformly
+	 *  across the shape's cells; at each cell the stored value is
+	 *  `GroundHeight[Idx] + HeightAboveGround` (absolute world Z, matching
+	 *  the static array convention). Multiple overlapping stamps take the
+	 *  taller height + OR'd layer mask per cell. */
+	void StampDynamicBlockerShape(const FSeinStampShape& Shape,
+		const FFixedVector& EntityWorldPos,
+		const FFixedQuaternion& EntityRotation,
+		FFixedPoint HeightAboveGround, uint8 LayerMask);
 
 	/** Hoist baked asset fields into runtime arrays. Called from LoadFromAsset
 	 *  when the asset is a USeinFogOfWarDefaultAsset. */

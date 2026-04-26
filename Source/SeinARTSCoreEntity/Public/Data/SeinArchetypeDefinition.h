@@ -103,6 +103,33 @@ public:
 		meta = (EditCondition = "bIsResearch"))
 	TSubclassOf<USeinEffect> GrantedTechEffect;
 
+	// ========== Navigation ==========
+
+	/** If true, this archetype's render-side primitives (meshes, colliders) get
+	 *  rasterized into the static nav bake — units can't path through them.
+	 *  Default `true` for static archetypes (buildings, walls, props). The
+	 *  baker also auto-skips any archetype whose CDO carries a
+	 *  `USeinMovementComponent`, so mobile units (vehicles, infantry) don't
+	 *  carve themselves into the static nav even when this flag is left on.
+	 *  Set to `false` to override that — e.g. a stationary turret that you do
+	 *  NOT want baked into the nav, or a building you want walkable through. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Navigation")
+	bool bBakesIntoNav = true;
+
+	/** If true, this archetype's render-side primitives bake into the static
+	 *  fog-of-war grid — walls, buildings, and props occlude vision. Default
+	 *  `true` for static archetypes. Mirror of `bBakesIntoNav` for the FoW
+	 *  pipeline; intentionally a separate flag because the use cases diverge:
+	 *    - Fence: pathable (`bBakesIntoNav=false`) but vision-blocking
+	 *      (`bBakesIntoFogOfWar=true`).
+	 *    - Glass wall: occlude paths (`bBakesIntoNav=true`) but transparent
+	 *      to sight (`bBakesIntoFogOfWar=false`).
+	 *  Like the nav baker, the FoW baker auto-skips archetypes whose CDO
+	 *  carries a `USeinMovementComponent` regardless of this flag — mobile
+	 *  units shouldn't carve their pose-at-bake-time into static FoW. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "SeinARTS|Archetype|Vision")
+	bool bBakesIntoFogOfWar = true;
+
 	// Command-context resolution moved to FSeinAbilityData per DESIGN §7 Q9.
 	// Designers author DefaultCommands + FallbackAbilityTag on the abilities
 	// component; the archetype no longer carries input-mapping concerns.

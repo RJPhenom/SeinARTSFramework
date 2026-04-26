@@ -24,6 +24,30 @@ void ASeinActor::BeginPlay()
 	Super::BeginPlay();
 }
 
+#if WITH_EDITOR
+void ASeinActor::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	// Snapshot the actor's world location into a deterministic FFixedVector
+	// at edit time. The conversion runs once in the editor process; the
+	// result is serialized to the .umap. At runtime, all clients (PC, Mac
+	// Apple Silicon, mobile, console) read the same int64 bits from disk,
+	// no FromFloat conversion in the chain. Cross-arch lockstep safe.
+	//
+	// `bFinished` is false during a drag, true on release. Snapshotting on
+	// every intermediate doesn't hurt (cheap), and ensures Ctrl+Z / undo
+	// also lands a fresh snapshot.
+	PlacedSimLocation = FFixedVector::FromVector(GetActorLocation());
+	bSimLocationBaked = true;
+
+	if (bFinished)
+	{
+		MarkPackageDirty();
+	}
+}
+#endif
+
 void ASeinActor::InitializeWithEntity(FSeinEntityHandle Handle)
 {
 	if (!ActorBridge)

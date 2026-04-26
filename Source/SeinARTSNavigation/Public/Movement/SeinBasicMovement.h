@@ -22,12 +22,5 @@ class SEINARTSNAVIGATION_API USeinBasicMovement : public USeinLocomotion
 	GENERATED_BODY()
 
 public:
-	virtual bool Tick(
-		FSeinEntity& Entity,
-		const FSeinMovementData& MoveData,
-		const FSeinPath& Path,
-		int32& CurrentWaypointIndex,
-		FFixedPoint AcceptanceRadiusSq,
-		FFixedPoint DeltaTime,
-		USeinNavigation* Nav) override;
+	virtual bool Tick(const FSeinLocomotionContext& Ctx) override;
 };

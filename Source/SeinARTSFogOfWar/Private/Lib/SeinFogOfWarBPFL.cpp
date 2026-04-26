@@ -87,8 +87,7 @@ bool USeinFogOfWarBPFL::SeinIsEntityVisible(const UObject* WorldContextObject,
 
 	USeinWorldSubsystem* Sim = World->GetSubsystem<USeinWorldSubsystem>();
 	if (!Sim) return false;
-	const FSeinEntity* Entity = Sim->GetEntity(Target);
-	if (!Entity) return false;
+	if (!Sim->GetEntity(Target)) return false;
 
 	USeinFogOfWar* Fog = USeinFogOfWarSubsystem::GetFogOfWarForWorld(WorldContextObject);
 	if (!Fog) return false;
@@ -109,7 +108,12 @@ bool USeinFogOfWarBPFL::SeinIsEntityVisible(const UObject* WorldContextObject,
 	}
 	if (EmissionMask == 0) return false; // entity authored as never-visible
 
-	const uint8 ObserverBits = Fog->GetCellBitfield(Observer, Entity->Transform.GetLocation());
+	// Volumetric query — ORs cell bits across the target's extents. Falls
+	// back to single-point at center when the target has no extents
+	// component. Matters for big-footprint targets (tanks, buildings)
+	// whose center may sit one cell away from the nearest visible cell
+	// even when the entity is plainly in view.
+	const uint8 ObserverBits = Fog->GetEntityVisibleBits(Observer, *Sim, Target);
 	return (ObserverBits & EmissionMask) != 0;
 }
 

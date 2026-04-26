@@ -8,7 +8,7 @@
  *          snapshot cell geometry, then emits a single batched mesh per view
  *          via `FDynamicMeshBuilder`. The proxy's `GetViewRelevance` consults
  *          `FSceneView::EngineShowFlags.Navigation` so UE's 'P' key + the
- *          `SeinARTS.Debug.ShowNavigation` console command drive visibility
+ *          `Sein.Nav.Show` console command drive visibility
  *          without any per-frame cost when off.
  *
  *          Subscribes to `USeinNavigation::OnNavigationMutated` — bake

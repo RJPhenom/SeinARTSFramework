@@ -172,10 +172,16 @@ void FSeinARTSEditorStyle::Initialize()
 	{
 		FSlateStyleSet* AppStyle = const_cast<FSlateStyleSet*>(static_cast<const FSlateStyleSet*>(AppStyleBase));
 		// SVG brushes auto-tint to the theme's foreground colour — matches how UE's
-		// own Navigation / Collision / etc. show-flag icons render.
+		// own Navigation / Collision / etc. show-flag icons render. Flag name in the
+		// style key matches the UE-internal ShowFlag identifier (the same string the
+		// custom show flag is registered with via TCustomShowFlag), prefixed with
+		// "ShowFlagsMenu." per FShowFlagMenuCommands::GetShowFlagIcon.
 		AppStyle->Set(
 			"ShowFlagsMenu.FogOfWar",
-			new FSlateVectorImageBrush(BrandKitDir / TEXT("SeinGrayIcon16.svg"), FVector2D(16.0f, 16.0f)));
+			new FSlateVectorImageBrush(BrandKitDir / TEXT("SeinFogOfWarViewFlag.svg"), FVector2D(16.0f, 16.0f)));
+		AppStyle->Set(
+			"ShowFlagsMenu.SeinSteeringVectors",
+			new FSlateVectorImageBrush(BrandKitDir / TEXT("SeinSteeringViewFlag.svg"), FVector2D(16.0f, 16.0f)));
 	}
 
 	// Load PNG files as UTexture2D for thumbnail renderers (FCanvas can't use Slate file brushes)
