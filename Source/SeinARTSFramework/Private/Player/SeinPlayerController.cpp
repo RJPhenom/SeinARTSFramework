@@ -16,6 +16,8 @@
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Input/SeinCommand.h"
 #include "Tags/SeinARTSGameplayTags.h"
+#include "SeinNetSubsystem.h"
+#include "Net/UnrealNetwork.h"
 #include "StructUtils/InstancedStruct.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -38,6 +40,14 @@ ASeinPlayerController::ASeinPlayerController()
 	{
 		InputConfig = DefaultConfig.Object;
 	}
+}
+
+void ASeinPlayerController::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	// Owner-only: this PC's slot only needs to be known to the controlling
+	// client (other clients don't need to know what slot remote players got).
+	DOREPLIFETIME_CONDITION(ASeinPlayerController, SeinPlayerID, COND_OwnerOnly);
 }
 
 void ASeinPlayerController::BeginPlay()
@@ -482,11 +492,23 @@ void ASeinPlayerController::OnPingPressed(const FInputActionValue& Value)
 		? HitActor->GetEntityHandle()
 		: FSeinEntityHandle::Invalid();
 
-	// Enqueue the sim command
+	// Enqueue the sim command. Routed through USeinNetSubsystem so it crosses
+	// the lockstep wire to every connected client (Standalone bypass keeps
+	// single-player zero-overhead). The server stamps the authoritative
+	// PlayerID from the source relay's slot, so we don't strictly need to
+	// fill SeinPlayerID, but we do for the local-feedback-before-network case.
 	const FFixedVector FixedLocation = FFixedVector::FromVector(PingLocation);
 	FSeinCommand Cmd = FSeinCommand::MakePingCommand(SeinPlayerID, FixedLocation, PingTarget);
 	Cmd.Tick = Subsystem->GetCurrentTick();
-	Subsystem->EnqueueCommand(Cmd);
+
+	if (USeinNetSubsystem* Net = GetGameInstance() ? GetGameInstance()->GetSubsystem<USeinNetSubsystem>() : nullptr)
+	{
+		Net->SubmitLocalCommand(Cmd);
+	}
+	else
+	{
+		Subsystem->EnqueueCommand(Cmd);
+	}
 
 	// --- Immediate visual feedback (render-side only) ---
 	UWorld* World = GetWorld();
@@ -989,7 +1011,18 @@ void ASeinPlayerController::IssueSmartCommandEx(
 	BrokerCmd.Payload = FInstancedStruct::Make(Payload);
 	BrokerCmd.Tick = Subsystem->GetCurrentTick();
 
-	Subsystem->EnqueueCommand(BrokerCmd);
+	// Route through the lockstep wire — every connected client must see this
+	// broker order or their sims diverge. Standalone bypass goes direct to
+	// the world subsystem; networked path crosses the wire and the server
+	// stamps the authoritative slot from the source relay.
+	if (USeinNetSubsystem* Net = GetGameInstance() ? GetGameInstance()->GetSubsystem<USeinNetSubsystem>() : nullptr)
+	{
+		Net->SubmitLocalCommand(BrokerCmd);
+	}
+	else
+	{
+		Subsystem->EnqueueCommand(BrokerCmd);
+	}
 
 	// OnCommandIssued broadcasts a representative ability tag for VFX/audio —
 	// the sim-side resolver picks the actual per-member ability, but UI wants
@@ -1224,7 +1257,24 @@ void ASeinPlayerController::LogCameraUpdate()
 	Cmd.AuxLocation = FFixedVector(FFixedPoint::FromFloat(Pitch), FFixedPoint::Zero, FFixedPoint::Zero);
 	Cmd.Tick = CurrentTick;
 
-	Subsystem->EnqueueCommand(Cmd);
+	// Route through the lockstep wire — observer commands (CameraUpdate /
+	// SelectionChanged) are sim-skip per `IsObserverCommand()` so they don't
+	// affect state hash, but propagating them through the per-turn stream
+	// powers two features for free: live spectator/POV-switch (CoH-style
+	// 2-minute-delay observer mode reads the same wire) and complete
+	// replays (server's ReplayWriter naturally captures all observer
+	// streams alongside sim-mutating commands). Bandwidth cost is small —
+	// CameraUpdate is throttled to CameraLogInterval ticks + skip-if-static,
+	// SelectionChanged only fires on actual change. Standalone bypass keeps
+	// single-player zero-overhead.
+	if (USeinNetSubsystem* Net = GetGameInstance() ? GetGameInstance()->GetSubsystem<USeinNetSubsystem>() : nullptr)
+	{
+		Net->SubmitLocalCommand(Cmd);
+	}
+	else
+	{
+		Subsystem->EnqueueCommand(Cmd);
+	}
 
 	LastCameraLogTick = CurrentTick;
 	LastLoggedCameraPos = PivotPos;
@@ -1256,7 +1306,16 @@ void ASeinPlayerController::LogSelectionChanged()
 	}
 
 	const FSeinCommand Cmd = FSeinCommand::MakeSelectionChangedCommand(SeinPlayerID, Handles, ActiveFocusIndex);
-	Subsystem->EnqueueCommand(Cmd);
+	// Route through the wire same as CameraUpdate (see comment above) —
+	// powers spectator-mode selection-tracking + replay POV-switching.
+	if (USeinNetSubsystem* Net = GetGameInstance() ? GetGameInstance()->GetSubsystem<USeinNetSubsystem>() : nullptr)
+	{
+		Net->SubmitLocalCommand(Cmd);
+	}
+	else
+	{
+		Subsystem->EnqueueCommand(Cmd);
+	}
 }
 
 void ASeinPlayerController::NotifySelectionUpdated()

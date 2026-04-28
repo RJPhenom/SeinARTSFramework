@@ -70,8 +70,17 @@ struct SEINARTSCOREENTITY_API FSeinActiveEffect
 FORCEINLINE uint32 GetTypeHash(const FSeinActiveEffect& Effect)
 {
 	uint32 Hash = GetTypeHash(Effect.EffectInstanceID);
-	Hash = HashCombine(Hash, GetTypeHash(Effect.EffectClass.Get()));
+	// Hash the class by FName, NOT by pointer. CDO addresses differ between
+	// processes (server's USeinEffect_FooBar* CDO has a different address
+	// than each client's), so pointer-based hashing produced different
+	// values on every machine for the same effect — silent state-hash
+	// divergence. FName is content-based and stable across processes.
+	const UClass* Cls = Effect.EffectClass.Get();
+	Hash = HashCombine(Hash, Cls ? GetTypeHash(Cls->GetFName()) : 0u);
 	Hash = HashCombine(Hash, GetTypeHash(Effect.RemainingDuration));
+	// TimeSinceLastPeriodic is sim-state-relevant (drives periodic OnTick
+	// firing) — must be hashed or periodic-effect drift goes undetected.
+	Hash = HashCombine(Hash, GetTypeHash(Effect.TimeSinceLastPeriodic));
 	Hash = HashCombine(Hash, GetTypeHash(Effect.CurrentStacks));
 	Hash = HashCombine(Hash, GetTypeHash(Effect.Source));
 	Hash = HashCombine(Hash, GetTypeHash(Effect.Target));

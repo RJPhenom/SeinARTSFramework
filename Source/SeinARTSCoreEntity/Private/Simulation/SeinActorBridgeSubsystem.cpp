@@ -36,22 +36,43 @@ void USeinActorBridgeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
 
+	if (!bAutoRegisterOnBeginPlay)
+	{
+		UE_LOG(LogSeinBridge, Log,
+			TEXT("OnWorldBeginPlay: auto-register disabled (a match-flow orchestrator owns the bootstrap order)."));
+		return;
+	}
+
+	RegisterAllPlacedActors(InWorld);
+}
+
+void USeinActorBridgeSubsystem::RegisterAllPlacedActors(UWorld& InWorld)
+{
 	if (!SimSubsystem.IsValid()) return;
 
-	// Auto-register every pre-placed ASeinActor instance as a sim entity.
-	// Without this hook, designers placing a SeinActor in the level get a
-	// render-only actor — no sim presence, no component data injection,
-	// no fog blocker / vision / abilities. Walking the world's actor list
-	// once at begin-play closes that gap: every placed SeinActor gets a
-	// sim entity bound to its level transform, with all its
-	// USeinActorComponents' payloads injected into component storage.
-	int32 NumRegistered = 0;
-	int32 NumSkipped = 0;
+	// Collect every ASeinActor in the level, then sort by actor name BEFORE
+	// iterating. This is the determinism gate for placed-actor entity-ID
+	// assignment: TActorIterator's natural order is implementation-defined
+	// and varies between processes, so each PIE window (server + clients)
+	// would otherwise hand out different IDs to the same level actors and
+	// lockstep would diverge from frame zero. Lexicographic FString sort by
+	// AActor::GetName() is stable across processes (the name is the actor's
+	// in-level label, identical on every machine for the same level).
+	TArray<ASeinActor*> Sorted;
+	Sorted.Reserve(64);
 	for (TActorIterator<ASeinActor> It(&InWorld); It; ++It)
 	{
-		ASeinActor* PlacedActor = *It;
-		if (!PlacedActor) continue;
+		if (ASeinActor* A = *It) Sorted.Add(A);
+	}
+	Sorted.Sort([](const ASeinActor& A, const ASeinActor& B)
+	{
+		return A.GetName() < B.GetName();
+	});
 
+	int32 NumRegistered = 0;
+	int32 NumSkipped = 0;
+	for (ASeinActor* PlacedActor : Sorted)
+	{
 		// Skip actors already linked to an entity. Includes the case where
 		// the bridge's own SpawnActorForEntity created the actor in
 		// response to a runtime SpawnEntity — that path stamps the entity
@@ -82,7 +103,7 @@ void USeinActorBridgeSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	}
 
 	UE_LOG(LogSeinBridge, Log,
-		TEXT("OnWorldBeginPlay: auto-registered %d placed ASeinActor(s); %d already had entities"),
+		TEXT("RegisterAllPlacedActors: stable-sorted, registered %d placed ASeinActor(s); %d already had entities."),
 		NumRegistered, NumSkipped);
 }
 

@@ -16,8 +16,28 @@
 #include "Types/FixedPoint.h"
 #include "Types/Transform.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
+#include "SeinNetSubsystem.h"
+
+namespace
+{
+	// True when a networked lockstep session will start the sim (host's relay
+	// arrives → NotifyLocalSlotAssigned → StartSimulation, with the gate
+	// already bound). In that case GameMode auto-start MUST defer, otherwise
+	// the sim runs ungated for several frames before the gate engages and the
+	// initial heartbeats (turns 0..N) are silently skipped — gate then stalls
+	// forever on a turn no one ever submitted for.
+	static bool ShouldDeferAutoStartToNetwork(const UWorld* World)
+	{
+		if (!World) return false;
+		const UGameInstance* GI = World->GetGameInstance();
+		if (!GI) return false;
+		const USeinNetSubsystem* Net = GI->GetSubsystem<USeinNetSubsystem>();
+		return Net && Net->IsNetworkingActive();
+	}
+}
 
 ASeinGameMode::ASeinGameMode()
 {
@@ -148,11 +168,21 @@ void ASeinGameMode::PreRegisterMatchSlots()
 
 	// Match is set up — start the sim now rather than waiting for the first
 	// human controller. Lets AI-only / spectator-load scenarios run.
+	// EXCEPT: when networked, defer to USeinNetSubsystem so the sim starts
+	// AFTER the gate is bound (otherwise the first ungated frames mute the
+	// initial heartbeats and the lockstep gate stalls forever).
 	if (bAutoStartSimulation && !bSimulationStarted)
 	{
-		Subsystem->StartSimulation();
-		bSimulationStarted = true;
-		UE_LOG(LogTemp, Log, TEXT("SeinGameMode: Simulation auto-started after slot pre-registration"));
+		if (ShouldDeferAutoStartToNetwork(World))
+		{
+			UE_LOG(LogTemp, Log, TEXT("SeinGameMode: Networked session — deferring sim auto-start to USeinNetSubsystem (slot-assignment hook)."));
+		}
+		else
+		{
+			Subsystem->StartSimulation();
+			bSimulationStarted = true;
+			UE_LOG(LogTemp, Log, TEXT("SeinGameMode: Simulation auto-started after slot pre-registration"));
+		}
 	}
 }
 
@@ -283,6 +313,21 @@ void ASeinGameMode::HandleStartingNewPlayer_Implementation(APlayerController* Ne
 						UE_LOG(LogTemp, Log,
 							TEXT("SeinGameMode: Bound %s to pre-registered slot %d (%s)"),
 							*SeinPC->GetName(), SeinStart->PlayerSlot, *SlotPlayerID.ToString());
+
+						// Phase 3a: GameMode is the single source of truth for slot
+						// binding. Tell USeinNetSubsystem to spawn the lockstep relay
+						// for this PC NOW with the slot we just chose, so
+						// `Relay->AssignedPlayerID == SeinPC->SeinPlayerID` by
+						// construction. The old NetSub auto-spawn (sequential
+						// NextSlotToAssign on PostLogin) could disagree with this
+						// binding when connect order ≠ slot order.
+						if (UGameInstance* GI = GetGameInstance())
+						{
+							if (USeinNetSubsystem* Net = GI->GetSubsystem<USeinNetSubsystem>())
+							{
+								Net->ServerSpawnRelayForController(SeinPC, SlotPlayerID);
+							}
+						}
 						return;
 					}
 				}
@@ -311,6 +356,17 @@ void ASeinGameMode::HandleStartingNewPlayer_Implementation(APlayerController* Ne
 
 	// Assign to controller
 	SeinPC->SeinPlayerID = NewPlayerID;
+
+	// Phase 3a (legacy/fallback path): same single-source-of-truth wiring
+	// as the manifest path above — tell NetSubsystem to spawn the relay
+	// for this PC with the slot we just chose.
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		if (USeinNetSubsystem* Net = GI->GetSubsystem<USeinNetSubsystem>())
+		{
+			Net->ServerSpawnRelayForController(SeinPC, NewPlayerID);
+		}
+	}
 
 	// Determine faction and team from the player start (if it's a SeinPlayerStart)
 	FSeinFactionID FactionForPlayer = DefaultFactionID;
@@ -347,10 +403,16 @@ void ASeinGameMode::HandleStartingNewPlayer_Implementation(APlayerController* Ne
 		SpawnStartEntity(SeinStart, NewPlayerID);
 	}
 
-	// Auto-start simulation on first player
+	// Auto-start simulation on first player. Same defer-to-network rule as
+	// PreRegisterMatchSlots above: networked sessions let NetSubsystem start
+	// the sim once the local slot is assigned, so the gate is bound first.
 	if (bAutoStartSimulation && !bSimulationStarted)
 	{
-		if (USeinWorldSubsystem* Subsystem = GetWorld()->GetSubsystem<USeinWorldSubsystem>())
+		if (ShouldDeferAutoStartToNetwork(GetWorld()))
+		{
+			UE_LOG(LogTemp, Log, TEXT("SeinGameMode: Networked session — deferring auto-start to USeinNetSubsystem."));
+		}
+		else if (USeinWorldSubsystem* Subsystem = GetWorld()->GetSubsystem<USeinWorldSubsystem>())
 		{
 			Subsystem->StartSimulation();
 			bSimulationStarted = true;

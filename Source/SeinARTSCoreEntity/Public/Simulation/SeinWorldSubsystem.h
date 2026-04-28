@@ -98,6 +98,32 @@ DECLARE_DELEGATE_OneParam(FSeinSpatialGridRegister,   FSeinEntityHandle /*Entity
 DECLARE_DELEGATE_OneParam(FSeinSpatialGridUnregister, FSeinEntityHandle /*Entity*/);
 
 /**
+ * Lockstep gate (Phase 2b). Bound by USeinNetSubsystem when the local slot
+ * is assigned. Sim consults at every turn boundary before advancing into the
+ * first tick of a new turn — if the network turn for that boundary hasn't
+ * been received yet, the sim stalls (the wall-clock accumulator is held;
+ * frame retries next pump).
+ *
+ *   `Turn`     The sim turn we're about to enter (= NextTick / TicksPerTurn).
+ *   Returns    true  → assembled turn is in NetSubsystem.ReceivedTurns,
+ *                      sim may proceed (Notifier follows to drain it).
+ *              false → no data yet, sim stalls.
+ *
+ * Unbound resolver = no gating (Standalone, Phase 0/2a behavior).
+ */
+DECLARE_DELEGATE_RetVal_OneParam(bool, FSeinTurnReadyResolver, int32 /*Turn*/);
+
+/**
+ * Lockstep drain (Phase 2b). Paired with FSeinTurnReadyResolver: once the
+ * resolver greenlights a turn, the sim invokes the notifier so NetSubsystem
+ * can drain the assembled turn's commands into PendingCommands. Fires once
+ * per turn boundary, just before the first tick of the new turn executes.
+ *
+ * Unbound notifier = nothing to drain (Standalone, single-player).
+ */
+DECLARE_DELEGATE_OneParam(FSeinTurnConsumeNotifier, int32 /*Turn*/);
+
+/**
  * World subsystem that owns and ticks the deterministic simulation.
  * Manages entity pool, component storage, phase-based tick loop,
  * player states, command processing, and visual event dispatch.
@@ -257,6 +283,14 @@ public:
 	 *  enter/exit transitions for Hidden-visibility containers. Unbound = no-op. */
 	FSeinSpatialGridRegister   SpatialGridRegisterCallback;
 	FSeinSpatialGridUnregister SpatialGridUnregisterCallback;
+
+	/** Lockstep gate (Phase 2b). USeinNetSubsystem binds these once the local
+	 *  slot is assigned. Sim's TickSimulation consults the resolver at every
+	 *  turn boundary; on green, fires the notifier to drain that turn's
+	 *  assembled commands into PendingCommands. Unbound = no gating
+	 *  (Standalone or networking disabled). */
+	FSeinTurnReadyResolver     TurnReadyResolver;
+	FSeinTurnConsumeNotifier   TurnConsumeNotifier;
 
 	// ========== Entity Management ==========
 

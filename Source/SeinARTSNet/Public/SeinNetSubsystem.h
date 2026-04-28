@@ -32,6 +32,7 @@ class ASeinNetRelay;
 class APlayerController;
 class AGameModeBase;
 class AController;
+class USeinReplayWriter;
 
 UCLASS()
 class SEINARTSNET_API USeinNetSubsystem : public UGameInstanceSubsystem
@@ -43,18 +44,28 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	/** Locally captured command entry point. In Standalone (or when networking
-	 *  is disabled in settings) the command bypasses the relay and goes
-	 *  directly into USeinWorldSubsystem's command buffer — single-player is
-	 *  zero-overhead. In a networked session, forwards to the local relay's
-	 *  Server_SubmitCommands; the server's AssignedPlayerID stamps the sender,
-	 *  so callers don't need to fill `Command.PlayerID` (server overwrites). */
+	/** Player-input entry point. Stamps an automatically-computed TurnId
+	 *  derived from the current sim tick + InputDelayTurns. Caller doesn't
+	 *  need to think about turns — just hand it the command.
+	 *
+	 *  In Standalone (or when networking is disabled in settings) the command
+	 *  bypasses the relay and goes directly into USeinWorldSubsystem's
+	 *  command buffer — single-player is zero-overhead. In a networked
+	 *  session, forwards to the local relay's Server_SubmitCommands; the
+	 *  server's AssignedPlayerID overrides the command's PlayerID before
+	 *  fan-out, so callers don't need to fill it correctly (server will). */
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Network")
-	void SubmitLocalCommand(int32 TurnId, const FSeinCommand& Command);
+	void SubmitLocalCommand(const FSeinCommand& Command);
 
-	/** Batched variant — useful when multiple commands are captured between
-	 *  turn boundaries. Same gating as SubmitLocalCommand. */
-	void SubmitLocalCommands(int32 TurnId, const TArray<FSeinCommand>& Commands);
+	/** Batched variant of SubmitLocalCommand. */
+	void SubmitLocalCommands(const TArray<FSeinCommand>& Commands);
+
+	/** Explicit-turn variants. Used by the Sein.Net.TestPing console command
+	 *  to drive deterministic turn IDs for the gate test, and by future
+	 *  callers that already know the target turn. Player-input handlers should
+	 *  use the no-TurnId overload instead. */
+	void SubmitLocalCommandAtTurn(int32 TurnId, const FSeinCommand& Command);
+	void SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSeinCommand>& Commands);
 
 	/** Local player's slot, valid after the relay's AssignedPlayerID OnRep
 	 *  fires (a few frames after PIE Play depending on replication latency).
@@ -71,9 +82,45 @@ public:
 	 *  per-turn completeness gate. */
 	int32 GetActiveSlotCount() const { return RelayToSlot.Num(); }
 
+	/** Server-only: spawn the lockstep relay for a given PlayerController
+	 *  with the slot already chosen by the match-flow / lobby authority
+	 *  (typically `ASeinGameMode::HandleStartingNewPlayer` after it sets
+	 *  `SeinPC->SeinPlayerID`). This REPLACES the old auto-spawn-on-
+	 *  PostLogin path, which independently sequenced slots via
+	 *  NextSlotToAssign and could disagree with GameMode's match-settings-
+	 *  driven binding when controllers connected in non-slot order — a
+	 *  silent dual-source-of-truth bug.
+	 *
+	 *  Idempotent: if the PC already has a relay (e.g. seamless travel,
+	 *  re-bind), the existing relay is re-stamped with the new slot
+	 *  instead of double-spawning. */
+	void ServerSpawnRelayForController(APlayerController* PC, FSeinPlayerID Slot);
+
 	/** Called by ASeinNetRelay::OnRep_AssignedPlayerID on the owning client
-	 *  when the slot + seed arrive. */
+	 *  when the slot + seed arrive. Binds the lockstep gate hooks but does
+	 *  NOT start the sim — sim start is gated on Client_StartSession (server)
+	 *  / StartLockstepSession (manual / lobby trigger). */
 	void NotifyLocalSlotAssigned(ASeinNetRelay* Relay, FSeinPlayerID Slot, int64 Seed);
+
+	/** Server-only: kick off the lockstep session. Fires Client_StartSession
+	 *  on every connected relay (so all peers' sims start simultaneously, at
+	 *  tick 0, with the gate engaged from the first frame) and starts the
+	 *  server's own sim. Called from `Sein.Net.StartMatch` (Phase 2b) or
+	 *  from a future lobby flow (Phase 3). Idempotent — already-running
+	 *  sims are left alone. */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Network")
+	void StartLockstepSession();
+
+	/** Local-only: start the sim if it isn't running. Called by
+	 *  Client_StartSession on receiving clients, and by StartLockstepSession
+	 *  on the host. Public so the console command can drive it directly. */
+	void StartLocalSession();
+
+	/** Server-only accessor: the replay writer instance, valid between
+	 *  StartLockstepSession and the eventual FinishRecording flush. nullptr
+	 *  on clients (only the server captures the canonical turn stream).
+	 *  Public so Sein.Net.SaveReplay can drive a manual flush. */
+	USeinReplayWriter* GetReplayWriter() const { return ReplayWriter; }
 
 	/** Relay lifecycle hooks called by ASeinNetRelay::BeginPlay/EndPlay on
 	 *  whichever process the body runs in. Server tracks every relay; clients
@@ -112,11 +159,6 @@ private:
 	 *  hook call; cheaper than re-querying NetMode every entry. */
 	bool IsServer() const;
 
-	/** Server-side: assign the next free slot to a freshly-spawned relay,
-	 *  stamp its AssignedPlayerID + SessionSeed (replicated to its owning
-	 *  client), and remember the mapping locally. */
-	FSeinPlayerID ServerAssignNextSlot(ASeinNetRelay* Relay);
-
 	/** Server-side: lazy-init SessionSeed on first call. Once set, never
 	 *  changes for the life of this game-instance subsystem. */
 	void EnsureSessionSeed();
@@ -124,6 +166,27 @@ private:
 	/** Server-side: check if every connected slot has submitted for `TurnId`;
 	 *  if so, assemble + fan out via every relay's Client_ReceiveTurn. */
 	void ServerCheckTurnComplete(int32 TurnId);
+
+	/** Lockstep gate hook (Phase 2b). Bound on USeinWorldSubsystem when the
+	 *  local slot is assigned. Returns true iff the assembled turn for `Turn`
+	 *  is in ReceivedTurns, OR `Turn` is in the InputDelay-turns grace period
+	 *  at session start (no submissions could exist for those). */
+	bool ResolveTurnReady(int32 Turn);
+
+	/** Lockstep drain hook (Phase 2b). Paired with ResolveTurnReady. Drains
+	 *  `Turn`'s assembled commands into WorldSubsystem.PendingCommands and
+	 *  removes the entry from ReceivedTurns. Called once per turn boundary. */
+	void ConsumeTurn(int32 Turn);
+
+	/** Subscribed to USeinWorldSubsystem::OnSimTickCompleted via
+	 *  TickCompletedHandle. At every turn boundary, flushes pending outgoing
+	 *  commands (or an empty heartbeat) to the server so the gate can
+	 *  complete on every connected peer. */
+	void OnSimTickCompleted(int32 CompletedTick);
+
+	/** Read-helper: ticks-per-turn from settings, with sane fallback. */
+	int32 GetTicksPerTurn() const;
+	int32 GetInputDelayTurns() const;
 
 	UPROPERTY()
 	TArray<TWeakObjectPtr<ASeinNetRelay>> Relays;
@@ -136,9 +199,6 @@ private:
 	/** Server-side: relay -> slot mapping. Source of truth for
 	 *  authoritative "who sent this submission". */
 	TMap<TWeakObjectPtr<ASeinNetRelay>, FSeinPlayerID> RelayToSlot;
-
-	/** Server-side: the next slot to hand out. Starts at 1 (slot 0 = neutral). */
-	uint8 NextSlotToAssign = 1;
 
 	/** Server-side: per-turn aggregation buffer. Inner map: PlayerID -> their
 	 *  submitted commands for that turn. Once Inner.Num() == GetActiveSlotCount(),
@@ -160,4 +220,29 @@ private:
 
 	FDelegateHandle PostLoginHandle;
 	FDelegateHandle LogoutHandle;
+
+	/** Subscription to USeinWorldSubsystem::OnSimTickCompleted, set in
+	 *  NotifyLocalSlotAssigned (after the world subsystem exists), cleared
+	 *  in Deinitialize. Drives the per-turn heartbeat flush. */
+	FDelegateHandle TickCompletedHandle;
+
+	/** Client-side: assembled turns received from the server, awaiting
+	 *  drainage at the matching sim-tick turn boundary. Keyed by turn ID. */
+	TMap<int32, TArray<FSeinCommand>> ReceivedTurns;
+
+	/** Client-side: locally captured commands buffered until the next turn
+	 *  boundary, when they're flushed to the server (with the appropriate
+	 *  outgoing TurnId stamp) along with an implicit heartbeat. */
+	TArray<FSeinCommand> PendingOutgoingCommands;
+
+	/** Client-side: highest TurnId we've already submitted for. Tracked so a
+	 *  single-turn worth of OnSimTickCompleted ticks doesn't double-submit
+	 *  the same heartbeat. -1 means "never submitted yet". */
+	int32 LastSubmittedTurn = -1;
+
+	/** Server-only: captures every dispatched turn for offline replay
+	 *  reconstruction. Created lazily in StartLockstepSession, flushed in
+	 *  Deinitialize (or via Sein.Net.SaveReplay). Null on clients. */
+	UPROPERTY()
+	TObjectPtr<USeinReplayWriter> ReplayWriter;
 };

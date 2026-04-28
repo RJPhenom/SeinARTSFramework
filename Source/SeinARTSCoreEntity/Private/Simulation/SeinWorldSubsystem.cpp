@@ -205,12 +205,45 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
 	const int32 MaxTicks = Settings->MaxTicksPerFrame;
 
+	// TicksPerTurn: how many sim ticks make up one network turn. Derived from
+	// the two settings; integer division so a misconfiguration doesn't yield
+	// a fractional gate (better to round down and re-check sooner). Only
+	// consulted when the lockstep resolver is bound (USeinNetSubsystem
+	// registers it once the local slot is assigned).
+	const int32 TicksPerTurn = (Settings->TurnRate > 0)
+		? FMath::Max(1, Settings->SimulationTickRate / Settings->TurnRate)
+		: 1;
+
 	TimeAccumulator += DeltaTime;
 
 	int32 TicksProcessed = 0;
 	while (TimeAccumulator >= FixedDeltaTimeSeconds && TicksProcessed < MaxTicks)
 	{
-		CurrentTick++;
+		const int32 NextTick = CurrentTick + 1;
+
+		// Lockstep gate (Phase 2b). At each turn boundary, ask the network
+		// layer whether the assembled turn for the upcoming turn is ready.
+		// If not, stall — leave the accumulator alone so we retry next frame.
+		// Resolver unbound (Standalone, networking disabled, or NetSubsystem
+		// hasn't latched yet) = no gating, sim runs free.
+		if (TurnReadyResolver.IsBound() && (NextTick % TicksPerTurn == 0))
+		{
+			const int32 NextTurn = NextTick / TicksPerTurn;
+			if (!TurnReadyResolver.Execute(NextTurn))
+			{
+				// Stall — break out of the catch-up loop without consuming
+				// the accumulator. Next frame's pump will retry. The "falling
+				// behind" warning at the bottom is suppressed by the early
+				// break since TicksProcessed < MaxTicks may still be true.
+				break;
+			}
+			if (TurnConsumeNotifier.IsBound())
+			{
+				TurnConsumeNotifier.Execute(NextTurn);
+			}
+		}
+
+		CurrentTick = NextTick;
 		TimeAccumulator -= FixedDeltaTimeSeconds;
 		TicksProcessed++;
 
@@ -221,16 +254,48 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 
 #if !UE_BUILD_SHIPPING
 		// Determinism verification: when the Log cvar is on, dump the sim
-		// state hash each tick. Run two PIE clients with this enabled and
-		// diff the logs — any divergence pinpoints the tick where lockstep
-		// breaks. Gated off in shipping builds so the hash walk doesn't
-		// cost production CPU.
+		// state hash each tick. Run two PIE clients (or two PIE sessions)
+		// with this enabled and diff the logs — any divergence pinpoints
+		// the tick where lockstep breaks. Gated off in shipping builds so
+		// the hash walk doesn't cost production CPU.
+		//
+		// Two log levels:
+		//   = 1: hash only — `StateHash[tick N] = 0xXXXX`. Compact, finds
+		//        first divergent tick. Use for long sessions.
+		//   = 2: hash + per-entity dump on tick 1, then hash-only on
+		//        subsequent ticks. Tick 1 is the initial state — diffing
+		//        two log files at tick 1 reveals what's structurally
+		//        different about the starting world (entity IDs / owners
+		//        / positions). Best for "spawns are wrong sometimes" hunts.
+		//   = 3: hash + per-entity dump EVERY tick. Verbose; use only for
+		//        narrow ranges or very early divergences.
 		{
 			static IConsoleVariable* CVarLog = IConsoleManager::Get().FindConsoleVariable(TEXT("Sein.Sim.StateHash.Log"));
-			if (CVarLog && CVarLog->GetInt() != 0)
+			const int32 StateLogLevel = CVarLog ? CVarLog->GetInt() : 0;
+			if (StateLogLevel != 0)
 			{
 				UE_LOG(LogSeinSim, Log, TEXT("StateHash[tick %d] = 0x%08x"),
 					CurrentTick, static_cast<uint32>(ComputeStateHash()));
+
+				const bool bDumpEntities = (StateLogLevel >= 3) || (StateLogLevel == 2 && CurrentTick == 1);
+				if (bDumpEntities)
+				{
+					UE_LOG(LogSeinSim, Log, TEXT("StateHash[tick %d] entity dump  (active=%d):"),
+						CurrentTick, EntityPool.GetActiveCount());
+
+					// Walk every alive entity and print ID, owner, and the
+					// raw fixed-point position. Raw int64 values diff
+					// cleanly across log files (no float-to-string drift).
+					EntityPool.ForEachEntity([this](FSeinEntityHandle Handle, const FSeinEntity& Entity)
+					{
+						const FSeinPlayerID Owner = EntityPool.GetOwner(Handle);
+						const FFixedVector& L = Entity.Transform.Location;
+						UE_LOG(LogSeinSim, Log,
+							TEXT("  H(%d:%d)  slot=%u  pos=(%lld, %lld, %lld) [raw 32.32]"),
+							Handle.Index, Handle.Generation, Owner.Value,
+							L.X.Value, L.Y.Value, L.Z.Value);
+					});
+				}
 			}
 		}
 #endif
@@ -2210,6 +2275,22 @@ namespace
 		HashTagMap(Hash, State.ResourceCaps,       [](const FFixedPoint& V) { return GetTypeHash(V); });
 		HashTagMap(Hash, State.PlayerTagRefCounts, [](int32 V)              { return GetTypeHash(V); });
 		HashTagMap(Hash, State.StatCounters,       [](const FFixedPoint& V) { return GetTypeHash(V); });
+
+		// PlayerTags is the cached presence set mirroring PlayerTagRefCounts.
+		// Hashing both catches drift between the refcount map and the cache
+		// (a known silent-desync category in tag-based systems). Sort the
+		// container's tags by name first — FGameplayTagContainer's natural
+		// iteration order isn't guaranteed across processes.
+		{
+			TArray<FGameplayTag> Tags;
+			State.PlayerTags.GetGameplayTagArray(Tags);
+			Tags.Sort(TagNameLess);
+			Hash = HashCombine(Hash, GetTypeHash(Tags.Num()));
+			for (const FGameplayTag& T : Tags)
+			{
+				Hash = HashCombine(Hash, GetTypeHash(T));
+			}
+		}
 
 		// ArchetypeEffects + PlayerEffects are TArrays — order is already
 		// deterministic by insertion (apply order is sim-tick driven).

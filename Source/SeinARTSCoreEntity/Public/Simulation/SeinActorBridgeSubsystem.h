@@ -64,6 +64,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Bridge")
 	void UnregisterActor(FSeinEntityHandle Handle);
 
+	/** Walk every level-placed ASeinActor (stable-sorted by actor name) and
+	 *  bind each one to a sim entity. Idempotent — actors already linked
+	 *  are skipped. The stable sort matters for lockstep determinism: every
+	 *  client must auto-register placed actors in the SAME order so their
+	 *  entity IDs match the server. TActorIterator order is implementation-
+	 *  defined and can vary across machines.
+	 *
+	 *  Normally invoked automatically from OnWorldBeginPlay. Match-flow
+	 *  orchestrators (USeinMatchBootstrapSubsystem) disable that auto path
+	 *  via SetAutoRegisterOnBeginPlay(false) and call this method directly,
+	 *  AFTER pre-spawning slot start entities, so the entity-ID ordering
+	 *  matches between server (GameMode pre-spawns in InitGame, then
+	 *  bridge auto-registers in OnWorldBeginPlay) and clients (no GameMode,
+	 *  bootstrap orchestrator does both in sequence). */
+	void RegisterAllPlacedActors(UWorld& InWorld);
+
+	/** Disable the auto-call from OnWorldBeginPlay. Call from a match-flow
+	 *  orchestrator's Initialize so the orchestrator owns the bootstrap
+	 *  order. Default true (back-compat for projects without an orchestrator). */
+	void SetAutoRegisterOnBeginPlay(bool bInAuto) { bAutoRegisterOnBeginPlay = bInAuto; }
+
 	// ========== Configuration ==========
 
 	/** Delay before destroying an actor after its entity dies (for death animations). */
@@ -86,6 +107,12 @@ private:
 
 	/** Cached pointer to the sim subsystem. */
 	TWeakObjectPtr<USeinWorldSubsystem> SimSubsystem;
+
+	/** When true (default), OnWorldBeginPlay fires RegisterAllPlacedActors
+	 *  itself. Match-flow orchestrators flip this to false in their
+	 *  Initialize so they can sequence pre-spawning and placed-actor
+	 *  registration deterministically. */
+	bool bAutoRegisterOnBeginPlay = true;
 
 	/** Delegate handle for sim tick callback. */
 	FDelegateHandle SimTickDelegateHandle;

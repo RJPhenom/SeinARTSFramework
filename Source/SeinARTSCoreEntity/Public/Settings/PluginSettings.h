@@ -241,6 +241,22 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "300", UIMin = "1", UIMax = "60", EditCondition = "bDeterminismChecksEnabled"))
 	int32 DeterminismCheckIntervalTurns;
 
+	/**
+	 * DEBUG ONLY. When nonzero, USeinNetSubsystem uses this exact value as
+	 * the lockstep SessionSeed instead of generating a fresh one from wall-
+	 * clock at each PIE Play. Lets you reproduce identical sim runs across
+	 * PIE sessions for desync investigation — anything PRNG-driven becomes
+	 * bit-identical run-to-run, so any remaining variance you see is caused
+	 * by something other than the random seed (level data, sim ordering,
+	 * float drift, etc.).
+	 *
+	 * Leave at 0 in production. Each match must have a fresh seed for
+	 * variety + replay uniqueness.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network|Debug",
+		meta = (DisplayName = "Debug Fixed Session Seed (0 = random)"))
+	int64 DebugFixedSessionSeed;
+
 	// Fog Of War Settings
 	// ====================================================================================================
 

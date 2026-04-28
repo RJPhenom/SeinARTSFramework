@@ -80,9 +80,15 @@ public:
 
 	// ========== Identity ==========
 
-	/** This controller's sim-side player ID. Assigned by GameMode. */
-	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Player")
+	/** This controller's sim-side player ID. Assigned by GameMode (server-side)
+	 *  and replicated to the owning client so client-side ownership checks
+	 *  (selection, command stamping, "is this my unit?") work correctly.
+	 *  Without replication, the client's PC sees SeinPlayerID = 0 (neutral)
+	 *  and can't select / command its own units. */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "SeinARTS|Player")
 	FSeinPlayerID SeinPlayerID;
+
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	// ========== Selection State ==========
 

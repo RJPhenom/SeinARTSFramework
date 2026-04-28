@@ -15,6 +15,23 @@ DEFINE_LOG_CATEGORY_STATIC(LogSeinCommandLog, Log, All);
 
 // ==================== Console Commands ====================
 
+// Filter for observer commands (CameraUpdate, SelectionChanged, etc). Default
+// off so the overlay shows only sim-mutating commands — those are identical
+// across every client by lockstep, so the overlay matches between windows.
+// Toggle on to also include this client's local observer commands (per-POV).
+bool GShowObserverCommandsInLog = false;
+
+static FAutoConsoleCommand CmdToggleObserverFilter(
+	TEXT("Sein.Commands.ShowLog.Observer"),
+	TEXT("Toggle inclusion of observer commands (CameraUpdate, SelectionChanged) in the SeinARTS command log overlay. Default: OFF (sim-mutating only)."),
+	FConsoleCommandDelegate::CreateLambda([]()
+	{
+		GShowObserverCommandsInLog = !GShowObserverCommandsInLog;
+		UE_LOG(LogSeinCommandLog, Log, TEXT("Command log observer commands: %s"),
+			GShowObserverCommandsInLog ? TEXT("INCLUDED") : TEXT("FILTERED OUT"));
+	})
+);
+
 static FAutoConsoleCommand CmdToggleCommandLog(
 	TEXT("Sein.Commands.ShowLog"),
 	TEXT("Toggle the SeinARTS command transaction log overlay"),
@@ -88,6 +105,15 @@ void USeinCommandLogSubsystem::OnCommandsProcessing(int32 Tick, const TArray<FSe
 {
 	for (const FSeinCommand& Cmd : Commands)
 	{
+		// Filter observer commands by default — they're per-client (camera /
+		// selection POV) and would make every window's overlay diverge.
+		// Sim-mutating commands stay visible because lockstep guarantees they
+		// match across every client. Toggle inclusion via Sein.Commands.ShowLog.Observer.
+		if (!GShowObserverCommandsInLog && Cmd.IsObserverCommand())
+		{
+			continue;
+		}
+
 		FSeinCommandLogEntry Entry;
 		Entry.Tick = Tick;
 		Entry.PlayerIndex = static_cast<int32>(Cmd.PlayerID.Value);

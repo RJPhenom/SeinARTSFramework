@@ -112,3 +112,12 @@ void ASeinNetRelay::Client_ReceiveTurn_Implementation(int32 TurnId, const TArray
 		Net->ClientHandleTurn(TurnId, Commands);
 	}
 }
+
+void ASeinNetRelay::Client_StartSession_Implementation()
+{
+	UE_LOG(LogSeinNet, Log, TEXT("[Client] Client_StartSession received  Owner=%s"), *GetNameSafe(GetOwner()));
+	if (USeinNetSubsystem* Net = GetNetSubsystem())
+	{
+		Net->StartLocalSession();
+	}
+}

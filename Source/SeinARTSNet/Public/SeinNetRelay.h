@@ -75,6 +75,14 @@ public:
 	UFUNCTION(Client, Reliable)
 	void Client_ReceiveTurn(int32 TurnId, const TArray<FSeinCommand>& Commands);
 
+	/** Server -> owning client. Lockstep session-start trigger (Phase 2b).
+	 *  Server fires this on every connected relay simultaneously once the
+	 *  match is ready (e.g. via Sein.Net.StartMatch). Each client starts
+	 *  its local sim at tick 0 with the gate already engaged, so no client
+	 *  ticks ungated and produces dispatched turns the others can't match. */
+	UFUNCTION(Client, Reliable)
+	void Client_StartSession();
+
 	UFUNCTION()
 	void OnRep_AssignedPlayerID();
 

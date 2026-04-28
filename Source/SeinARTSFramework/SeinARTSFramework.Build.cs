@@ -43,6 +43,7 @@ public class SeinARTSFramework : ModuleRules
 				"InputCore",
 				"EnhancedInput",
 				"UMG",
+				"SeinARTSNet",
 			}
 			);
 		

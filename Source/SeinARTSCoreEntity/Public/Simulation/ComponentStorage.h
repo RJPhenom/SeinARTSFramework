@@ -189,15 +189,85 @@ public:
 	virtual uint32 ComputeHash() const override
 	{
 		uint32 Hash = 0;
+		if (!StructType) return Hash;
+
+		// Walk reflected UPROPERTY fields per slot. Using reflection (not raw
+		// memory iteration) is critical for cross-process determinism: padding
+		// bytes between fields, transient/non-UPROPERTY internal members, and
+		// uninitialized scratch memory ALL differ across machines even when
+		// the deterministic state is identical. Reflection-driven hashing
+		// covers exactly the fields the designer marked as state, and uses
+		// each property's own GetValueTypeHash which is content-based
+		// (string for FString, raw int64 for FFixedPoint, etc.).
+		// Helper: should this property be skipped entirely (non-deterministic
+		// value across processes, or not state-relevant)?
+		auto IsNonDeterministicOrSkip = [](const FProperty* P) -> bool
+		{
+			if (!P) return true;
+			if (P->HasAnyPropertyFlags(CPF_Transient | CPF_EditorOnly | CPF_Deprecated))
+			{
+				return true;
+			}
+			// UObject references: pointer addresses differ between PIE
+			// windows / shipped processes. `GetValueTypeHash` on object
+			// properties returns the pointer hash → guaranteed cross-
+			// process desync. Component data shouldn't carry UObject
+			// refs at all (DESIGN.md §2 violation), but until those are
+			// migrated to FSeinEntityHandle / class-by-FName lookups,
+			// skip them here so the hash remains stable.
+			if (P->IsA<FObjectPropertyBase>() || P->IsA<FInterfaceProperty>())
+			{
+				return true;
+			}
+			return false;
+		};
+
 		for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
 		{
 			const int32 SlotIndex = It.GetIndex();
 			Hash = HashCombine(Hash, GetTypeHash(static_cast<uint32>(SlotIndex)));
-			// Use raw memory hash — individual struct fields should implement GetTypeHash
+
 			const uint8* SlotPtr = GetSlotPtr(SlotIndex);
-			for (int32 i = 0; i < StructSize; ++i)
+			for (TFieldIterator<FProperty> PropIt(StructType); PropIt; ++PropIt)
 			{
-				Hash = HashCombine(Hash, GetTypeHash(SlotPtr[i]));
+				FProperty* Prop = *PropIt;
+				if (IsNonDeterministicOrSkip(Prop)) continue;
+
+				// Mix in the property name so reordering / renaming changes
+				// the hash; keeps replay file bumps detectable.
+				Hash = HashCombine(Hash, GetTypeHash(Prop->GetFName()));
+
+				const void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(SlotPtr);
+
+				// Arrays: handle explicitly so we can detect arrays-of-objects
+				// (skip element values, hash count only) vs arrays-of-hashable
+				// (hash count + each element).
+				if (FArrayProperty* ArrProp = CastField<FArrayProperty>(Prop))
+				{
+					FScriptArrayHelper Helper(ArrProp, ValuePtr);
+					const int32 Num = Helper.Num();
+					Hash = HashCombine(Hash, GetTypeHash(Num));
+					const FProperty* Inner = ArrProp->Inner;
+					if (Inner && !IsNonDeterministicOrSkip(Inner) && (Inner->PropertyFlags & CPF_HasGetValueTypeHash))
+					{
+						for (int32 i = 0; i < Num; ++i)
+						{
+							Hash = HashCombine(Hash, Inner->GetValueTypeHash(Helper.GetRawPtr(i)));
+						}
+					}
+					continue;
+				}
+
+				if (Prop->PropertyFlags & CPF_HasGetValueTypeHash)
+				{
+					Hash = HashCombine(Hash, Prop->GetValueTypeHash(ValuePtr));
+				}
+				// else: the property type has no GetTypeHash (some nested
+				// struct without WithGetTypeHash, or TMap/TSet). We hash
+				// only the property name — value is dropped. Stable across
+				// processes (consistent zero) but may miss state drift in
+				// those fields. Add per-type branches above if a real case
+				// surfaces.
 			}
 		}
 		return Hash;
