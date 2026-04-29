@@ -29,6 +29,7 @@ public class SeinARTSUIToolkit : ModuleRules
 			{
 				"InputCore",
 				"RenderCore",
+				"SeinARTSNet",
 			}
 		);
 	}

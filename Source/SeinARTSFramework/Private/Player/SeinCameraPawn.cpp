@@ -11,6 +11,7 @@
 #include "Actor/SeinActor.h"
 #include "Actor/SeinActorBridge.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Data/SeinCameraSnapshotData.h"
 #include "Engine/World.h"
 
 ASeinCameraPawn::ASeinCameraPawn()
@@ -318,4 +319,43 @@ float ASeinCameraPawn::GetCurrentZoomDistance() const
 float ASeinCameraPawn::GetCameraPitch() const
 {
 	return CurrentPitch;
+}
+
+void ASeinCameraPawn::CaptureCameraState_Implementation(FSeinCameraSnapshotData& OutData)
+{
+	OutData.bHasState     = true;
+	OutData.PivotLocation = GetPivotLocation();
+	OutData.Yaw           = GetCameraYaw();
+	OutData.Pitch         = GetCameraPitch();
+	OutData.ZoomDistance  = GetCurrentZoomDistance();
+}
+
+void ASeinCameraPawn::RestoreCameraState_Implementation(const FSeinCameraSnapshotData& Data)
+{
+	if (!Data.bHasState) return;
+	SetCameraState(Data.PivotLocation, Data.Yaw, Data.Pitch, Data.ZoomDistance);
+}
+
+void ASeinCameraPawn::SetCameraState(FVector PivotLocation, float Yaw, float Pitch, float ZoomDistance)
+{
+	// Snap actor (drives pivot location). The pawn's root is the pivot; spring
+	// arm hangs off it.
+	SetActorLocation(PivotLocation);
+	if (CameraPivot)
+	{
+		FRotator PivotRot = CameraPivot->GetComponentRotation();
+		PivotRot.Yaw = Yaw;
+		CameraPivot->SetWorldRotation(PivotRot);
+	}
+	CurrentPitch = Pitch;
+	if (SpringArm)
+	{
+		FRotator ArmRot = SpringArm->GetRelativeRotation();
+		ArmRot.Pitch = Pitch;
+		SpringArm->SetRelativeRotation(ArmRot);
+		// Snap target arm length immediately + the live arm length so the
+		// zoom interp on the next tick doesn't lerp from the old value.
+		SpringArm->TargetArmLength = ZoomDistance;
+	}
+	TargetZoomDistance = ZoomDistance;
 }

@@ -29,8 +29,10 @@
 #include "PropertyEditorModule.h"
 #include "Details/SeinFixedPointDetails.h"
 #include "Details/SeinInstancedStructDetails.h"
-#include "Details/SeinNavVolumeDetails.h"
-#include "Details/SeinFogOfWarVolumeDetails.h"
+// Volume details panels live in their owning system modules (SeinARTSNavigation
+// + SeinARTSFogOfWar), not here — preserves the "each subsystem self-contained"
+// pattern. Each module registers its own customization at StartupModule under
+// `#if WITH_EDITOR`, so the editor module never imports their headers.
 #include "Details/SeinVisionDataDetails.h"
 #include "Details/SeinVisionStampDetails.h"
 #include "Details/SeinExtentsDataDetails.h"
@@ -39,8 +41,6 @@
 #include "Components/ActorComponents/SeinExtentsComponent.h"
 #include "UnrealEdGlobals.h"
 #include "Editor/UnrealEdEngine.h"
-#include "Volumes/SeinNavVolume.h"
-#include "Volumes/SeinFogOfWarVolume.h"
 #include "Brokers/SeinStructAssetBroker.h"
 #include "ComponentAssetBroker.h"
 #include "Components/ActorComponents/SeinStructComponent.h"
@@ -146,13 +146,11 @@ void FSeinARTSEditorModule::StartupModule()
 			TEXT("SeinMovementData"),
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FSeinMovementDataDetails::MakeInstance));
 
-		PropertyModule.RegisterCustomClassLayout(
-			ASeinNavVolume::StaticClass()->GetFName(),
-			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinNavVolumeDetails::MakeInstance));
-
-		PropertyModule.RegisterCustomClassLayout(
-			ASeinFogOfWarVolume::StaticClass()->GetFName(),
-			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinFogOfWarVolumeDetails::MakeInstance));
+		// Volume details panels (ASeinNavVolume, ASeinFogOfWarVolume) are
+		// registered by their owning system modules' StartupModule under
+		// `#if WITH_EDITOR` — keeps the editor module decoupled from those
+		// systems. Replace the nav class via plugin settings; the framework's
+		// bake button stays on the volume regardless.
 
 		PropertyModule.NotifyCustomizationModuleChanged();
 	}
@@ -179,8 +177,7 @@ void FSeinARTSEditorModule::ShutdownModule()
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinVisionStamp"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinExtentsData"));
 		PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("SeinMovementData"));
-		PropertyModule.UnregisterCustomClassLayout(ASeinNavVolume::StaticClass()->GetFName());
-		PropertyModule.UnregisterCustomClassLayout(ASeinFogOfWarVolume::StaticClass()->GetFName());
+		// Volume class-layouts unregistered by their owning system modules.
 	}
 
 	if (GUnrealEd != nullptr)

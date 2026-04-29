@@ -26,6 +26,12 @@
 #include "GameFramework/PlayerController.h"
 #include "UObject/UnrealType.h"
 
+#if WITH_EDITOR
+#include "Editor/SeinFogOfWarVolumeDetails.h"
+#include "Volumes/SeinFogOfWarVolume.h"
+#include "PropertyEditorModule.h"
+#endif
+
 #if UE_ENABLE_DEBUG_DRAWING
 #include "ShowFlags.h"
 #include "HAL/IConsoleManager.h"
@@ -225,6 +231,19 @@ namespace
 
 void FSeinARTSFogOfWarModule::StartupModule()
 {
+#if WITH_EDITOR
+	// Register the volume details panel here so the editor's "Bake Fog Of War"
+	// button is owned by SeinARTSFogOfWar — keeps the system self-contained
+	// (the framework's editor module no longer needs a dep on this module).
+	{
+		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyModule.RegisterCustomClassLayout(
+			ASeinFogOfWarVolume::StaticClass()->GetFName(),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FSeinFogOfWarVolumeDetails::MakeInstance));
+		PropertyModule.NotifyCustomizationModuleChanged();
+	}
+#endif
+
 #if UE_ENABLE_DEBUG_DRAWING
 	if (!GShowFogOfWarCmd)
 	{
@@ -255,6 +274,14 @@ void FSeinARTSFogOfWarModule::StartupModule()
 
 void FSeinARTSFogOfWarModule::ShutdownModule()
 {
+#if WITH_EDITOR
+	if (FModuleManager::Get().IsModuleLoaded("PropertyEditor"))
+	{
+		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
+		PropertyModule.UnregisterCustomClassLayout(ASeinFogOfWarVolume::StaticClass()->GetFName());
+	}
+#endif
+
 #if UE_ENABLE_DEBUG_DRAWING
 	if (GShowFogOfWarCmd)
 	{

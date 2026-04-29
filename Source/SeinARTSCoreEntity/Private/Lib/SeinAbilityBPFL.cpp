@@ -68,7 +68,7 @@ void USeinAbilityBPFL::SeinActivateAbility(const UObject* WorldContextObject, FS
 	FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return;
 
-	USeinAbility* Ability = AbilityComp->FindAbilityByTag(AbilityTag);
+	USeinAbility* Ability = AbilityComp->FindAbilityByTag(*Subsystem, AbilityTag);
 	if (!Ability || Ability->IsOnCooldown() || Ability->bIsActive) return;
 
 	Ability->ActivateAbility(TargetEntity, TargetLocation);
@@ -82,9 +82,9 @@ void USeinAbilityBPFL::SeinCancelAbility(const UObject* WorldContextObject, FSei
 	FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return;
 
-	if (AbilityComp->ActiveAbility)
+	if (USeinAbility* Active = AbilityComp->GetActiveAbility(*Subsystem))
 	{
-		AbilityComp->ActiveAbility->CancelAbility();
+		Active->CancelAbility();
 	}
 }
 
@@ -96,13 +96,9 @@ bool USeinAbilityBPFL::SeinIsAbilityOnCooldown(const UObject* WorldContextObject
 	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return false;
 
-	// FindAbilityByTag is non-const, so we need to search manually
-	for (USeinAbility* Ability : AbilityComp->AbilityInstances)
+	if (const USeinAbility* Ability = AbilityComp->FindAbilityByTag(*Subsystem, AbilityTag))
 	{
-		if (Ability && Ability->AbilityTag == AbilityTag)
-		{
-			return Ability->IsOnCooldown();
-		}
+		return Ability->IsOnCooldown();
 	}
 	return false;
 }
@@ -115,12 +111,9 @@ FFixedPoint USeinAbilityBPFL::SeinGetCooldownRemaining(const UObject* WorldConte
 	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return FFixedPoint::Zero;
 
-	for (USeinAbility* Ability : AbilityComp->AbilityInstances)
+	if (const USeinAbility* Ability = AbilityComp->FindAbilityByTag(*Subsystem, AbilityTag))
 	{
-		if (Ability && Ability->AbilityTag == AbilityTag)
-		{
-			return Ability->CooldownRemaining;
-		}
+		return Ability->CooldownRemaining;
 	}
 	return FFixedPoint::Zero;
 }
@@ -133,7 +126,7 @@ bool USeinAbilityBPFL::SeinHasAbility(const UObject* WorldContextObject, FSeinEn
 	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) return false;
 
-	return AbilityComp->HasAbilityWithTag(AbilityTag);
+	return AbilityComp->HasAbilityWithTag(*Subsystem, AbilityTag);
 }
 
 FSeinAbilityAvailability USeinAbilityBPFL::SeinGetAbilityAvailability(
@@ -152,7 +145,7 @@ FSeinAbilityAvailability USeinAbilityBPFL::SeinGetAbilityAvailability(
 	const FSeinAbilityData* AbilityComp = Subsystem->GetComponent<FSeinAbilityData>(EntityHandle);
 	if (!AbilityComp) { Out.Reason = ESeinAbilityUnavailableReason::UnknownAbility; return Out; }
 
-	USeinAbility* Ability = AbilityComp->FindAbilityByTag(AbilityTag);
+	USeinAbility* Ability = AbilityComp->FindAbilityByTag(*Subsystem, AbilityTag);
 	if (!Ability) { Out.Reason = ESeinAbilityUnavailableReason::UnknownAbility; return Out; }
 
 	Out.CooldownRemaining = Ability->CooldownRemaining;

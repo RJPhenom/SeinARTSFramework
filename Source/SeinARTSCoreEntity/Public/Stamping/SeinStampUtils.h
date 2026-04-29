@@ -35,7 +35,7 @@ namespace SeinStampUtils
 	}
 
 	/** Extract entity yaw (radians) from a planar quaternion. Same logic the
-	 *  locomotions use — picks forward direction and atan2's it, so we don't
+	 *  movements use — picks forward direction and atan2's it, so we don't
 	 *  pay the gimbal-singularity branches in Eulers(). */
 	FORCEINLINE FFixedPoint YawFromRotation(const FFixedQuaternion& Rotation)
 	{

@@ -171,7 +171,7 @@ bool USeinFogOfWarDefault::DoSyncBake(UWorld* World, USeinFogOfWarDefaultAsset*&
 	//      glass walls, transparent props, anything that should NOT occlude
 	//      sight even though it may participate in nav.
 	//   2) Mobile heuristic — the archetype CDO carries a USeinMovementComponent.
-	//      Vehicles, infantry, and any other unit running locomotion should
+	//      Vehicles, infantry, and any other unit running movement should
 	//      not carve their pose-at-bake-time into the static fog grid.
 	// `QP.AddIgnoredActor` ignores every primitive on the actor (skeletal
 	// meshes, collision capsules, brush components — the lot), so the bake
@@ -1142,7 +1142,7 @@ void USeinFogOfWarDefault::CollectDebugCellQuads(FSeinPlayerID Observer,
 	if (Width <= 0 || Height <= 0) return;
 
 	// 0.9 inset → ~10% gap between neighboring quads. Reads as a grid (matches
-	// USeinNavigationAStar::CollectDebugCellQuads). Also dodges any z-fight at
+	// USeinNavigationDefaultAStar::CollectDebugCellQuads). Also dodges any z-fight at
 	// exact cell boundaries between same-Z cells.
 	OutHalfExtent = CellSize.ToFloat() * 0.5f * 0.9f;
 	const int32 NumCells = Width * Height;

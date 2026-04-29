@@ -7,8 +7,10 @@
 #include "SeinARTSNet.h"
 #include "SeinNetRelay.h"
 #include "SeinReplayWriter.h"
+#include "SeinReplayReader.h"
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/GameModeBase.h"
@@ -43,6 +45,12 @@ void USeinNetSubsystem::Deinitialize()
 		}
 	}
 	ReplayWriter = nullptr;
+
+	if (ReplayReader && ReplayReader->IsPlaying())
+	{
+		ReplayReader->Stop();
+	}
+	ReplayReader = nullptr;
 
 	// Tear down WorldSubsystem-side hooks. The world may already be gone
 	// (Deinitialize ordering during PIE shutdown), so be defensive.
@@ -86,6 +94,18 @@ int32 USeinNetSubsystem::GetInputDelayTurns() const
 {
 	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
 	return (Settings && Settings->InputDelayTurns > 0) ? Settings->InputDelayTurns : 3;
+}
+
+bool USeinNetSubsystem::IsDeterminismGossipEnabled() const
+{
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	return Settings && Settings->bDeterminismChecksEnabled;
+}
+
+int32 USeinNetSubsystem::GetDeterminismCheckIntervalTurns() const
+{
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	return (Settings && Settings->DeterminismCheckIntervalTurns > 0) ? Settings->DeterminismCheckIntervalTurns : 10;
 }
 
 bool USeinNetSubsystem::IsServer() const
@@ -159,6 +179,29 @@ void USeinNetSubsystem::ServerSpawnRelayForController(APlayerController* PC, FSe
 		return;
 	}
 
+	// SLOT COLLISION GUARD: refuse to bind `Slot` to this PC if a DIFFERENT PC
+	// already owns a relay with that slot. Without this guard, GameMode bugs
+	// that double-route two PCs to the same SeinPlayerStart (the visual spawn
+	// bug + the [BUFFER INCOMPLETE missing=[3,3]] freeze bug) silently produce
+	// two relays with AssignedPlayerID=N, the server's per-turn TMap<Slot,...>
+	// buffer gets one entry per duplicated slot (overwritten), and the missing
+	// slot (the one that should have been bound to the second PC) never
+	// submits — gate stalls forever. Caller (GameMode) must fix its slot pick.
+	for (const TWeakObjectPtr<ASeinNetRelay>& Wp : Relays)
+	{
+		ASeinNetRelay* R = Wp.Get();
+		if (!R) continue;
+		if (R->GetOwner() == PC) continue; // same PC → handled by idempotence below
+		const FSeinPlayerID* ExistingSlot = RelayToSlot.Find(R);
+		if (ExistingSlot && *ExistingSlot == Slot)
+		{
+			UE_LOG(LogSeinNet, Error,
+				TEXT("[SLOT COLLISION] ServerSpawnRelayForController: slot %u is ALREADY bound to %s (relay %s). Refusing to bind %s to the same slot — would produce dual-binding and freeze the lockstep gate. GameMode bug: two controllers were routed to the same SeinPlayerStart. Investigate ChoosePlayerStart_Implementation and ClaimedSlots tracking."),
+				Slot.Value, *GetNameSafe(R->GetOwner()), *GetNameSafe(R), *GetNameSafe(PC));
+			return;
+		}
+	}
+
 	// Idempotence: if this PC already has a relay (re-bind / seamless travel),
 	// re-stamp it instead of spawning a duplicate. Replicates the new slot
 	// value to the owning client via OnRep_AssignedPlayerID.
@@ -168,11 +211,14 @@ void USeinNetSubsystem::ServerSpawnRelayForController(APlayerController* PC, FSe
 		{
 			if (R->GetOwner() == PC)
 			{
+				const FSeinPlayerID* PrevSlot = RelayToSlot.Find(R);
+				const uint8 PrevSlotValue = PrevSlot ? PrevSlot->Value : 0;
 				R->AssignedPlayerID = Slot;
 				R->SessionSeed = SessionSeed;
 				RelayToSlot.Add(R, Slot);
-				UE_LOG(LogSeinNet, Log, TEXT("ServerSpawnRelayForController: existing relay %s re-stamped slot=%u for %s"),
-					*GetNameSafe(R), Slot.Value, *GetNameSafe(PC));
+				UE_LOG(LogSeinNet, Log,
+					TEXT("ServerSpawnRelayForController: existing relay %s re-stamped slot=%u (was %u) for %s"),
+					*GetNameSafe(R), Slot.Value, PrevSlotValue, *GetNameSafe(PC));
 				return;
 			}
 		}
@@ -205,9 +251,14 @@ void USeinNetSubsystem::ServerSpawnRelayForController(APlayerController* PC, FSe
 	Relay->SessionSeed = SessionSeed;
 	RelayToSlot.Add(Relay, Slot);
 
+	// Drop-in/drop-out: mark this slot Connected. If it was previously
+	// Dropped (a reconnect), this also clears the heartbeat-injection.
+	SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Connected);
+	SlotDroppedAtTime.Remove(Slot);
+
 	Relay->FinishSpawning(FTransform::Identity);
 
-	UE_LOG(LogSeinNet, Log, TEXT("ServerSpawnRelayForController: spawned %s for %s  slot=%u  seed=%lld"),
+	UE_LOG(LogSeinNet, Log, TEXT("ServerSpawnRelayForController: spawned %s for %s  slot=%u  seed=%lld  lifecycle=Connected"),
 		*GetNameSafe(Relay), *GetNameSafe(PC), Slot.Value, SessionSeed);
 }
 
@@ -242,42 +293,47 @@ void USeinNetSubsystem::OnLogout(AGameModeBase* GameMode, AController* Exiting)
 {
 	if (!Exiting || !IsServer()) return;
 
-	// Snapshot first — AActor::Destroy() synchronously fires EndPlay, which
-	// calls back into UnregisterRelay() and mutates the Relays array. Iterating
-	// + mutating in the same loop walks off the end (crash: index 0 into an
-	// array of size 0). Collect targets, THEN destroy.
-	TArray<ASeinNetRelay*> ToDestroy;
-	ToDestroy.Reserve(Relays.Num());
+	// Drop-in/drop-out (Phase 4): instead of destroying the relay on logout,
+	// mark the owning slot as Dropped + retain the relay actor. The server
+	// will inject empty heartbeats on the slot's behalf so the gate doesn't
+	// stall, and (after timeout) transition the slot to AITakeover. If the
+	// player reconnects, the slot returns to Connected and the relay resumes
+	// normally.
+	//
+	// PRIOR BEHAVIOR (pre-Phase-4): destroy relay + drop slot from RelayToSlot
+	// so the gate ignores the leaving player. Worked but provided no
+	// reconnect/AI-takeover affordance. Old code preserved as commentary at
+	// the bottom for reference.
+
+	const double NowSec = FPlatformTime::Seconds();
+	bool bAnyMarkedDropped = false;
 	for (const TWeakObjectPtr<ASeinNetRelay>& Wp : Relays)
 	{
-		if (ASeinNetRelay* Relay = Wp.Get())
-		{
-			if (Relay->GetOwner() == Exiting)
-			{
-				ToDestroy.Add(Relay);
-			}
-		}
-	}
-	for (ASeinNetRelay* Relay : ToDestroy)
-	{
-		UE_LOG(LogSeinNet, Log, TEXT("OnLogout: destroying relay %s (owner %s leaving)"),
-			*GetNameSafe(Relay), *GetNameSafe(Exiting));
-		// Drop slot mapping before Destroy → EndPlay → UnregisterRelay so the
-		// completeness gate doesn't keep waiting for a player who left.
-		RelayToSlot.Remove(Relay);
-		Relay->Destroy();
+		ASeinNetRelay* Relay = Wp.Get();
+		if (!Relay || Relay->GetOwner() != Exiting) continue;
+
+		const FSeinPlayerID Slot = Relay->AssignedPlayerID;
+		if (!Slot.IsValid()) continue;
+
+		SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Dropped);
+		SlotDroppedAtTime.Add(Slot, NowSec);
+		bAnyMarkedDropped = true;
+
+		UE_LOG(LogSeinNet, Log,
+			TEXT("OnLogout: slot %u marked DROPPED (owner=%s left). Server will inject heartbeats; AI takeover scheduled in %.1fs."),
+			Slot.Value, *GetNameSafe(Exiting), DroppedToAITakeoverSeconds);
 	}
 
-	// Recheck every open turn — a dropped player may have been the missing
-	// piece, in which case those turns should fan out NOW with whatever's
-	// already in the buffer instead of stalling forever. Snapshot keys
-	// because ServerCheckTurnComplete mutates ServerTurnBuffer on completion.
-	if (!ToDestroy.IsEmpty() && !ServerTurnBuffer.IsEmpty())
+	// Re-check open turns — the just-dropped slot might be the one we were
+	// waiting on. Inject a heartbeat immediately for the most recent open
+	// turn so the gate completes.
+	if (bAnyMarkedDropped && !ServerTurnBuffer.IsEmpty())
 	{
 		TArray<int32> OpenTurns;
 		ServerTurnBuffer.GetKeys(OpenTurns);
 		for (int32 TurnId : OpenTurns)
 		{
+			InjectDroppedSlotHeartbeats(TurnId);
 			ServerCheckTurnComplete(TurnId);
 		}
 	}
@@ -392,20 +448,40 @@ void USeinNetSubsystem::StartLocalSession()
 		UE_LOG(LogSeinNet, Verbose, TEXT("StartLocalSession: sim already running — no-op."));
 		return;
 	}
+	// Seed the deterministic PRNG with the session seed BEFORE the sim starts.
+	// Every peer (host + clients) calls this with the same SessionSeed (delivered
+	// via the relay's replicated SessionSeed property), so cross-peer rolls
+	// produce identical results from tick 0. Without this, accuracy / damage /
+	// any PRNG-driven sim code diverges across machines from the first call.
+	if (SessionSeed != 0)
+	{
+		WorldSub->SeedSimRandom(SessionSeed);
+	}
+
 	UE_LOG(LogSeinNet, Log, TEXT("StartLocalSession: starting sim at tick 0 with gate engaged."));
 	WorldSub->StartSimulation();
 
-	// Pre-fire the first non-grace heartbeat (turn = InputDelayTurns). Without
-	// this, configs where `InputDelayTurns × TicksPerTurn < 2` (only TPT=1 +
-	// ID=1 today, but any future config that lands here) dead-drop: there are
-	// zero grace ticks for OnSimTickCompleted to fire a heartbeat in before
-	// the sim hits the first gated boundary. Pre-firing seeds the gate so
-	// every connected peer can fan out turn `InputDelayTurns` and the sim
-	// makes progress.
+	// Pre-fire the first non-grace heartbeat (turn = InputDelayTurns).
 	//
-	// Benign for all other configs — the catch-up loop in OnSimTickCompleted
-	// sees LastSubmittedTurn already at InputDelayTurns and skips redundant
-	// re-submission for that turn.
+	// Why: configs with `InputDelayTurns × TicksPerTurn < 2` (only TPT=1 +
+	// ID=1 today, but any future config that lands here) have zero grace
+	// ticks before the first gated boundary — without seeding turn
+	// InputDelayTurns here, the sim hits the gate at tick 1 with nothing
+	// having been submitted yet, sim stalls indefinitely. For commoner
+	// configs (TPT≥2 or ID≥2) OnSimTickCompleted handles it, but pre-firing
+	// is harmless — server's per-slot map dedupes via Add().
+	//
+	// CRITICAL: only advance LastSubmittedTurn if the submission was
+	// ACTUALLY sent. Pre-fire can be silently dropped if LocalRelay is null
+	// at this exact moment (race: OnRep_AssignedPlayerID hasn't fired
+	// before Client_StartSession arrives — possible because both are
+	// replication-channel events delivered together, ordering is "usually
+	// OnRep first" but not contractually guaranteed). If we advance
+	// LastSubmittedTurn unconditionally, the catch-up loop in
+	// OnSimTickCompleted sees the turn as "already submitted" and skips
+	// it — server never gets that client's turn 2 → all peers stall
+	// forever waiting for the missing slot. Caused intermittent freeze
+	// at tick 5 (= last grace-period tick for TPT=3+ID=2).
 	if (LocalPlayerID.IsValid() && IsNetworkingActive())
 	{
 		const int32 InputDelay = GetInputDelayTurns();
@@ -413,8 +489,20 @@ void USeinNetSubsystem::StartLocalSession()
 		{
 			UE_LOG(LogSeinNet, Verbose, TEXT("StartLocalSession: pre-firing heartbeat for turn %d (gate seed)."), InputDelay);
 			const TArray<FSeinCommand> Empty;
-			SubmitLocalCommandsAtTurn(InputDelay, Empty);
-			LastSubmittedTurn = InputDelay;
+			const bool bSent = SubmitLocalCommandsAtTurn(InputDelay, Empty);
+			if (bSent)
+			{
+				LastSubmittedTurn = InputDelay;
+			}
+			else
+			{
+				// LocalRelay wasn't ready yet — leave LastSubmittedTurn at -1
+				// so OnSimTickCompleted's catch-up loop will pick this turn
+				// up at the next turn boundary (tick `TicksPerTurn-1`).
+				UE_LOG(LogSeinNet, Warning,
+					TEXT("StartLocalSession: pre-fire for turn %d dropped (LocalRelay not ready) — deferring to OnSimTickCompleted catch-up."),
+					InputDelay);
+			}
 		}
 	}
 }
@@ -479,7 +567,55 @@ bool USeinNetSubsystem::ResolveTurnReady(int32 Turn)
 	const bool bReady = ReceivedTurns.Contains(Turn);
 	if (!bReady)
 	{
+		// Per-tick stall noise — Verbose.
 		UE_LOG(LogSeinNet, Verbose, TEXT("ResolveTurnReady: turn %d NOT ready — sim stalls."), Turn);
+
+		// Persistent-stall escalation: most "not ready" hits are transient
+		// pipeline blips (one peer's heartbeat is in flight). Only escalate
+		// to Log level when the SAME turn has been stuck for ≥2 seconds —
+		// that's a real stall, worth surfacing without verbose. Transient
+		// blips stay at Verbose.
+		const double NowSec = FPlatformTime::Seconds();
+		if (Turn != LastStalledTurn)
+		{
+			// New unready turn — start the timer, log at Verbose.
+			LastStalledTurn = Turn;
+			FirstStalledAtTime = NowSec;
+			LastStallLogTime = NowSec;
+			bStallLogEscalated = false;
+			UE_LOG(LogSeinNet, Verbose,
+				TEXT("[GATE STALL transient] turn=%d not ready (waiting for fan-out)."),
+				Turn);
+		}
+		else
+		{
+			const double StalledFor = NowSec - FirstStalledAtTime;
+			if (StalledFor >= 2.0)
+			{
+				// Persistent stall — log at Log level, but rate-limit to
+				// once every 2 seconds so the log stays readable on a
+				// long-frozen sim.
+				if (!bStallLogEscalated || (NowSec - LastStallLogTime) >= 2.0)
+				{
+					UE_LOG(LogSeinNet, Log,
+						TEXT("[GATE STALL persistent] turn=%d not ready for %.1fs  LocalSlot=%u  ReceivedTurns=%d entries  PendingOutgoing=%d  LastSubmittedTurn=%d. Sim is frozen — one peer's heartbeat dropped."),
+						Turn, StalledFor, LocalPlayerID.Value, ReceivedTurns.Num(), PendingOutgoingCommands.Num(), LastSubmittedTurn);
+					LastStallLogTime = NowSec;
+					bStallLogEscalated = true;
+				}
+			}
+		}
+	}
+	else
+	{
+		// Turn became ready — reset the persistence tracker so the next
+		// transient blip starts fresh.
+		if (Turn == LastStalledTurn)
+		{
+			LastStalledTurn = -1;
+			FirstStalledAtTime = 0.0;
+			bStallLogEscalated = false;
+		}
 	}
 	return bReady;
 }
@@ -553,6 +689,27 @@ void USeinNetSubsystem::OnSimTickCompleted(int32 CompletedTick)
 		SubmitLocalCommandsAtTurn(T, Payload);
 	}
 	LastSubmittedTurn = OutgoingTurn;
+
+	// Determinism gossip: at each turn boundary, also evaluate whether this
+	// is a state-hash check turn (cadence from settings). If yes, compute the
+	// local hash and submit. Server-side comparison + alarm fan-out is wired
+	// in ServerHandleStateHashReport / ServerCompareHashesForTurn /
+	// ClientHandleDesyncNotification. JustFinishedTurn is the deterministic
+	// turn boundary we just left, so all peers will pick the same checkpoint
+	// turns.
+	MaybeSubmitStateHashCheck(JustFinishedTurn);
+
+	// Drop-in/drop-out (Phase 4): server-only per-turn polling. Inject
+	// heartbeats for dropped slots so the gate doesn't stall, then evaluate
+	// whether any dropped slot has timed out into AI takeover. Cheap walks
+	// over a small map; safe per-turn cost.
+	if (IsServer())
+	{
+		// Heartbeats target the OUTGOING turn (= JustFinishedTurn + InputDelay).
+		// That's the turn the next gate completion will need a slot from.
+		InjectDroppedSlotHeartbeats(OutgoingTurn);
+		EvaluateDroppedSlots();
+	}
 }
 
 void USeinNetSubsystem::SubmitLocalCommand(const FSeinCommand& Command)
@@ -565,6 +722,15 @@ void USeinNetSubsystem::SubmitLocalCommand(const FSeinCommand& Command)
 void USeinNetSubsystem::SubmitLocalCommands(const TArray<FSeinCommand>& Commands)
 {
 	if (Commands.Num() == 0) return;
+
+	// Phase 4 polish: fire the immediate-feedback delegate FIRST, before any
+	// queueing or network routing. Designers can bind audio/visual cues here
+	// to mask the InputDelayTurns roundtrip.
+	for (const FSeinCommand& Cmd : Commands)
+	{
+		OnLocalCommandIssued.Broadcast(Cmd);
+		OnLocalCommandIssuedBP.Broadcast(Cmd);
+	}
 
 	// Standalone path: bypass everything and drop straight into the local
 	// sim's command buffer. Single-player is zero-network-overhead.
@@ -594,14 +760,14 @@ void USeinNetSubsystem::SubmitLocalCommands(const TArray<FSeinCommand>& Commands
 		Commands.Num(), PendingOutgoingCommands.Num());
 }
 
-void USeinNetSubsystem::SubmitLocalCommandAtTurn(int32 TurnId, const FSeinCommand& Command)
+bool USeinNetSubsystem::SubmitLocalCommandAtTurn(int32 TurnId, const FSeinCommand& Command)
 {
 	TArray<FSeinCommand> Single;
 	Single.Add(Command);
-	SubmitLocalCommandsAtTurn(TurnId, Single);
+	return SubmitLocalCommandsAtTurn(TurnId, Single);
 }
 
-void USeinNetSubsystem::SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSeinCommand>& Commands)
+bool USeinNetSubsystem::SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSeinCommand>& Commands)
 {
 	// NOTE: empty `Commands` is intentionally allowed — the heartbeat path
 	// relies on a per-turn submission even when no input was issued, so the
@@ -613,33 +779,40 @@ void USeinNetSubsystem::SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSe
 	// is zero-network-overhead; the lockstep wire is purely opt-in.
 	if (!IsNetworkingActive())
 	{
-		if (Commands.Num() == 0) return; // no heartbeat needed in Standalone
+		if (Commands.Num() == 0) return true; // no heartbeat needed in Standalone (treat as "sent")
 		UWorld* World = GetWorld();
 		USeinWorldSubsystem* WorldSub = World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
 		if (!WorldSub)
 		{
 			UE_LOG(LogSeinNet, Warning, TEXT("SubmitLocalCommandsAtTurn: Standalone but no USeinWorldSubsystem — dropping %d cmd(s)."), Commands.Num());
-			return;
+			return false;
 		}
 		UE_LOG(LogSeinNet, Verbose, TEXT("SubmitLocalCommandsAtTurn [Standalone]: enqueuing %d cmd(s) directly to WorldSubsystem."), Commands.Num());
 		for (const FSeinCommand& Cmd : Commands)
 		{
 			WorldSub->EnqueueCommand(Cmd);
 		}
-		return;
+		return true;
 	}
 
 	ASeinNetRelay* Relay = LocalRelay.Get();
 	if (!Relay)
 	{
-		UE_LOG(LogSeinNet, Warning, TEXT("SubmitLocalCommandsAtTurn: no LocalRelay yet (replication pending?) — dropping %d cmd(s)."), Commands.Num());
-		return;
+		// Promoted to Warning level (was already Warning) — but caller MUST
+		// observe the false return and not advance any "last submitted"
+		// tracking, otherwise the missed turn is lost forever. See
+		// StartLocalSession's pre-fire guard.
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("SubmitLocalCommandsAtTurn: no LocalRelay yet (replication pending?) — dropping %d cmd(s) for TurnId=%d. Caller MUST treat this as not-submitted."),
+			Commands.Num(), TurnId);
+		return false;
 	}
 
 	UE_LOG(LogSeinNet, Verbose, TEXT("SubmitLocalCommandsAtTurn: TurnId=%d  Count=%d  Slot=%u  Relay=%s%s"),
 		TurnId, Commands.Num(), LocalPlayerID.Value, *GetNameSafe(Relay),
 		Commands.IsEmpty() ? TEXT("  [HEARTBEAT]") : TEXT(""));
 	Relay->Server_SubmitCommands(TurnId, Commands);
+	return true;
 }
 
 void USeinNetSubsystem::ServerHandleSubmission(ASeinNetRelay* SourceRelay, int32 TurnId, const TArray<FSeinCommand>& Commands)
@@ -684,13 +857,175 @@ void USeinNetSubsystem::ServerHandleSubmission(ASeinNetRelay* SourceRelay, int32
 	ServerCheckTurnComplete(TurnId);
 }
 
+void USeinNetSubsystem::InjectDroppedSlotHeartbeats(int32 Turn)
+{
+	if (!IsServer()) return;
+	if (CompletedTurns.Contains(Turn)) return;
+
+	TMap<FSeinPlayerID, TArray<FSeinCommand>>& BufferForTurn = ServerTurnBuffer.FindOrAdd(Turn);
+	const TArray<FSeinCommand> Empty;
+
+	for (const auto& Pair : SlotLifecycle)
+	{
+		const FSeinPlayerID Slot = Pair.Key;
+		const ESeinSlotLifecycle Status = Pair.Value;
+
+		// Only inject for slots that aren't going to submit themselves.
+		if (Status != ESeinSlotLifecycle::Dropped &&
+			Status != ESeinSlotLifecycle::AITakeover) continue;
+
+		if (!Slot.IsValid()) continue;
+		if (BufferForTurn.Contains(Slot)) continue; // already submitted (race)
+		BufferForTurn.Add(Slot, Empty);
+
+		UE_LOG(LogSeinNet, Verbose,
+			TEXT("[Server] injected heartbeat on behalf of dropped/AI slot=%u for turn=%d"),
+			Slot.Value, Turn);
+	}
+}
+
+void USeinNetSubsystem::EvaluateDroppedSlots()
+{
+	if (!IsServer()) return;
+	const double NowSec = FPlatformTime::Seconds();
+
+	for (auto It = SlotDroppedAtTime.CreateIterator(); It; ++It)
+	{
+		const FSeinPlayerID Slot = It.Key();
+		const double DroppedAt = It.Value();
+
+		ESeinSlotLifecycle* StatusPtr = SlotLifecycle.Find(Slot);
+		if (!StatusPtr || *StatusPtr != ESeinSlotLifecycle::Dropped)
+		{
+			// Slot reconnected or already transitioned; clean up.
+			It.RemoveCurrent();
+			continue;
+		}
+
+		const double Elapsed = NowSec - DroppedAt;
+		if (Elapsed < DroppedToAITakeoverSeconds) continue;
+
+		// Transition: Dropped → AITakeover. Designer's AI controller is
+		// expected to claim the slot via USeinWorldSubsystem::RegisterAIController
+		// (DESIGN §16). The framework just flips the lifecycle bit + keeps
+		// injecting heartbeats; the actual sim-side AI behavior is the
+		// designer's responsibility.
+		*StatusPtr = ESeinSlotLifecycle::AITakeover;
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[Drop] slot=%u transition Dropped → AITakeover (was dropped %.1fs). Designer AI controller should claim now."),
+			Slot.Value, Elapsed);
+		It.RemoveCurrent();
+	}
+}
+
+void USeinNetSubsystem::SimulateSlotDisconnect(FSeinPlayerID Slot)
+{
+	if (!IsServer())
+	{
+		UE_LOG(LogSeinNet, Warning, TEXT("SimulateSlotDisconnect: server-only — ignored on client."));
+		return;
+	}
+	if (!Slot.IsValid()) return;
+
+	SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Dropped);
+	SlotDroppedAtTime.Add(Slot, FPlatformTime::Seconds());
+
+	UE_LOG(LogSeinNet, Warning,
+		TEXT("[Drop] SimulateSlotDisconnect: slot %u marked DROPPED. Heartbeat injection active; AI takeover scheduled in %.1fs."),
+		Slot.Value, DroppedToAITakeoverSeconds);
+
+	// Inject heartbeats for any open turns so the gate doesn't stall.
+	if (!ServerTurnBuffer.IsEmpty())
+	{
+		TArray<int32> OpenTurns;
+		ServerTurnBuffer.GetKeys(OpenTurns);
+		for (int32 T : OpenTurns)
+		{
+			InjectDroppedSlotHeartbeats(T);
+			ServerCheckTurnComplete(T);
+		}
+	}
+}
+
+void USeinNetSubsystem::SimulateSlotReconnect(FSeinPlayerID Slot)
+{
+	if (!IsServer())
+	{
+		UE_LOG(LogSeinNet, Warning, TEXT("SimulateSlotReconnect: server-only — ignored on client."));
+		return;
+	}
+	if (!Slot.IsValid()) return;
+
+	const ESeinSlotLifecycle* Prev = SlotLifecycle.Find(Slot);
+	if (!Prev)
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[Drop] SimulateSlotReconnect: slot %u has no lifecycle entry — was it ever connected?"),
+			Slot.Value);
+		return;
+	}
+
+	SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Connected);
+	SlotDroppedAtTime.Remove(Slot);
+
+	UE_LOG(LogSeinNet, Log,
+		TEXT("[Drop] SimulateSlotReconnect: slot %u back to CONNECTED. NOTE: full snapshot+tail catch-up is a follow-up phase — slot resumes from current sim state, not from where it disconnected."),
+		Slot.Value);
+}
+
 void USeinNetSubsystem::ServerCheckTurnComplete(int32 TurnId)
 {
 	const TMap<FSeinPlayerID, TArray<FSeinCommand>>* BufferForTurn = ServerTurnBuffer.Find(TurnId);
 	if (!BufferForTurn) return;
 
 	const int32 ActiveSlots = GetActiveSlotCount();
-	if (BufferForTurn->Num() < ActiveSlots) return;
+	if (BufferForTurn->Num() < ActiveSlots)
+	{
+		// Persistent-incomplete escalation: most incompletes are transient
+		// pipeline blips. Stay at Verbose unless the SAME turn has been
+		// incomplete for ≥2 wall-clock seconds — only THEN is it a real
+		// stall worth Log-level surfacing.
+		const double NowSec = FPlatformTime::Seconds();
+		const bool bNewTurn = (TurnId != LastIncompleteWarnedTurn);
+		if (bNewTurn)
+		{
+			LastIncompleteWarnedTurn = TurnId;
+			FirstIncompleteAtTime = NowSec;
+			LastIncompleteWarnTime = NowSec;
+			bIncompleteLogEscalated = false;
+			UE_LOG(LogSeinNet, Verbose,
+				TEXT("[BUFFER INCOMPLETE transient] turn=%d  have=%d/%d slots."),
+				TurnId, BufferForTurn->Num(), ActiveSlots);
+			return;
+		}
+
+		const double IncompleteFor = NowSec - FirstIncompleteAtTime;
+		if (IncompleteFor >= 2.0 &&
+			(!bIncompleteLogEscalated || (NowSec - LastIncompleteWarnTime) >= 2.0))
+		{
+			TArray<FString> Have, Missing;
+			for (const auto& Pair : *BufferForTurn)
+			{
+				Have.Add(FString::Printf(TEXT("%u"), Pair.Key.Value));
+			}
+			for (const auto& Pair : RelayToSlot)
+			{
+				if (!Pair.Value.IsValid()) continue;
+				if (!BufferForTurn->Contains(Pair.Value))
+				{
+					Missing.Add(FString::Printf(TEXT("%u"), Pair.Value.Value));
+				}
+			}
+			UE_LOG(LogSeinNet, Log,
+				TEXT("[BUFFER INCOMPLETE persistent] turn=%d incomplete for %.1fs  have=%d/%d slots [%s]  missing=[%s]. Server is holding — likely one peer's heartbeat dropped (LocalRelay race or disconnect)."),
+				TurnId, IncompleteFor, BufferForTurn->Num(), ActiveSlots,
+				*FString::Join(Have, TEXT(",")),
+				*FString::Join(Missing, TEXT(",")));
+			LastIncompleteWarnTime = NowSec;
+			bIncompleteLogEscalated = true;
+		}
+		return;
+	}
 	// Edge case: someone disconnected after submitting; ActiveSlots dropped
 	// below buffer size. Treat the turn as complete.
 
@@ -708,8 +1043,44 @@ void USeinNetSubsystem::ServerCheckTurnComplete(int32 TurnId)
 		Assembled.Append(Sub);
 	}
 
-	UE_LOG(LogSeinNet, Log, TEXT("[Server] Turn complete: TurnId=%d  Slots=%d  TotalCmds=%d — fanning to %d relays."),
+	// Per-turn chatter — Verbose. Routine completion isn't worth a log line
+	// every ~100ms in a healthy session. Bump LogSeinNet to Verbose to see.
+	UE_LOG(LogSeinNet, Verbose, TEXT("[Server] Turn complete: TurnId=%d  Slots=%d  TotalCmds=%d — fanning to %d relays."),
 		TurnId, SortedSlots.Num(), Assembled.Num(), Relays.Num());
+
+	// Reset the incomplete-persistence tracker if this is the turn we'd been
+	// warning about — clean log on resume.
+	if (TurnId == LastIncompleteWarnedTurn)
+	{
+		if (bIncompleteLogEscalated)
+		{
+			UE_LOG(LogSeinNet, Log,
+				TEXT("[BUFFER INCOMPLETE persistent] turn=%d RESOLVED — completed after stall. Sim resuming."),
+				TurnId);
+		}
+		LastIncompleteWarnedTurn = -1;
+		FirstIncompleteAtTime = 0.0;
+		bIncompleteLogEscalated = false;
+	}
+
+	// Adaptive-input-delay observability: if this turn was previously logged as
+	// INCOMPLETE (so we WERE waiting on someone), the slot whose submission
+	// just unblocked it is the straggler. Track per-peer counts so the
+	// Latency report highlights the bottleneck connection.
+	++TurnsCompletedCount;
+	if (LastIncompleteWarnedTurn == TurnId)
+	{
+		// The last-to-submit slot for this turn IS one of the SortedSlots —
+		// the one whose ServerHandleSubmission call triggered this completion.
+		// We don't have the exact "last" slot tracked here, so as an
+		// approximation pick the highest-numbered slot in the buffer (FIFO
+		// would be more accurate but requires per-slot timestamping). Close
+		// enough for the periodic recommendation log.
+		if (!SortedSlots.IsEmpty())
+		{
+			RecordStragglerIfApplicable(TurnId, SortedSlots.Last());
+		}
+	}
 
 	// Capture the canonical assembled turn into the replay log BEFORE fan-out.
 	// Recording at the assembly step (rather than per-client receive) gives us
@@ -733,7 +1104,8 @@ void USeinNetSubsystem::ServerCheckTurnComplete(int32 TurnId)
 
 void USeinNetSubsystem::ClientHandleTurn(int32 TurnId, const TArray<FSeinCommand>& Commands)
 {
-	UE_LOG(LogSeinNet, Log, TEXT("[Client] Receive turn: TurnId=%d Count=%d  (buffered for turn-boundary drain)"),
+	// Per-turn chatter — Verbose. See ServerCheckTurnComplete's note for why.
+	UE_LOG(LogSeinNet, Verbose, TEXT("[Client] Receive turn: TurnId=%d Count=%d  (buffered for turn-boundary drain)"),
 		TurnId, Commands.Num());
 
 	// Phase 2b: store the assembled turn keyed by TurnId. The sim's gate
@@ -744,4 +1116,257 @@ void USeinNetSubsystem::ClientHandleTurn(int32 TurnId, const TArray<FSeinCommand
 	ReceivedTurns.Add(TurnId, Commands);
 
 	OnTurnReceived.Broadcast(TurnId, Commands);
+}
+
+USeinReplayReader* USeinNetSubsystem::GetOrCreateReplayReader()
+{
+	if (!ReplayReader)
+	{
+		ReplayReader = NewObject<USeinReplayReader>(this);
+	}
+	return ReplayReader;
+}
+
+void USeinNetSubsystem::RecordStragglerIfApplicable(int32 TurnId, FSeinPlayerID LastSubmittingSlot)
+{
+	if (!LastSubmittingSlot.IsValid()) return;
+	int32& Count = StragglerCounts.FindOrAdd(LastSubmittingSlot);
+	++Count;
+
+	// Recommend bumping InputDelayTurns once a peer crosses 5% straggle rate
+	// over a meaningful sample size. Rate-limit to once every 64 turns to
+	// avoid log spam. Designers can manually raise InputDelayTurns in
+	// settings; full automatic dynamic-delay adjustment is deferred (see the
+	// header note next to StragglerCounts).
+	const int32 RECOMMEND_INTERVAL_TURNS = 64;
+	const int32 SAMPLE_THRESHOLD = 50;
+	if (TurnsCompletedCount >= SAMPLE_THRESHOLD &&
+		(TurnsCompletedCount % RECOMMEND_INTERVAL_TURNS) == 0)
+	{
+		const float Rate = static_cast<float>(Count) / static_cast<float>(TurnsCompletedCount);
+		if (Rate > 0.05f)
+		{
+			UE_LOG(LogSeinNet, Warning,
+				TEXT("[ADAPTIVE INPUT DELAY] slot=%u is consistently the last to submit (%d / %d turns, %.1f%%). Consider raising USeinARTSCoreSettings::InputDelayTurns to absorb this peer's latency. Today this is a manual change; automatic dynamic adjustment is a future polish item."),
+				LastSubmittingSlot.Value, Count, TurnsCompletedCount, Rate * 100.0f);
+		}
+	}
+}
+
+// ============================================================================
+// Determinism gossip (Phase 4)
+// ============================================================================
+
+void USeinNetSubsystem::MaybeSubmitStateHashCheck(int32 JustFinishedTurn)
+{
+	if (!IsDeterminismGossipEnabled()) return;
+	if (!IsNetworkingActive()) return;
+	if (!LocalPlayerID.IsValid()) return;
+
+	const int32 Interval = GetDeterminismCheckIntervalTurns();
+	if (Interval <= 0) return;
+
+	// Cadence: every N turns, starting at turn 0 (which is grace anyway, so
+	// no real check fires for it; first real check is turn `Interval`).
+	if (JustFinishedTurn % Interval != 0) return;
+	if (JustFinishedTurn <= LastHashReportedTurn) return;
+
+	// First time this client reports a hash — log at Log level so the user
+	// sees gossip is live without needing Verbose. Subsequent reports stay
+	// Verbose unless there's a desync.
+	if (LastHashReportedTurn < 0)
+	{
+		UE_LOG(LogSeinNet, Log,
+			TEXT("[DETERMINISM] gossip active — reporting state hash every %d turn(s). Server compares + fires red on-screen alarm if peers diverge."),
+			Interval);
+	}
+
+	LastHashReportedTurn = JustFinishedTurn;
+
+	UWorld* World = GetWorld();
+	USeinWorldSubsystem* WorldSub = World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+	if (!WorldSub)
+	{
+		UE_LOG(LogSeinNet, Warning, TEXT("MaybeSubmitStateHashCheck: no USeinWorldSubsystem — skipping hash report for turn %d."),
+			JustFinishedTurn);
+		return;
+	}
+
+	const int32 LocalHash = WorldSub->ComputeStateHash();
+
+	ASeinNetRelay* Relay = LocalRelay.Get();
+	if (!Relay)
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("MaybeSubmitStateHashCheck: no LocalRelay yet — skipping hash report for turn %d."),
+			JustFinishedTurn);
+		return;
+	}
+
+	UE_LOG(LogSeinNet, Verbose,
+		TEXT("[DETERMINISM] reporting hash=0x%08x for turn=%d  slot=%u"),
+		static_cast<uint32>(LocalHash), JustFinishedTurn, LocalPlayerID.Value);
+	Relay->Server_ReportStateHash(JustFinishedTurn, LocalHash);
+}
+
+void USeinNetSubsystem::ServerHandleStateHashReport(ASeinNetRelay* SourceRelay, int32 Turn, int32 Hash)
+{
+	if (!IsServer() || !SourceRelay) return;
+
+	const FSeinPlayerID* SlotPtr = RelayToSlot.Find(SourceRelay);
+	if (!SlotPtr || !SlotPtr->IsValid())
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[DETERMINISM] ServerHandleStateHashReport: unmapped relay %s — dropping hash for turn %d."),
+			*GetNameSafe(SourceRelay), Turn);
+		return;
+	}
+	const FSeinPlayerID Slot = *SlotPtr;
+
+	if (CompletedHashChecks.Contains(Turn))
+	{
+		// Late report for an already-compared turn. Drop silently — the
+		// alarm (if any) already fanned out to all peers, no need to redo.
+		UE_LOG(LogSeinNet, Verbose,
+			TEXT("[DETERMINISM] late hash report from slot=%u for already-compared turn=%d — dropped."),
+			Slot.Value, Turn);
+		return;
+	}
+
+	TMap<FSeinPlayerID, int32>& BufferForTurn = ServerHashReports.FindOrAdd(Turn);
+	BufferForTurn.Add(Slot, Hash);
+
+	UE_LOG(LogSeinNet, Verbose,
+		TEXT("[DETERMINISM] buffered hash report  slot=%u  Turn=%d  Hash=0x%08x  (have %d/%d slots)"),
+		Slot.Value, Turn, static_cast<uint32>(Hash), BufferForTurn.Num(), GetActiveSlotCount());
+
+	if (BufferForTurn.Num() >= GetActiveSlotCount())
+	{
+		ServerCompareHashesForTurn(Turn);
+	}
+}
+
+void USeinNetSubsystem::ServerCompareHashesForTurn(int32 Turn)
+{
+	const TMap<FSeinPlayerID, int32>* Buffer = ServerHashReports.Find(Turn);
+	if (!Buffer || Buffer->IsEmpty()) return;
+
+	// Determinism check: every reporting peer must agree on the hash.
+	const int32 Reference = Buffer->CreateConstIterator()->Value;
+	bool bAllAgree = true;
+	for (const auto& Pair : *Buffer)
+	{
+		if (Pair.Value != Reference)
+		{
+			bAllAgree = false;
+			break;
+		}
+	}
+
+	// Build per-slot summary array for either the agreement log OR the
+	// fan-out payload — same shape, only the verbosity differs.
+	TArray<FSeinSlotHashEntry> SortedHashes;
+	SortedHashes.Reserve(Buffer->Num());
+	for (const auto& Pair : *Buffer)
+	{
+		SortedHashes.Emplace(Pair.Key, Pair.Value);
+	}
+	SortedHashes.Sort([](const FSeinSlotHashEntry& A, const FSeinSlotHashEntry& B)
+	{
+		return A.Slot.Value < B.Slot.Value;
+	});
+
+	if (bAllAgree)
+	{
+		// Most check-turns are silent (Verbose). Promote every 5th to Log
+		// level so the user has periodic visible confirmation that gossip
+		// is working without spam — also serves as the "all green" signal
+		// during long matches.
+		const int32 Interval = GetDeterminismCheckIntervalTurns();
+		const bool bPeriodicConfirm = (Interval > 0) && ((Turn / Interval) % 5 == 0);
+		if (bPeriodicConfirm)
+		{
+			UE_LOG(LogSeinNet, Log,
+				TEXT("[DETERMINISM] turn=%d  %d/%d peers agree on hash 0x%08x — OK."),
+				Turn, Buffer->Num(), GetActiveSlotCount(), static_cast<uint32>(Reference));
+		}
+		else
+		{
+			UE_LOG(LogSeinNet, Verbose,
+				TEXT("[DETERMINISM] turn=%d  %d/%d peers agree on hash 0x%08x — OK."),
+				Turn, Buffer->Num(), GetActiveSlotCount(), static_cast<uint32>(Reference));
+		}
+	}
+	else
+	{
+		// Build a diagnostic line listing each slot's hash for the log.
+		FString Report;
+		for (const FSeinSlotHashEntry& Entry : SortedHashes)
+		{
+			Report += FString::Printf(TEXT("[slot=%u hash=0x%08x] "), Entry.Slot.Value, static_cast<uint32>(Entry.Hash));
+		}
+		UE_LOG(LogSeinNet, Error,
+			TEXT("[DESYNC DETECTED] turn=%d — peer hashes diverge: %s. Fanning Client_NotifyDesync to %d relay(s) so every peer surfaces the on-screen alarm."),
+			Turn, *Report, Relays.Num());
+
+		// Fan to every relay (including host's own — RPC-loopback routes
+		// to local process). Each peer's ClientHandleDesyncNotification
+		// posts the red on-screen debug message + sets bDesyncDetected.
+		for (const TWeakObjectPtr<ASeinNetRelay>& Wp : Relays)
+		{
+			if (ASeinNetRelay* Target = Wp.Get())
+			{
+				Target->Client_NotifyDesync(Turn, SortedHashes);
+			}
+		}
+	}
+
+	ServerHashReports.Remove(Turn);
+	CompletedHashChecks.Add(Turn);
+}
+
+void USeinNetSubsystem::ClientHandleDesyncNotification(int32 Turn, const TArray<FSeinSlotHashEntry>& PeerHashes)
+{
+	bDesyncDetected = true;
+
+	// Build a one-line summary listing every peer's hash. Sort by slot for
+	// readability — server already sorted, but be defensive.
+	TArray<FSeinSlotHashEntry> Sorted = PeerHashes;
+	Sorted.Sort([](const FSeinSlotHashEntry& A, const FSeinSlotHashEntry& B)
+	{
+		return A.Slot.Value < B.Slot.Value;
+	});
+
+	FString PeerSummary;
+	for (const FSeinSlotHashEntry& Entry : Sorted)
+	{
+		const TCHAR* MarkLocal = (Entry.Slot == LocalPlayerID) ? TEXT("*") : TEXT("");
+		PeerSummary += FString::Printf(TEXT("slot %u%s = 0x%08x  "), Entry.Slot.Value, MarkLocal, static_cast<uint32>(Entry.Hash));
+	}
+
+	UE_LOG(LogSeinNet, Error,
+		TEXT("[DESYNC] localSlot=%u  turn=%d  Peers: %s  (* = this peer). Lockstep is broken — sim state has diverged. Capture replay/state dump now; bug repro is in this run."),
+		LocalPlayerID.Value, Turn, *PeerSummary);
+
+	// On-screen RED debug message. AddOnScreenDebugMessage with a stable Key
+	// per-turn so successive desyncs don't all stack identically; we want
+	// each unique (Turn) to surface once. -1 = persistent until cleared.
+	if (GEngine)
+	{
+		const int32 KeyBase = 0x5E7DE57C; // arbitrary salt unique to Sein desync
+		const uint64 KeyTurn = static_cast<uint64>(KeyBase) ^ static_cast<uint64>(Turn);
+		const FString HeaderMsg = FString::Printf(
+			TEXT("[SEINARTS DESYNC] turn=%d  localSlot=%u — sim state diverged across peers."),
+			Turn, LocalPlayerID.Value);
+		GEngine->AddOnScreenDebugMessage(static_cast<int32>(KeyTurn & 0x7FFFFFFFull),
+			30.0f, FColor::Red, HeaderMsg, /*bNewerOnTop=*/true,
+			FVector2D(1.25f, 1.25f));
+
+		// Also surface the per-slot summary as a second line so designers
+		// can see who diverged at a glance without checking the log.
+		const uint64 KeyTurnSummary = KeyTurn ^ 0x1ull;
+		GEngine->AddOnScreenDebugMessage(static_cast<int32>(KeyTurnSummary & 0x7FFFFFFFull),
+			30.0f, FColor(255, 100, 100), FString::Printf(TEXT("  Peers: %s"), *PeerSummary),
+			/*bNewerOnTop=*/true, FVector2D(1.0f, 1.0f));
+	}
 }

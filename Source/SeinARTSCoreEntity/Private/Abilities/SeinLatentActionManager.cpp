@@ -61,6 +61,20 @@ void USeinLatentActionManager::CancelActionsForAbility(USeinAbility* Ability)
 	}
 }
 
+void USeinLatentActionManager::CancelAllActions()
+{
+	for (USeinLatentAction* Action : ActiveActions)
+	{
+		if (Action && !Action->bCompleted && !Action->bCancelled)
+		{
+			Action->Cancel();
+		}
+	}
+	// Drop the array — snapshot restore wants a clean slate before the
+	// ability pool is rebuilt.
+	ActiveActions.Reset();
+}
+
 void USeinLatentActionManager::CleanupCompleted()
 {
 	ActiveActions.RemoveAll([](const TObjectPtr<USeinLatentAction>& Action)

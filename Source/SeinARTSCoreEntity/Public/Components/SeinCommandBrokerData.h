@@ -56,11 +56,17 @@ struct SEINARTSCOREENTITY_API FSeinCommandBrokerData : public FSeinComponent
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Broker")
 	TArray<FSeinEntityHandle> Members;
 
-	/** Resolver instance. Populated when the broker spawns, from
-	 *  `USeinARTSCoreSettings::DefaultBrokerResolverClass` (or the C++ default
-	 *  `USeinDefaultCommandBrokerResolver` if unset). */
+	/** Pool ID of this broker's resolver instance. Index into
+	 *  `USeinWorldSubsystem::CommandBrokerResolverPool`. INDEX_NONE before
+	 *  the broker is fully initialized. Populated by SpawnBroker from
+	 *  `USeinARTSCoreSettings::DefaultBrokerResolverClass` (or the C++
+	 *  default `USeinDefaultCommandBrokerResolver` if unset).
+	 *
+	 *  Phase 4 architecture: stored as int32 ID (not TObjectPtr) so the
+	 *  state hash is portable across processes + world snapshots round-trip
+	 *  cleanly. Walk sites resolve via `World.GetCommandBrokerResolver(ID)`. */
 	UPROPERTY()
-	TObjectPtr<USeinCommandBrokerResolver> Resolver;
+	int32 ResolverID = INDEX_NONE;
 
 	/** Dynamic centroid of the live member set (updated each tick). */
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Broker")

@@ -2,7 +2,7 @@
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinPenetrationResolutionSystem.h
  * @brief   PostTick system that pushes overlapping entities apart along their
- *          separation axis. Universal safety net beneath per-locomotion
+ *          separation axis. Universal safety net beneath per-movement
  *          anticipation — even if Layer 1 didn't fully avoid a collision, no
  *          two entities ever end a tick visibly inside each other.
  */
@@ -23,7 +23,7 @@
  * System: Penetration Resolution
  * Phase: PostTick | Priority: 10
  *
- * Runs after locomotion has finished moving everyone (PostTick) and before
+ * Runs after movement has finished moving everyone (PostTick) and before
  * StateHash (priority 100), so it contributes to the deterministic state
  * snapshot. Uses the spatial hash from PreTick to find candidate pairs in
  * O(K) per entity instead of O(N²).
@@ -41,7 +41,7 @@
  *   5. Run the full sweep TWO TIMES per tick — cheap relaxation that
  *      converges most cluster configurations without the cost of true PBD.
  *
- * Z is intentionally untouched — locomotions own ground snap, and pushing
+ * Z is intentionally untouched — movements own ground snap, and pushing
  * units around vertically would defeat that.
  */
 class FSeinPenetrationResolutionSystem final : public ISeinSystem

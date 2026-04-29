@@ -31,6 +31,7 @@
 
 class USeinWorldSubsystem;
 struct FSeinMatchSettings;
+struct FSeinWorldSnapshot;
 
 UCLASS()
 class SEINARTSFRAMEWORK_API USeinMatchBootstrapSubsystem : public UWorldSubsystem
@@ -39,6 +40,7 @@ class SEINARTSFRAMEWORK_API USeinMatchBootstrapSubsystem : public UWorldSubsyste
 
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 private:
@@ -49,4 +51,16 @@ private:
 	 *  InitGame) and every client (where this subsystem runs it on
 	 *  OnWorldBeginPlay). */
 	void RunSlotPreRegistration(UWorld& InWorld, USeinWorldSubsystem& Sub, const FSeinMatchSettings& Settings);
+
+	/** Snapshot capture hook (Framework-side): stamp the local camera pose
+	 *  onto the snapshot. Bound in OnWorldBeginPlay to USeinWorldSubsystem's
+	 *  OnCaptureSnapshotPostSim delegate. SeinARTSCoreEntity can't include
+	 *  ASeinCameraPawn (cycle), so the inversion happens here. */
+	void HandleSnapshotCapture(FSeinWorldSnapshot& Snapshot);
+
+	/** Mirror — restore local camera pose from snapshot. */
+	void HandleSnapshotRestore(const FSeinWorldSnapshot& Snapshot);
+
+	FDelegateHandle SnapshotCaptureHandle;
+	FDelegateHandle SnapshotRestoreHandle;
 };

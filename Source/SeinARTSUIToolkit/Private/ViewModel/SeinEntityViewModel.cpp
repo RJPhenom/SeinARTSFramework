@@ -246,7 +246,7 @@ TArray<FSeinAbilityInfo> USeinEntityViewModel::GetAbilities() const
 		return Result;
 	}
 
-	for (const TObjectPtr<USeinAbility>& Ability : AbilityComp->AbilityInstances)
+	for (USeinAbility* Ability : AbilityComp->GetAbilityInstances(*WorldSubsystem))
 	{
 		if (Ability)
 		{
@@ -270,7 +270,7 @@ FSeinAbilityInfo USeinEntityViewModel::GetAbilityByTag(FGameplayTag Tag) const
 		return FSeinAbilityInfo();
 	}
 
-	USeinAbility* Found = AbilityComp->FindAbilityByTag(Tag);
+	USeinAbility* Found = AbilityComp->FindAbilityByTag(*WorldSubsystem.Get(), Tag);
 	if (!Found)
 	{
 		return FSeinAbilityInfo();
@@ -287,7 +287,7 @@ bool USeinEntityViewModel::HasAbilityWithTag(FGameplayTag Tag) const
 	}
 
 	const FSeinAbilityData* AbilityComp = WorldSubsystem->GetComponent<FSeinAbilityData>(Entity);
-	return AbilityComp && AbilityComp->HasAbilityWithTag(Tag);
+	return AbilityComp && AbilityComp->HasAbilityWithTag(*WorldSubsystem.Get(), Tag);
 }
 
 FSeinAbilityInfo USeinEntityViewModel::BuildAbilityInfo(const USeinAbility* Ability) const

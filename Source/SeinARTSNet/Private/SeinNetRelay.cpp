@@ -6,6 +6,7 @@
 #include "SeinNetRelay.h"
 #include "SeinARTSNet.h"
 #include "SeinNetSubsystem.h"
+#include "SeinLobbySubsystem.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
@@ -119,5 +120,56 @@ void ASeinNetRelay::Client_StartSession_Implementation()
 	if (USeinNetSubsystem* Net = GetNetSubsystem())
 	{
 		Net->StartLocalSession();
+	}
+}
+
+void ASeinNetRelay::Server_RequestSlotClaim_Implementation(int32 SlotIndex, FSeinFactionID Faction)
+{
+	UE_LOG(LogSeinNet, Verbose,
+		TEXT("[Server] Recv slot claim  Slot=%d  Faction=%u  FromOwner=%s"),
+		SlotIndex, Faction.Value, *GetNameSafe(GetOwner()));
+
+	APlayerController* OwnerPC = Cast<APlayerController>(GetOwner());
+	if (!OwnerPC)
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[Server] Server_RequestSlotClaim: relay has no owning PC — rejecting."));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+	USeinLobbySubsystem* Lobby = GI ? GI->GetSubsystem<USeinLobbySubsystem>() : nullptr;
+	if (!Lobby)
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[Server] Server_RequestSlotClaim: USeinLobbySubsystem missing — rejecting."));
+		return;
+	}
+
+	Lobby->ServerHandleSlotClaim(OwnerPC, SlotIndex, Faction);
+}
+
+void ASeinNetRelay::Server_ReportStateHash_Implementation(int32 Turn, int32 Hash)
+{
+	UE_LOG(LogSeinNet, Verbose,
+		TEXT("[Server] Recv state-hash report  Turn=%d  Hash=0x%08x  FromSlot=%u"),
+		Turn, static_cast<uint32>(Hash), AssignedPlayerID.Value);
+
+	if (USeinNetSubsystem* Net = GetNetSubsystem())
+	{
+		Net->ServerHandleStateHashReport(this, Turn, Hash);
+	}
+}
+
+void ASeinNetRelay::Client_NotifyDesync_Implementation(int32 Turn, const TArray<FSeinSlotHashEntry>& PeerHashes)
+{
+	UE_LOG(LogSeinNet, Error,
+		TEXT("[Client] Recv DESYNC alarm  Turn=%d  PeerCount=%d"),
+		Turn, PeerHashes.Num());
+
+	if (USeinNetSubsystem* Net = GetNetSubsystem())
+	{
+		Net->ClientHandleDesyncNotification(Turn, PeerHashes);
 	}
 }

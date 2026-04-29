@@ -16,7 +16,8 @@ public class SeinARTSFogOfWar : ModuleRules
             PrivateDependencyModuleNames.AddRange(new string[] {
                 "Slate", "SlateCore",
                 "UnrealEd", "AssetRegistry",
-                "LevelEditor"
+                "LevelEditor",
+                "PropertyEditor" // Volume details panel + bake button
             });
         }
     }

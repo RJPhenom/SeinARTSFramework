@@ -151,7 +151,7 @@ void USeinCombatBPFL::SeinApplyDamage(const UObject* WorldContextObject, FSeinEn
 		// to stall cleanup).
 		if (FSeinAbilityData* Abilities = Subsystem->GetComponent<FSeinAbilityData>(TargetHandle))
 		{
-			for (USeinAbility* Ability : Abilities->AbilityInstances)
+			for (USeinAbility* Ability : Abilities->GetAbilityInstances(*Subsystem))
 			{
 				if (Ability && Ability->QueryTags.HasTagExact(SeinARTSTags::DeathHandler))
 				{

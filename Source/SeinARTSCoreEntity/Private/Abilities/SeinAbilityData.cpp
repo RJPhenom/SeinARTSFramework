@@ -4,25 +4,64 @@
  * @brief   FSeinAbilityData sim-payload implementation — tag-based lookup
  *          across an entity's granted ability instances, plus command-context
  *          resolver that picks an ability tag from DefaultCommands.
+ *
+ *          Phase 4 architecture: ability storage is int32 pool IDs, not live
+ *          UObject refs. Accessors take a `USeinWorldSubsystem&` and route
+ *          through `World.GetAbilityInstance(ID)` for the lookup.
  */
 
 #include "Components/SeinAbilityData.h"
+#include "Simulation/SeinWorldSubsystem.h"
 
-USeinAbility* FSeinAbilityData::FindAbilityByTag(const FGameplayTag& Tag) const
+USeinAbility* FSeinAbilityData::GetActiveAbility(const USeinWorldSubsystem& World) const
 {
-	for (const TObjectPtr<USeinAbility>& Ability : AbilityInstances)
+	return World.GetAbilityInstance(ActiveAbilityID);
+}
+
+TArray<USeinAbility*> FSeinAbilityData::GetAbilityInstances(const USeinWorldSubsystem& World) const
+{
+	TArray<USeinAbility*> Out;
+	Out.Reserve(AbilityInstanceIDs.Num());
+	for (int32 ID : AbilityInstanceIDs)
 	{
-		if (Ability && Ability->AbilityTag == Tag)
+		if (USeinAbility* A = World.GetAbilityInstance(ID))
 		{
-			return Ability.Get();
+			Out.Add(A);
+		}
+	}
+	return Out;
+}
+
+TArray<USeinAbility*> FSeinAbilityData::GetActivePassives(const USeinWorldSubsystem& World) const
+{
+	TArray<USeinAbility*> Out;
+	Out.Reserve(ActivePassiveIDs.Num());
+	for (int32 ID : ActivePassiveIDs)
+	{
+		if (USeinAbility* A = World.GetAbilityInstance(ID))
+		{
+			Out.Add(A);
+		}
+	}
+	return Out;
+}
+
+USeinAbility* FSeinAbilityData::FindAbilityByTag(const USeinWorldSubsystem& World, const FGameplayTag& Tag) const
+{
+	for (int32 ID : AbilityInstanceIDs)
+	{
+		USeinAbility* A = World.GetAbilityInstance(ID);
+		if (A && A->AbilityTag == Tag)
+		{
+			return A;
 		}
 	}
 	return nullptr;
 }
 
-bool FSeinAbilityData::HasAbilityWithTag(const FGameplayTag& Tag) const
+bool FSeinAbilityData::HasAbilityWithTag(const USeinWorldSubsystem& World, const FGameplayTag& Tag) const
 {
-	return FindAbilityByTag(Tag) != nullptr;
+	return FindAbilityByTag(World, Tag) != nullptr;
 }
 
 FGameplayTag FSeinAbilityData::ResolveCommandContext(const FGameplayTagContainer& Context) const

@@ -32,6 +32,7 @@ class ASeinActor;
 class USeinArchetypeDefinition;
 class USeinFaction;
 class USeinAbility;
+class USeinCommandBrokerResolver;
 class USeinAIController;
 class USeinEffect;
 class USeinLatentActionManager;
@@ -428,6 +429,109 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player")
 	void RegisterFaction(USeinFaction* Faction);
 
+	/**
+	 * Load + register every `USeinFaction` listed in
+	 * `USeinARTSCoreSettings::RegisteredFactions`. Called from BOTH server-side
+	 * GameMode and client-side MatchBootstrap at world init so each peer's
+	 * `Factions` map ends up with bit-identical contents (same set, same
+	 * iteration order driven by the settings array).
+	 *
+	 * Phase 3d: closes the orphaned-`RegisterFaction` footgun. Before this, no
+	 * one called RegisterFaction → `Factions` map empty → `RegisterPlayer`'s
+	 * ResourceKit lookup silently failed → `StartingResources` GameMode CDO
+	 * filled the gap. Benign today; the moment a designer relied on the
+	 * faction-driven kit path, server would populate via game-side code while
+	 * clients had nothing — silent desync. Settings-driven enumeration makes
+	 * the registration deterministic-by-construction.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Player")
+	void RegisterFactionsFromSettings();
+
+	/**
+	 * Seed the deterministic sim PRNG. Bit-identical input across peers is
+	 * a hard requirement for lockstep — every machine MUST call this with
+	 * the same value before tick 0 or rolls diverge from the first call.
+	 *
+	 * Today: not yet wired into the live-session start path
+	 * (`USeinNetSubsystem::StartLockstepSession` should call this with
+	 *  `SessionSeed`). Replay reader uses it to recreate the original PRNG
+	 *  state from the .seinreplay header.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Replay")
+	void SeedSimRandom(int64 Seed);
+
+	// ============================================================================
+	// World snapshot — capture + restore (Phase 4 architecture)
+	// ============================================================================
+	//
+	// Used by drop-in/drop-out catch-up (snapshot at tick T → catching peer
+	// rehydrates), save/load, and the future state-dump-on-desync path.
+	// Snapshot is owned by the subsystem; the file/wire serializer wraps it
+	// in `FObjectAndNameAsStringProxyArchive` (replay writer pattern).
+
+	/** Capture current sim state into the supplied snapshot. Read-only on
+	 *  sim state, but fires `OnCaptureSnapshotPostSim` (non-const broadcast)
+	 *  so upstream modules can stamp their own fields — hence the method
+	 *  is non-const. */
+	void CaptureSnapshot(struct FSeinWorldSnapshot& OutSnapshot);
+
+	/** Restore sim state from the snapshot. Wipes current entity pool /
+	 *  component storages / pools / player states first. After restore,
+	 *  the sim is paused — caller resumes via `StartSimulation` / sets the
+	 *  match state to Playing. Returns false on snapshot version mismatch
+	 *  or other unrecoverable validation failure. */
+	bool RestoreSnapshot(const struct FSeinWorldSnapshot& InSnapshot);
+
+	/** Fired during CaptureSnapshot AFTER all sim-side state is written, so
+	 *  upstream modules (SeinARTSFramework: camera, UI scroll position;
+	 *  designer-extended modules: project-specific local UI state) can stamp
+	 *  their own fields on the snapshot. Module dependency note: SeinARTSCoreEntity
+	 *  can't directly include SeinARTSFramework headers (would close a cycle),
+	 *  so this delegate is the inversion point — Framework binds, CoreEntity
+	 *  fires. The snapshot struct's `bHasLocalCameraState` + camera fields are
+	 *  the well-known slot SeinARTSFramework writes into. */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnCaptureSnapshot, struct FSeinWorldSnapshot& /*Snapshot*/);
+	FOnCaptureSnapshot OnCaptureSnapshotPostSim;
+
+	/** Mirror delegate for restore. Fired AFTER sim state is rehydrated and
+	 *  the actor bridge is reconciled, so Framework's camera-restore path
+	 *  hits a fully-live world. */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnRestoreSnapshot, const struct FSeinWorldSnapshot& /*Snapshot*/);
+	FOnRestoreSnapshot OnRestoreSnapshotPostSim;
+
+	// ============================================================================
+	// Ability + Resolver pools (Phase 4 architecture cleanup)
+	// ============================================================================
+	//
+	// Component data structs reference ability / broker-resolver UObject instances
+	// via stable int32 IDs (indices into these pools), not direct TObjectPtr refs.
+	// This makes:
+	//   - State hashes deterministic across processes (int32 IDs vs pointer values)
+	//   - World snapshots portable (IDs survive disk/wire round-trips)
+	//   - DESIGN.md §2 satisfied (component data is pure — no live UObject refs)
+	//
+	// Pools own the UObject lifetime via UPROPERTY (rooted on the subsystem).
+	// Free-list-recycled IDs keep the index space compact across spawn/despawn.
+	// IDs are deterministic by construction: the sim processes commands in a
+	// fixed order on every peer → ability creation order matches → pool slot
+	// allocation matches.
+
+	/** Register a freshly-NewObject'd ability with the pool. Returns the
+	 *  stable int32 ID component data should hold. INDEX_NONE on null input. */
+	int32 RegisterAbilityInstance(USeinAbility* Ability);
+
+	/** Release an ability slot back to the free list. Sets pool[ID] to null
+	 *  and adds the slot to the free list for reuse. Idempotent on invalid IDs. */
+	void UnregisterAbilityInstance(int32 AbilityID);
+
+	/** Pool lookup. Returns null on INDEX_NONE / out-of-range / unregistered. */
+	USeinAbility* GetAbilityInstance(int32 AbilityID) const;
+
+	/** Same shape for command-broker resolvers. Each broker spawns one. */
+	int32 RegisterCommandBrokerResolver(USeinCommandBrokerResolver* Resolver);
+	void UnregisterCommandBrokerResolver(int32 ResolverID);
+	USeinCommandBrokerResolver* GetCommandBrokerResolver(int32 ResolverID) const;
+
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Player")
 	int32 GetPlayerCount() const { return PlayerStates.Num(); }
 
@@ -686,7 +790,7 @@ private:
 
 	// Spatial hash — pure C++, rebuilt each tick by FSeinSpatialHashSystem.
 	// Lives next to the entity pool because its lifetime is identical and
-	// its callers (sim systems + locomotions) need a stable, world-scoped
+	// its callers (sim systems + movements) need a stable, world-scoped
 	// query surface. Initialized in Initialize().
 	FSeinSpatialHash SpatialHash;
 
@@ -730,6 +834,20 @@ private:
 	// AI controller registry (DESIGN §16). Ticked in CommandProcessing phase.
 	UPROPERTY()
 	TArray<TObjectPtr<USeinAIController>> AIControllers;
+
+	// ============================================================================
+	// Ability + Resolver pools storage (Phase 4 architecture)
+	// ============================================================================
+	// Pool slots own the UObject lifetime via UPROPERTY. Indices are stable IDs
+	// component data holds. Free-list-recycled to keep the index space compact.
+
+	UPROPERTY()
+	TArray<TObjectPtr<USeinAbility>> AbilityPool;
+	TArray<int32> AbilityPoolFreeList;
+
+	UPROPERTY()
+	TArray<TObjectPtr<USeinCommandBrokerResolver>> CommandBrokerResolverPool;
+	TArray<int32> CommandBrokerResolverPoolFreeList;
 
 	// Tick the registered AI controllers. Called from TickSystems at
 	// CommandProcessing phase, right before ProcessCommands.
@@ -780,6 +898,14 @@ private:
 	// tick N, which is what determinism/lockstep requires.
 	float TimeAccumulator = 0.0f;
 	float FixedDeltaTimeSeconds = 1.0f / 30.0f;
+
+	// Persistence tracking for the "Simulation falling behind" log: most
+	// clamps are transient single-frame hitches and don't warrant a Warning.
+	// Only escalate to Warning when clamping has been CONTINUOUS for ≥1s.
+	double ClampWindowStartTime = 0.0;
+	double LastClampTime = 0.0;
+	double LastClampWarnTime = 0.0;
+	bool bClampWarningEmitted = false;
 
 	// Tick pipeline
 	bool TickSimulation(float DeltaTime);

@@ -34,9 +34,12 @@ public class SeinARTSEditor : ModuleRules
             "GameplayTags",
             "SeinARTSCore",
             "SeinARTSCoreEntity",
-            "SeinARTSNavigation",
-            "SeinARTSFogOfWar",
             "SeinARTSUIToolkit"
+            // SeinARTSNavigation + SeinARTSFogOfWar are NOT deps here.
+            // Each system owns its own volume details panel registration via
+            // `#if WITH_EDITOR` blocks in its own module — keeps the framework
+            // editor decoupled so swapping the nav or fog impl doesn't require
+            // touching this module.
         });
     }
 }

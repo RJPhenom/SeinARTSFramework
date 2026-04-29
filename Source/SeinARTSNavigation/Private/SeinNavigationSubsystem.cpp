@@ -6,7 +6,7 @@
 #include "SeinNavigationSubsystem.h"
 #include "SeinNavigation.h"
 #include "SeinNavigationAsset.h"
-#include "Default/SeinNavigationAStar.h"
+#include "Default/SeinNavigationDefaultAStar.h"
 #include "Volumes/SeinNavVolume.h"
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
@@ -33,7 +33,7 @@ void USeinNavigationSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 	if (!NavClass || NavClass->HasAnyClassFlags(CLASS_Abstract))
 	{
-		NavClass = USeinNavigationAStar::StaticClass();
+		NavClass = USeinNavigationDefaultAStar::StaticClass();
 	}
 
 	Navigation = NewObject<USeinNavigation>(this, NavClass, TEXT("SeinNavigation"));

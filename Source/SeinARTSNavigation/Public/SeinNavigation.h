@@ -10,7 +10,7 @@
  *          delegate talk to.
  *
  *          Configured via plugin settings (`USeinARTSCoreSettings::NavigationClass`).
- *          The framework ships `USeinNavigationAStar` as a minimal 2D-grid +
+ *          The framework ships `USeinNavigationDefaultAStar` as a minimal 2D-grid +
  *          A* reference implementation; game teams can subclass or replace it
  *          entirely with navmesh-, waypoint-, or hierarchical-graph-based impls
  *          without touching any other framework code.
@@ -39,6 +39,7 @@
 class UWorld;
 class ASeinNavVolume;
 class USeinNavigationAsset;
+class IDetailLayoutBuilder;
 
 /**
  * One runtime path blocker = one FSeinStampShape posed at an entity. Multiple
@@ -235,6 +236,21 @@ public:
 		TArray<FVector>& OutCenters,
 		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const {}
+
+	// ----------------------------------------------------------------------
+	// Editor extensibility
+	// ----------------------------------------------------------------------
+
+#if WITH_EDITOR
+	/** Optional hook for subclasses to extend ASeinNavVolume's details panel.
+	 *  Called by the framework's `FSeinNavVolumeDetails` after it has added its
+	 *  own "Bake Navigation" row. Subclasses may add custom rows (per-bake
+	 *  options, per-volume diagnostics, multi-stage bake UI, etc.). Default:
+	 *  no-op. The framework's bake button is unconditional — the abstract
+	 *  `BeginBake` virtual dispatches to whatever subclass is active, so
+	 *  designers see the same button regardless of which nav impl is selected. */
+	virtual void CustomizeVolumeDetails(IDetailLayoutBuilder& /*DetailBuilder*/, ASeinNavVolume* /*Volume*/) {}
+#endif
 
 	// ----------------------------------------------------------------------
 	// Events

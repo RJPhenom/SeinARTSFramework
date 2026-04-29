@@ -33,9 +33,9 @@ public:
 				return;
 			}
 
-			for (TObjectPtr<USeinAbility>& Ability : AbilityComp->AbilityInstances)
+			for (int32 ID : AbilityComp->AbilityInstanceIDs)
 			{
-				if (Ability)
+				if (USeinAbility* Ability = World.GetAbilityInstance(ID))
 				{
 					Ability->TickCooldown(DeltaTime);
 				}

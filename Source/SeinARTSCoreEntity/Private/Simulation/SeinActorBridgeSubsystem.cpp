@@ -345,6 +345,85 @@ void USeinActorBridgeSubsystem::HandleEntityDestroyed(FSeinEntityHandle Handle, 
 		*Handle.ToString(), *Actor->GetName(), DestroyActorDelay);
 }
 
+void USeinActorBridgeSubsystem::ReconcileBridgeAfterRestore()
+{
+	if (!SimSubsystem.IsValid()) return;
+	USeinWorldSubsystem* Sim = SimSubsystem.Get();
+
+	// Pass 1 — cull orphans. Walk the bridge map; for any handle whose sim
+	// entity no longer exists, scrub the actor.
+	int32 NumOrphansCulled = 0;
+	for (auto It = EntityActorMap.CreateIterator(); It; ++It)
+	{
+		const FSeinEntityHandle Handle = It->Key;
+		const bool bSimAlive = Sim->IsEntityAlive(Handle);
+		if (bSimAlive) continue;
+
+		ASeinActor* Actor = It->Value.Get();
+		if (Actor)
+		{
+			// Run the standard destroy-side notifications so AC subclasses
+			// can clean up. Same flow HandleEntityDestroyed uses, minus the
+			// visual-event payload.
+			TArray<USeinActorComponent*> SimACs;
+			Actor->GetComponents<USeinActorComponent>(SimACs);
+			for (USeinActorComponent* AC : SimACs)
+			{
+				if (AC) AC->DispatchDestroy();
+			}
+			Actor->SetLifeSpan(DestroyActorDelay);
+			++NumOrphansCulled;
+			UE_LOG(LogSeinBridge, Verbose,
+				TEXT("ReconcileBridgeAfterRestore: culling orphan actor %s (entity %s no longer in sim)"),
+				*Actor->GetName(), *Handle.ToString());
+		}
+		It.RemoveCurrent();
+	}
+
+	// Pass 2 — spawn missing. Walk every alive sim entity; if no actor in
+	// the bridge map, spawn one using the entity's stored actor class. Skips
+	// abstract entities (per §1 bIsAbstract). Uses the entity's current sim
+	// transform as the spawn location — same as a normal EntitySpawned event.
+	int32 NumActorsSpawned = 0;
+	int32 NumAbstractSkipped = 0;
+	int32 NumMissingClass = 0;
+	Sim->GetEntityPool().ForEachEntity([&](FSeinEntityHandle Handle, FSeinEntity& Entity)
+	{
+		if (EntityActorMap.Contains(Handle)) return;
+
+		TSubclassOf<ASeinActor> ActorClass = Sim->GetEntityActorClass(Handle);
+		if (!ActorClass)
+		{
+			++NumMissingClass;
+			return;
+		}
+
+		const ASeinActor* CDO = GetDefault<ASeinActor>(ActorClass);
+		if (CDO && CDO->ArchetypeDefinition && CDO->ArchetypeDefinition->bIsAbstract)
+		{
+			++NumAbstractSkipped;
+			return;
+		}
+
+		// Build a synthetic spawn event and route it through the regular
+		// spawn path so AC OnEntitySpawned hooks fire identically to the
+		// normal EntitySpawned visual-event flow.
+		FSeinVisualEvent SpawnEvent;
+		SpawnEvent.Type = ESeinVisualEventType::EntitySpawned;
+		SpawnEvent.PrimaryEntity = Handle;
+		SpawnEvent.Location = Entity.Transform.GetLocation();
+		SpawnActorForEntity(Handle, SpawnEvent);
+		if (EntityActorMap.Contains(Handle))
+		{
+			++NumActorsSpawned;
+		}
+	});
+
+	UE_LOG(LogSeinBridge, Log,
+		TEXT("ReconcileBridgeAfterRestore: culled %d orphan actor(s), spawned %d missing actor(s), skipped %d abstract, %d entities had no class registered."),
+		NumOrphansCulled, NumActorsSpawned, NumAbstractSkipped, NumMissingClass);
+}
+
 // ==================== Public API ====================
 
 ASeinActor* USeinActorBridgeSubsystem::GetActorForEntity(FSeinEntityHandle Handle) const

@@ -285,7 +285,7 @@ FSeinActionSlotData USeinUIBPFL::SeinBuildAbilitySlotData(const UObject* WorldCo
 		return Data;
 	}
 
-	USeinAbility* Ability = AbilityComp->FindAbilityByTag(AbilityTag);
+	USeinAbility* Ability = AbilityComp->FindAbilityByTag(*SimSub, AbilityTag);
 	if (!Ability)
 	{
 		return Data;
@@ -336,7 +336,7 @@ TArray<FSeinActionSlotData> USeinUIBPFL::SeinBuildAllAbilitySlotData(const UObje
 	}
 
 	int32 SlotIndex = 0;
-	for (const TObjectPtr<USeinAbility>& Ability : AbilityComp->AbilityInstances)
+	for (USeinAbility* Ability : AbilityComp->GetAbilityInstances(*SimSub))
 	{
 		if (Ability && !Ability->bIsPassive)
 		{

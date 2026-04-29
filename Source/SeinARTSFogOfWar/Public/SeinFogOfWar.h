@@ -40,6 +40,8 @@
 class UWorld;
 class USeinFogOfWarAsset;
 class USeinWorldSubsystem;
+class ASeinFogOfWarVolume;
+class IDetailLayoutBuilder;
 
 /** Fired when the fog-of-war's baked or runtime state mutates (bake
  *  finished, asset swap, dynamic blocker change). Debug viz + cached UI
@@ -211,6 +213,21 @@ public:
 		TArray<FVector>& OutCenters,
 		TArray<FColor>& OutColors,
 		float& OutHalfExtent) const {}
+
+	// ----------------------------------------------------------------------
+	// Editor extensibility
+	// ----------------------------------------------------------------------
+
+#if WITH_EDITOR
+	/** Optional hook for subclasses to extend ASeinFogOfWarVolume's details
+	 *  panel. Called by the framework's `FSeinFogOfWarVolumeDetails` after it
+	 *  has added its own "Bake Fog Of War" row. Subclasses may add custom rows
+	 *  (per-bake options, layer-mask presets, etc.). Default: no-op. The
+	 *  framework's bake button is unconditional — the abstract `BeginBake`
+	 *  virtual dispatches to whatever subclass is active, so designers see the
+	 *  same button regardless of which fog impl is selected. */
+	virtual void CustomizeVolumeDetails(IDetailLayoutBuilder& /*DetailBuilder*/, ASeinFogOfWarVolume* /*Volume*/) {}
+#endif
 
 	// ----------------------------------------------------------------------
 	// Events

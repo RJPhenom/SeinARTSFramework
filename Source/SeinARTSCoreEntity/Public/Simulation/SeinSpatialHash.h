@@ -2,7 +2,7 @@
  * SeinARTS Framework - Copyright (c) 2026 Phenom Studios, Inc.
  * @file    SeinSpatialHash.h
  * @brief   Deterministic 2D bucket grid keyed by integer cell coords. Used by
- *          the avoidance pipeline (penetration resolution + per-locomotion
+ *          the avoidance pipeline (penetration resolution + per-movement
  *          anticipation) to answer "give me handles within radius R of point
  *          P" in O(K) where K is the bucket fan-out.
  *

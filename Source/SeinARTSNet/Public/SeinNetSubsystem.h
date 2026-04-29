@@ -33,6 +33,33 @@ class APlayerController;
 class AGameModeBase;
 class AController;
 class USeinReplayWriter;
+class USeinReplayReader;
+struct FSeinSlotHashEntry;
+
+/**
+ * Slot lifecycle states for drop-in/drop-out (Phase 4).
+ * Stored per-slot in `USeinNetSubsystem::SlotLifecycle`.
+ *
+ *   Connected  — owning PC is live, submitting commands normally.
+ *   Dropped    — PC disconnected; server submits empty heartbeats on the
+ *                slot's behalf so the lockstep gate doesn't stall. After
+ *                a timeout (per match settings' ESeinHostDropAction) the
+ *                slot transitions to AITakeover.
+ *   AITakeover — slot is now driven by an AI controller (designer-authored).
+ *                Sim continues; the original player is gone for good unless
+ *                they reconnect (future phase).
+ *   Reconnecting — a new connection matching this slot's stable ID has
+ *                arrived; server is sending the catch-up snapshot+tail.
+ *                (Reserved — full reconnect catch-up is a follow-up phase.)
+ */
+UENUM(BlueprintType)
+enum class ESeinSlotLifecycle : uint8
+{
+	Connected,
+	Dropped,
+	AITakeover,
+	Reconnecting,
+};
 
 UCLASS()
 class SEINARTSNET_API USeinNetSubsystem : public UGameInstanceSubsystem
@@ -63,9 +90,17 @@ public:
 	/** Explicit-turn variants. Used by the Sein.Net.TestPing console command
 	 *  to drive deterministic turn IDs for the gate test, and by future
 	 *  callers that already know the target turn. Player-input handlers should
-	 *  use the no-TurnId overload instead. */
-	void SubmitLocalCommandAtTurn(int32 TurnId, const FSeinCommand& Command);
-	void SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSeinCommand>& Commands);
+	 *  use the no-TurnId overload instead.
+	 *
+	 *  Returns true iff the submission was actually sent (Standalone direct-
+	 *  enqueue, OR networked submit through a valid LocalRelay). Returns false
+	 *  if dropped — caller MUST NOT advance any "last submitted" tracking on
+	 *  false, otherwise the missed turn never re-submits and the lockstep
+	 *  gate stalls forever (subtle race: OnRep_AssignedPlayerID hasn't fired
+	 *  before Client_StartSession arrives, LocalRelay is still null at the
+	 *  pre-fire moment, the heartbeat is silently dropped). */
+	bool SubmitLocalCommandAtTurn(int32 TurnId, const FSeinCommand& Command);
+	bool SubmitLocalCommandsAtTurn(int32 TurnId, const TArray<FSeinCommand>& Commands);
 
 	/** Local player's slot, valid after the relay's AssignedPlayerID OnRep
 	 *  fires (a few frames after PIE Play depending on replication latency).
@@ -122,6 +157,33 @@ public:
 	 *  Public so Sein.Net.SaveReplay can drive a manual flush. */
 	USeinReplayWriter* GetReplayWriter() const { return ReplayWriter; }
 
+	/** Lazy-create the persistent replay reader instance. Same lifetime as
+	 *  the GI subsystem — created on first access, cleared in Deinitialize.
+	 *  `Sein.Net.LoadReplay` / `Sein.Net.StopReplay` console commands route
+	 *  through this. Phase 4a. */
+	USeinReplayReader* GetOrCreateReplayReader();
+
+	// ============== Drop-in / drop-out (Phase 4) ==============
+
+	/** Server-only: simulate a disconnect for `Slot` (used by `Sein.Net.SimulateDisconnect`
+	 *  console command + future tests). Marks the slot as Dropped — the gate
+	 *  won't stall on it because the server starts submitting empty heartbeats
+	 *  on its behalf each turn. After `DroppedToAITakeoverSeconds` of continued
+	 *  drop, transitions to AITakeover (designer's AI controller takes over). */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Network")
+	void SimulateSlotDisconnect(FSeinPlayerID Slot);
+
+	/** Server-only: simulate the reconnect path. Marks the slot Connected
+	 *  again. Full snapshot+tail catch-up flow is a follow-up phase — for now
+	 *  this just clears the dropped flag so the original PC's relay can
+	 *  resume submitting (if the PC is still around, e.g., from a stutter
+	 *  rather than a true disconnect). */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Network")
+	void SimulateSlotReconnect(FSeinPlayerID Slot);
+
+	/** Read-only accessor for diagnostic console commands. */
+	const TMap<FSeinPlayerID, ESeinSlotLifecycle>& GetSlotLifecycle() const { return SlotLifecycle; }
+
 	/** Relay lifecycle hooks called by ASeinNetRelay::BeginPlay/EndPlay on
 	 *  whichever process the body runs in. Server tracks every relay; clients
 	 *  remember which one is theirs. */
@@ -138,9 +200,55 @@ public:
 	 *  matching sim-tick boundary. */
 	void ClientHandleTurn(int32 TurnId, const TArray<FSeinCommand>& Commands);
 
+	/** Server-side: a peer reported its state hash for a check turn. Buffer
+	 *  per-peer hashes; once all active peers have reported, compare —
+	 *  agreement is silent (Verbose log), divergence fans Client_NotifyDesync
+	 *  to every relay so all peers get the red on-screen alarm with the
+	 *  full per-slot hash table. */
+	void ServerHandleStateHashReport(ASeinNetRelay* SourceRelay, int32 Turn, int32 Hash);
+
+	/** Client-side: server told us a desync was detected at `Turn` and is
+	 *  forwarding everyone's hashes so we can show the alarm with full
+	 *  context. Logs at Error + posts a persistent red on-screen debug
+	 *  message via GEngine->AddOnScreenDebugMessage. Optionally pauses the
+	 *  local sim if `bPauseOnDesync` is set in plugin settings. */
+	void ClientHandleDesyncNotification(int32 Turn, const TArray<FSeinSlotHashEntry>& PeerHashes);
+
+	/** True iff the local sim has been flagged as desynced. Once set, stays
+	 *  true until the user calls `Sein.Net.ClearDesync` or restarts PIE.
+	 *  The lockstep gate consults this so designers can choose to halt the
+	 *  sim on detection (default: continue ticking, just show alarm). */
+	bool IsLocalDesyncDetected() const { return bDesyncDetected; }
+
 	/** Phase 0 visibility hooks — bind from console exec or test code. */
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnTurnReceived, int32 /*TurnId*/, const TArray<FSeinCommand>& /*Commands*/);
 	FOnTurnReceived OnTurnReceived;
+
+	/**
+	 * Phase 4 polish: immediate-feedback delegate. Fires SYNCHRONOUSLY on
+	 * `SubmitLocalCommand` / `SubmitLocalCommands`, BEFORE the network
+	 * roundtrip. Designer Widget BPs / audio hooks bind here to surface
+	 * instant local feedback (selection ring flash, audio cue, ground
+	 * marker) without waiting for the InputDelayTurns roundtrip — hides
+	 * lockstep latency from the player.
+	 *
+	 * BP-bindable variant + matching BPFL `BindOnLocalCommandIssued` ships in
+	 * SeinARTSFramework so designers can wire from a Widget BP graph.
+	 *
+	 * The command's TurnId is NOT yet set at this point — only the local PC
+	 * has captured it; the server will stamp the authoritative turn during
+	 * fan-out. Use the command's Type / TargetEntity / Position fields for
+	 * feedback decisions, not Turn.
+	 */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLocalCommandIssued, const FSeinCommand& /*Command*/);
+	FOnLocalCommandIssued OnLocalCommandIssued;
+
+	/** Dynamic (BP-bindable) variant of the same event. Fires alongside the
+	 *  native delegate from `SubmitLocalCommand`. Designers bind from a
+	 *  Widget BP / GameInstance event graph. */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLocalCommandIssuedDynamic, const FSeinCommand&, Command);
+	UPROPERTY(BlueprintAssignable, Category = "SeinARTS|Network|Feedback")
+	FOnLocalCommandIssuedDynamic OnLocalCommandIssuedBP;
 
 	/** True if networking is enabled in settings AND the world has a real
 	 *  NetDriver (NetMode != NM_Standalone). Public so callers can early-out
@@ -245,4 +353,122 @@ private:
 	 *  Deinitialize (or via Sein.Net.SaveReplay). Null on clients. */
 	UPROPERTY()
 	TObjectPtr<USeinReplayWriter> ReplayWriter;
+
+	/** Standalone-mode replay playback instance, created lazily by
+	 *  `GetOrCreateReplayReader`. */
+	UPROPERTY()
+	TObjectPtr<USeinReplayReader> ReplayReader;
+
+	/** Drop-in/drop-out (Phase 4): per-slot lifecycle state. Server-only.
+	 *  Updated on PostLogin → Connected; on Logout → Dropped (relay kept
+	 *  alive so the slot can resume); on AI-takeover transition; on
+	 *  reconnect resolution. */
+	TMap<FSeinPlayerID, ESeinSlotLifecycle> SlotLifecycle;
+
+	/** Server-side: when a slot transitioned from Connected → Dropped, this
+	 *  records the wall-clock timestamp. Used to fire the AI-takeover
+	 *  transition after `DroppedToAITakeoverSeconds` of continuous drop. */
+	TMap<FSeinPlayerID, double> SlotDroppedAtTime;
+
+	/** Server-only: how long a slot can stay Dropped before transitioning to
+	 *  AI takeover (per match settings' `ESeinHostDropAction::AITakeover`).
+	 *  Static const for now — future: read from match settings. */
+	static constexpr double DroppedToAITakeoverSeconds = 30.0;
+
+	/** Server-side: per-Dropped-slot heartbeat injection — called from
+	 *  OnSimTickCompleted. For each slot in Dropped state, submit an empty
+	 *  command list directly into the server's turn buffer so the gate can
+	 *  complete without waiting for an unreachable peer. */
+	void InjectDroppedSlotHeartbeats(int32 Turn);
+
+	/** Server-side: poll dropped slots once per simulated turn boundary; if
+	 *  any have been dropped longer than the timeout, transition them to
+	 *  AITakeover. Logs the transition + fires future hooks for designer
+	 *  AI controllers to claim the slot. */
+	void EvaluateDroppedSlots();
+
+	/** Rate-limit state for the GATE STALL diagnostic in ResolveTurnReady.
+	 *  Tracks the currently-stalled turn + when it FIRST became unready —
+	 *  used to escalate from Verbose (transient pipeline blip) to Log
+	 *  (persistent ≥2s stall) without spamming on every turn boundary. */
+	int32 LastStalledTurn = -1;
+	double FirstStalledAtTime = 0.0;
+	double LastStallLogTime = 0.0;
+	bool bStallLogEscalated = false;
+
+	/** Same persistence-tracking pattern for the server-side BUFFER
+	 *  INCOMPLETE diagnostic. Most "incompletes" are transient (one peer's
+	 *  packet arrives ms later than the others) — only persistent ones
+	 *  are worth a Log-level line. */
+	int32 LastIncompleteWarnedTurn = -1;
+	double FirstIncompleteAtTime = 0.0;
+	double LastIncompleteWarnTime = 0.0;
+	bool bIncompleteLogEscalated = false;
+
+	// ============== Determinism gossip (Phase 4) ==============
+
+	/** Server-side: per-check-turn collected state hashes. Inner key is the
+	 *  reporting peer's slot, value is their hash. When inner.Num() ==
+	 *  GetActiveSlotCount() we run comparison + (on mismatch) fan-out.
+	 *  Cleared per-turn after comparison. */
+	TMap<int32 /*Turn*/, TMap<FSeinPlayerID, int32 /*Hash*/>> ServerHashReports;
+
+	/** Server-side: turns that have already been compared, so a stragglar's
+	 *  late report doesn't re-trigger the alarm. Pruned periodically. */
+	TSet<int32> CompletedHashChecks;
+
+	/** Local-side: set when ClientHandleDesyncNotification fires. Stays true
+	 *  until manually cleared. Surfaces via IsLocalDesyncDetected() for
+	 *  the gate to consult if the project wants halt-on-desync. */
+	bool bDesyncDetected = false;
+
+	/** Client-side: highest turn we've already submitted a state-hash report
+	 *  for, so OnSimTickCompleted's check doesn't double-submit. */
+	int32 LastHashReportedTurn = -1;
+
+	/** Compute + submit the local sim's state hash if `Turn` is a check turn
+	 *  per `DeterminismCheckIntervalTurns`. Called from OnSimTickCompleted at
+	 *  every turn boundary; the cadence check is internal. */
+	void MaybeSubmitStateHashCheck(int32 JustFinishedTurn);
+
+	/** Server-only: run the comparison for `Turn` once all peers have
+	 *  reported. On match, log Verbose + clear; on mismatch, fan
+	 *  Client_NotifyDesync to every relay. */
+	void ServerCompareHashesForTurn(int32 Turn);
+
+	/** Read-helpers from settings. */
+	bool IsDeterminismGossipEnabled() const;
+	int32 GetDeterminismCheckIntervalTurns() const;
+
+	// ============== Adaptive input delay observability (Phase 4 polish) ==============
+	// MVP: observability-only. Tracks per-peer late-submission events and logs
+	// a recommendation when stragglers are detected. Full automatic delay
+	// raising is deferred — it requires a replicated dynamic-delay state and
+	// careful synchronization across the grace period to avoid cross-peer
+	// disagreement on outgoing-turn arithmetic. Today designers can manually
+	// raise InputDelayTurns in settings + restart the session.
+
+	/** Server-side: per-peer count of "this slot was last to submit for a
+	 *  turn the server had to wait on" events. Surfaces in
+	 *  Sein.Net.LatencyReport so designers can identify which peer's
+	 *  connection is the bottleneck. */
+	TMap<FSeinPlayerID, int32> StragglerCounts;
+
+	/** Server-side: total number of completed turns observed since session
+	 *  start. Denominator for straggle-rate calculation. */
+	int32 TurnsCompletedCount = 0;
+
+	/** Server-side helper: bump straggler count for the slot whose submission
+	 *  pushed a turn into completion AFTER it had been logged as INCOMPLETE.
+	 *  Called from ServerCheckTurnComplete on the completion path. */
+	void RecordStragglerIfApplicable(int32 TurnId, FSeinPlayerID LastSubmittingSlot);
+
+public:
+	/** Server-only: read-only accessor for diagnostic console commands
+	 *  (Sein.Net.LatencyReport). Returns the per-slot straggle count map. */
+	const TMap<FSeinPlayerID, int32>& GetStragglerCounts() const { return StragglerCounts; }
+
+	/** Server-only: total completed turns since session start (denominator
+	 *  for straggle-rate calculation in the report). */
+	int32 GetTurnsCompletedCount() const { return TurnsCompletedCount; }
 };

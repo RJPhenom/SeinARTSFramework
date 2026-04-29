@@ -85,6 +85,28 @@ public:
 	 *  order. Default true (back-compat for projects without an orchestrator). */
 	void SetAutoRegisterOnBeginPlay(bool bInAuto) { bAutoRegisterOnBeginPlay = bInAuto; }
 
+	/**
+	 * Reconcile the render-side actor map against the current sim state.
+	 * Runs a two-pass walk:
+	 *
+	 *   1. Cull orphans — for every (Handle, Actor) in EntityActorMap, if the
+	 *      sim no longer has a live entity at Handle, mark the actor for
+	 *      destruction (uses DestroyActorDelay so death anims play if any
+	 *      cleanup the actor wants to run can complete).
+	 *
+	 *   2. Spawn missing — walk every alive sim entity; for any without an
+	 *      actor in EntityActorMap, look up its class via
+	 *      USeinWorldSubsystem::GetEntityActorClass and spawn one. Fires the
+	 *      same OnEntitySpawned hook used by the normal sim → render path.
+	 *
+	 * Called by `USeinWorldSubsystem::RestoreSnapshot` after the sim's pool +
+	 * component storages have been rehydrated, so the render layer matches
+	 * the new sim state without orphans or headless entities. Safe to call
+	 * any time — also useful after bulk sim mutations from designer code.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Bridge")
+	void ReconcileBridgeAfterRestore();
+
 	// ========== Configuration ==========
 
 	/** Delay before destroying an actor after its entity dies (for death animations). */

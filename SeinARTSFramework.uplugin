@@ -24,6 +24,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "SeinARTSMovement",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "SeinARTSFogOfWar",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

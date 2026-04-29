@@ -54,7 +54,7 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 	bool bHasTarget;
 
 	/** Acceleration rate (world units per second²) — how quickly current speed
-	 *  ramps UP toward target. Used by vehicle locomotions for the smoothstep
+	 *  ramps UP toward target. Used by vehicle movements for the smoothstep
 	 *  speed model; infantry's seek-and-arrive ignores it. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement")
 	FFixedPoint Acceleration;
@@ -70,9 +70,9 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 	FFixedPoint TurnRate;
 
 	/** Persistent signed forward speed (world units / second). Lives on the
-	 *  component, not the per-action locomotion instance, so velocity carries
+	 *  component, not the per-action movement instance, so velocity carries
 	 *  smoothly across new move orders — issuing a new MoveTo while in motion
-	 *  preserves momentum instead of snapping to zero. Locomotions read this
+	 *  preserves momentum instead of snapping to zero. Movements read this
 	 *  on Tick entry and write back on exit. Final-arrival logic zeros it
 	 *  (units come to rest at the destination); cancellation/preemption
 	 *  intentionally leaves it set so the next order picks up where the
@@ -101,7 +101,7 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 				EditCondition = "RepathMode == ESeinRepathMode::Interval", EditConditionHides))
 	FFixedPoint RepathInterval;
 
-	/** Whether this unit can drive in reverse. When true, vehicle locomotions
+	/** Whether this unit can drive in reverse. When true, vehicle movements
 	 *  will auto-engage reverse for nearby destinations that are behind the
 	 *  unit (the CoH "back up to a close target instead of a U-turn" feel),
 	 *  and explicit reverse abilities — when wired up — will work. Off by
@@ -160,7 +160,7 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 	FFixedPoint WallAvoidanceWeight;
 
 	/** Smoothed avoidance bias from the previous tick. Each call to
-	 *  `USeinLocomotion::ComputeAvoidanceVector` lerps the freshly-computed
+	 *  `USeinMovement::ComputeAvoidanceVector` lerps the freshly-computed
 	 *  bias toward this value, then writes the smoothed result back. Provides
 	 *  temporal coherence — without it, bias flips sign every couple ticks
 	 *  as units pass each other (closest-approach geometry inverts), causing
@@ -169,18 +169,18 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Movement|Avoidance")
 	FFixedVector LastAvoidBias;
 
-	/** Locomotion class — how the entity advances along a nav path (seek+arrive,
+	/** Movement class — how the entity advances along a nav path (seek+arrive,
 	 *  turn-in-place tracked, turn-radius wheeled, etc.). Soft class path (not
-	 *  TSubclassOf) because the concrete USeinLocomotion subclasses live in
-	 *  SeinARTSNavigation, which depends on this module; a direct TSubclassOf
+	 *  TSubclassOf) because the concrete USeinMovement subclasses live in
+	 *  SeinARTSMovement, which depends on this module; a direct TSubclassOf
 	 *  would flip the dep and create a cycle. Resolved to a UClass* at
 	 *  action-init time via TryLoadClass.
 	 *
 	 *  Null / invalid defaults to USeinBasicMovement (simple seek + arrive). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SeinARTS|Movement",
-		meta = (DisplayName = "Locomotion Class",
-				MetaClass = "/Script/SeinARTSNavigation.SeinLocomotion"))
-	FSoftClassPath LocomotionClass;
+		meta = (DisplayName = "Movement Class",
+				MetaClass = "/Script/SeinARTSMovement.SeinMovement"))
+	FSoftClassPath MovementClass;
 
 	/** Nav layer mask — which layer bits identify this agent for blocker
 	 *  intersection. Pathing is gated by `(NavLayerMask & Blocker.
@@ -230,7 +230,7 @@ struct SEINARTSCOREENTITY_API FSeinMovementData : public FSeinComponent
 		// 3:2 integer ratio so the CDO ctor is bit-identical cross-arch.
 		, WallAvoidanceWeight(FFixedPoint::FromInt(3) / FFixedPoint::FromInt(2))
 		, LastAvoidBias(FFixedVector::ZeroVector)
-		, LocomotionClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinBasicMovement")))
+		, MovementClass(FSoftClassPath(TEXT("/Script/SeinARTSMovement.SeinBasicMovement")))
 		, NavLayerMask(0x01) // Default bit
 	{}
 };
@@ -256,7 +256,7 @@ FORCEINLINE uint32 GetTypeHash(const FSeinMovementData& Component)
 	Hash = HashCombine(Hash, GetTypeHash(Component.AvoidanceWeight));
 	Hash = HashCombine(Hash, GetTypeHash(Component.WallAvoidanceWeight));
 	Hash = HashCombine(Hash, GetTypeHash(Component.LastAvoidBias));
-	Hash = HashCombine(Hash, GetTypeHash(Component.LocomotionClass));
+	Hash = HashCombine(Hash, GetTypeHash(Component.MovementClass));
 	Hash = HashCombine(Hash, GetTypeHash(Component.NavLayerMask));
 	return Hash;
 }

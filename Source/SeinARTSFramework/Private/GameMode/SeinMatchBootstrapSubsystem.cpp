@@ -7,16 +7,19 @@
 #include "GameMode/SeinPlayerStart.h"
 #include "GameMode/SeinWorldSettings.h"
 #include "GameMode/SeinGameMode.h"
+#include "Simulation/SeinSnapshotCameraProvider.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Simulation/SeinActorBridgeSubsystem.h"
 #include "Actor/SeinActor.h"
 #include "Core/SeinPlayerState.h"
 #include "Data/SeinMatchSettings.h"
+#include "Data/SeinWorldSnapshot.h"
 #include "Core/SeinPlayerID.h"
 #include "Core/SeinFactionID.h"
 #include "Types/Transform.h"
 #include "Types/FixedPoint.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 
 void USeinMatchBootstrapSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -61,6 +64,13 @@ void USeinMatchBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	const ENetMode NetMode = InWorld.GetNetMode();
 	if (NetMode == NM_Client)
 	{
+		// Phase 3d: register factions from plugin settings BEFORE pre-registering
+		// players. Server already did this in ASeinGameMode::InitGame; this
+		// mirror call ensures the client's Factions map has the SAME contents
+		// in the SAME iteration order, so any RegisterPlayer call that follows
+		// resolves the faction's ResourceKit identically on both sides.
+		Sub->RegisterFactionsFromSettings();
+
 		if (ASeinWorldSettings* SeinWS = Cast<ASeinWorldSettings>(InWorld.GetWorldSettings()))
 		{
 			RunSlotPreRegistration(InWorld, *Sub, SeinWS->GetEffectiveMatchSettings());
@@ -79,6 +89,79 @@ void USeinMatchBootstrapSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		Bridge->RegisterAllPlacedActors(InWorld);
 	}
+
+	// Bind snapshot capture/restore hooks so the local camera pose
+	// round-trips with save-game files. Cycle-avoidance: SeinARTSCoreEntity
+	// can't see ASeinCameraPawn directly (would close a module dependency
+	// loop). The world subsystem broadcasts; we (Framework-side) bind.
+	SnapshotCaptureHandle = Sub->OnCaptureSnapshotPostSim.AddUObject(this, &USeinMatchBootstrapSubsystem::HandleSnapshotCapture);
+	SnapshotRestoreHandle = Sub->OnRestoreSnapshotPostSim.AddUObject(this, &USeinMatchBootstrapSubsystem::HandleSnapshotRestore);
+}
+
+void USeinMatchBootstrapSubsystem::Deinitialize()
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (USeinWorldSubsystem* Sub = World->GetSubsystem<USeinWorldSubsystem>())
+		{
+			if (SnapshotCaptureHandle.IsValid()) Sub->OnCaptureSnapshotPostSim.Remove(SnapshotCaptureHandle);
+			if (SnapshotRestoreHandle.IsValid()) Sub->OnRestoreSnapshotPostSim.Remove(SnapshotRestoreHandle);
+		}
+	}
+	SnapshotCaptureHandle.Reset();
+	SnapshotRestoreHandle.Reset();
+	Super::Deinitialize();
+}
+
+namespace
+{
+	/** Walk likely UObjects on the local PC + the PC itself looking for one
+	 *  that implements ISeinSnapshotCameraProvider. Returns the first match.
+	 *  Provider-target order: pawn, view target, then PC itself. Designers
+	 *  typically implement on the camera pawn; advanced setups (orbital cam
+	 *  rigs, cinematic systems) may implement on a non-pawn view-target
+	 *  actor instead. */
+	UObject* FindCameraProvider(UWorld* World)
+	{
+		if (!World) return nullptr;
+		APlayerController* PC = World->GetFirstPlayerController();
+		if (!PC) return nullptr;
+
+		auto Implements = [](UObject* Obj) -> bool
+		{
+			return Obj && Obj->GetClass()->ImplementsInterface(USeinSnapshotCameraProvider::StaticClass());
+		};
+
+		if (APawn* Pawn = PC->GetPawn())
+		{
+			if (Implements(Pawn)) return Pawn;
+		}
+		if (AActor* ViewTarget = PC->GetViewTarget())
+		{
+			if (Implements(ViewTarget)) return ViewTarget;
+		}
+		if (Implements(PC)) return PC;
+		return nullptr;
+	}
+}
+
+void USeinMatchBootstrapSubsystem::HandleSnapshotCapture(FSeinWorldSnapshot& Snapshot)
+{
+	UObject* Provider = FindCameraProvider(GetWorld());
+	if (!Provider) return; // No camera provider implements the interface — silent no-op (designer opted out).
+
+	ISeinSnapshotCameraProvider::Execute_CaptureCameraState(Provider, Snapshot.CameraState);
+}
+
+void USeinMatchBootstrapSubsystem::HandleSnapshotRestore(const FSeinWorldSnapshot& Snapshot)
+{
+	UObject* Provider = FindCameraProvider(GetWorld());
+	if (!Provider) return;
+
+	ISeinSnapshotCameraProvider::Execute_RestoreCameraState(Provider, Snapshot.CameraState);
+	UE_LOG(LogTemp, Log,
+		TEXT("SeinMatchBootstrap: camera state restored via provider %s (impl class=%s)"),
+		*Provider->GetName(), *Provider->GetClass()->GetName());
 }
 
 void USeinMatchBootstrapSubsystem::RunSlotPreRegistration(UWorld& InWorld, USeinWorldSubsystem& Sub, const FSeinMatchSettings& Settings)

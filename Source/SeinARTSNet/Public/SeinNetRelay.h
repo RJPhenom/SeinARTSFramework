@@ -35,9 +35,35 @@
 #include "GameFramework/Actor.h"
 #include "Input/SeinCommand.h"
 #include "Core/SeinPlayerID.h"
+#include "Core/SeinFactionID.h"
 #include "SeinNetRelay.generated.h"
 
 class USeinNetSubsystem;
+class USeinLobbySubsystem;
+
+/**
+ * Per-slot state-hash entry exchanged for determinism gossip (Phase 4 desync
+ * detection). Server collects one of these per peer per check turn; on
+ * mismatch the assembled list is fanned back to every peer so the on-screen
+ * red alarm can show *who* diverged, not just that something diverged.
+ */
+USTRUCT(BlueprintType)
+struct SEINARTSNET_API FSeinSlotHashEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Network")
+	FSeinPlayerID Slot;
+
+	/** Sim state hash for the slot at the check turn. int32 (not uint32)
+	 *  because UHT rejects uint32 on BlueprintType structs; the bit pattern
+	 *  is what we compare anyway, signed/unsigned reinterpret is identical. */
+	UPROPERTY(BlueprintReadOnly, Category = "SeinARTS|Network")
+	int32 Hash = 0;
+
+	FSeinSlotHashEntry() = default;
+	FSeinSlotHashEntry(FSeinPlayerID InSlot, int32 InHash) : Slot(InSlot), Hash(InHash) {}
+};
 
 UCLASS(ClassGroup = (SeinARTS), meta = (DisplayName = "Sein Net Relay"))
 class SEINARTSNET_API ASeinNetRelay : public AActor
@@ -82,6 +108,34 @@ public:
 	 *  ticks ungated and produces dispatched turns the others can't match. */
 	UFUNCTION(Client, Reliable)
 	void Client_StartSession();
+
+	/** Client -> server. Lobby slot claim (Phase 3b). Owning client requests
+	 *  that the server place them in `SlotIndex` with `Faction`. Server-side
+	 *  USeinLobbySubsystem validates + commits + replicates the updated lobby
+	 *  state to all peers via the ASeinLobbyState actor's RepNotify. The
+	 *  command's authoritative sender is the owning PC; spoofing-resistant
+	 *  by virtue of relay ownership (clients only own their own relay). */
+	UFUNCTION(Server, Reliable)
+	void Server_RequestSlotClaim(int32 SlotIndex, FSeinFactionID Faction);
+
+	/** Client -> server. Determinism gossip (Phase 4). Owning client reports
+	 *  its computed state hash for the given simulation turn. Server collects
+	 *  one report per peer per check turn (cadence = settings'
+	 *  DeterminismCheckIntervalTurns). When all reports for a turn are in,
+	 *  server compares — agreement is silent (Verbose log); divergence fires
+	 *  Client_NotifyDesync on every peer so the red on-screen alarm shows
+	 *  identical info on all machines. Cheap (4 bytes per peer per N turns),
+	 *  off in shipping unless designer explicitly enables. */
+	UFUNCTION(Server, Reliable)
+	void Server_ReportStateHash(int32 Turn, int32 Hash);
+
+	/** Server -> owning client. Determinism gossip alarm. Fired by the server
+	 *  when peer state hashes diverge for `Turn`. Each client logs at Error
+	 *  level + shows a persistent red on-screen debug message listing which
+	 *  slot's hash diverges from the rest. Includes EVERY peer's hash so each
+	 *  player can see the full picture, not just "you desynced". */
+	UFUNCTION(Client, Reliable)
+	void Client_NotifyDesync(int32 Turn, const TArray<FSeinSlotHashEntry>& PeerHashes);
 
 	UFUNCTION()
 	void OnRep_AssignedPlayerID();

@@ -63,7 +63,7 @@ FSeinBrokerDispatchPlan USeinDefaultCommandBrokerResolver::ResolveDispatch_Imple
 		const FGameplayTag ResolvedTag = ResolveMemberAbility(World, Member, Order.Context);
 
 		// Primary: dispatch the resolved tag if the member owns that ability.
-		if (ResolvedTag.IsValid() && AC->HasAbilityWithTag(ResolvedTag))
+		if (ResolvedTag.IsValid() && AC->HasAbilityWithTag(*World, ResolvedTag))
 		{
 			FSeinBrokerMemberDispatch MD;
 			MD.Member = Member;
@@ -77,7 +77,7 @@ FSeinBrokerDispatchPlan USeinDefaultCommandBrokerResolver::ResolveDispatch_Imple
 		// Tag-along: resolver-level fallback for members whose own tables didn't
 		// map this context. Dispatches against the formation slot (cohesion),
 		// not the order target. Opt-in — empty TagAlongAbility disables.
-		if (TagAlongAbility.IsValid() && AC->HasAbilityWithTag(TagAlongAbility))
+		if (TagAlongAbility.IsValid() && AC->HasAbilityWithTag(*World, TagAlongAbility))
 		{
 			FSeinBrokerMemberDispatch MD;
 			MD.Member = Member;

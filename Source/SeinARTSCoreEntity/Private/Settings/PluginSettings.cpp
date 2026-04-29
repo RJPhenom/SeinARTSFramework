@@ -22,7 +22,7 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	// soft-class path string (not a StaticClass() call) because this module
 	// (SeinARTSCoreEntity) intentionally does NOT depend on SeinARTSNavigation —
 	// the decoupling is the whole point of the pluggable nav architecture.
-	, NavigationClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinNavigationAStar")))
+	, NavigationClass(FSoftClassPath(TEXT("/Script/SeinARTSNavigation.SeinNavigationDefaultAStar")))
 	, DefaultCellSize(FFixedPoint::FromInt(100))
 	, DefaultMaxStepHeight(FFixedPoint::FromInt(50))
 	// Network defaults — see PluginSettings.h for rationale on each. Soft path

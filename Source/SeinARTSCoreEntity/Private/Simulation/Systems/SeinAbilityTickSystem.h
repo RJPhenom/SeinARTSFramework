@@ -34,17 +34,21 @@ public:
 			}
 
 			// Tick primary active ability.
-			if (AbilityComp->ActiveAbility && AbilityComp->ActiveAbility->bIsActive)
+			USeinAbility* Active = AbilityComp->GetActiveAbility(World);
+			if (Active && Active->bIsActive)
 			{
-				AbilityComp->ActiveAbility->TickAbility(DeltaTime);
+				Active->TickAbility(DeltaTime);
 			}
 
 			// Tick all active passive abilities.
-			for (TObjectPtr<USeinAbility>& Passive : AbilityComp->ActivePassives)
+			for (int32 ID : AbilityComp->ActivePassiveIDs)
 			{
-				if (Passive && Passive->bIsActive)
+				if (USeinAbility* Passive = World.GetAbilityInstance(ID))
 				{
-					Passive->TickAbility(DeltaTime);
+					if (Passive->bIsActive)
+					{
+						Passive->TickAbility(DeltaTime);
+					}
 				}
 			}
 		});

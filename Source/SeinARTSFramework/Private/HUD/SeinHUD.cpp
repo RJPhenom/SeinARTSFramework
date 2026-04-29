@@ -183,6 +183,36 @@ void ASeinHUD::DrawCommandDragLine()
 
 // ==================== Debug Command Log Panel ====================
 
+// Truncate a string with an ellipsis so its rendered width fits within
+// `MaxPixelWidth` at the given font scale. Binary-searches the longest prefix
+// that still fits when "..." is appended. Used by the command log overlay so
+// long descriptions (e.g. broker orders with positions, camera updates) don't
+// run past the panel's right edge.
+static FString TruncateTextToWidth(const FString& Source, UFont* Font, float Scale, float MaxPixelWidth)
+{
+	if (!Font || MaxPixelWidth <= 0.f) return Source;
+
+	const float SourceWidth = static_cast<float>(Font->GetStringSize(*Source)) * Scale;
+	if (SourceWidth <= MaxPixelWidth) return Source;
+
+	const FString Ellipsis(TEXT("..."));
+	const float EllipsisWidth = static_cast<float>(Font->GetStringSize(*Ellipsis)) * Scale;
+	if (EllipsisWidth >= MaxPixelWidth) return FString();
+
+	// Binary search the longest prefix length such that prefix+"..." fits.
+	int32 Lo = 0;
+	int32 Hi = Source.Len();
+	while (Lo < Hi)
+	{
+		const int32 Mid = (Lo + Hi + 1) / 2;
+		const FString Candidate = Source.Left(Mid) + Ellipsis;
+		const float W = static_cast<float>(Font->GetStringSize(*Candidate)) * Scale;
+		if (W <= MaxPixelWidth) Lo = Mid;
+		else                    Hi = Mid - 1;
+	}
+	return Source.Left(Lo) + Ellipsis;
+}
+
 void ASeinHUD::DrawCommandLogPanel()
 {
 	UWorld* World = GetWorld();
@@ -215,6 +245,11 @@ void ASeinHUD::DrawCommandLogPanel()
 	const float PanelPadding = 8.0f;
 	const float HeaderHeight = LineHeight + 4.0f;
 
+	// Available pixel width for text inside the panel after padding on both sides.
+	// Subtract a small safety margin so descenders / italic strokes don't kiss
+	// the right border.
+	const float TextMaxWidth = FMath::Max(0.f, PanelWidth - (PanelPadding * 2.0f) - 4.0f);
+
 	// How many entries to show
 	const int32 StartIndex = FMath::Max(0, Entries.Num() - MaxDisplay);
 	const int32 EntryCount = Entries.Num() - StartIndex;
@@ -239,8 +274,9 @@ void ASeinHUD::DrawCommandLogPanel()
 	const USeinWorldSubsystem* SimSub = World->GetSubsystem<USeinWorldSubsystem>();
 	const int32 CurrentTick = SimSub ? SimSub->GetCurrentTick() : -1;
 
-	const FString Header = FString::Printf(TEXT(" COMMAND LOG  |  Tick %d  |  %d entries"),
+	const FString HeaderRaw = FString::Printf(TEXT(" COMMAND LOG  |  Tick %d  |  %d entries"),
 		CurrentTick, Entries.Num());
+	const FString Header = TruncateTextToWidth(HeaderRaw, Font, FontScale, TextMaxWidth);
 
 	float TextX = PanelX + PanelPadding;
 	float TextY = PanelY + PanelPadding;
@@ -262,8 +298,9 @@ void ASeinHUD::DrawCommandLogPanel()
 	{
 		const FSeinCommandLogEntry& Entry = Entries[i];
 
-		const FString Line = FString::Printf(TEXT("[T%04d] P%d E%03d  %s"),
+		const FString LineRaw = FString::Printf(TEXT("[T%04d] P%d E%03d  %s"),
 			Entry.Tick, Entry.PlayerIndex, Entry.EntityIndex, *Entry.Description);
+		const FString Line = TruncateTextToWidth(LineRaw, Font, FontScale, TextMaxWidth);
 
 		FLinearColor LineColor = FLinearColor(
 			Entry.DisplayColor.R / 255.0f,

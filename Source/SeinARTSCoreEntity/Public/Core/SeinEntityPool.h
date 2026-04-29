@@ -67,6 +67,17 @@ public:
 	/** Reset pool to a clean state (keeps no allocations). */
 	void Reset();
 
+	/** Direct slot/generation/owner reconstruction for snapshot restore.
+	 *  Caller passes a flat list of (SlotIndex, Generation, Transform, Owner, bAlive)
+	 *  tuples; pool resets, sizes itself to fit, and writes each entry directly.
+	 *  Free-list is rebuilt from any unused/dead slots in [1, MaxSlot]. */
+	void RebuildFromSnapshot(int32 MaxSlotIndex,
+		const TArray<int32>& SlotIndices,
+		const TArray<int32>& SlotGenerations,
+		const TArray<FFixedTransform>& SlotTransforms,
+		const TArray<FSeinPlayerID>& SlotOwners,
+		const TArray<bool>& SlotAliveFlags);
+
 	/**
 	 * Iterate all alive entities.
 	 * @param Callback  Signature: void(FSeinEntityHandle Handle, FSeinEntity& Entity)

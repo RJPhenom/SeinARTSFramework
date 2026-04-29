@@ -8,6 +8,7 @@
 #include "ViewModel/SeinEntityViewModel.h"
 #include "ViewModel/SeinPlayerViewModel.h"
 #include "ViewModel/SeinSelectionModel.h"
+#include "ViewModel/SeinLobbyViewModel.h"
 #include "Simulation/SeinWorldSubsystem.h"
 #include "Player/SeinPlayerController.h"
 #include "Engine/World.h"
@@ -48,9 +49,15 @@ void USeinUISubsystem::Deinitialize()
 		SelectionModel->Deinitialize();
 	}
 
+	if (LobbyViewModel)
+	{
+		LobbyViewModel->Shutdown();
+	}
+
 	EntityViewModels.Empty();
 	PlayerViewModels.Empty();
 	SelectionModel = nullptr;
+	LobbyViewModel = nullptr;
 
 	Super::Deinitialize();
 
@@ -123,6 +130,18 @@ USeinPlayerViewModel* USeinUISubsystem::GetLocalPlayerViewModel()
 	}
 
 	return GetPlayerViewModel(PC->SeinPlayerID);
+}
+
+USeinLobbyViewModel* USeinUISubsystem::GetOrCreateLobbyViewModel()
+{
+	if (LobbyViewModel) return LobbyViewModel;
+
+	UWorld* World = GetWorld();
+	if (!World) return nullptr;
+
+	LobbyViewModel = NewObject<USeinLobbyViewModel>(this);
+	LobbyViewModel->Initialize(World);
+	return LobbyViewModel;
 }
 
 // ==================== Sim Tick Refresh ====================

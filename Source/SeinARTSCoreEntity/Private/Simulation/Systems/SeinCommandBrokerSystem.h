@@ -34,7 +34,7 @@ namespace SeinCommandBrokerDispatch
 		if (!World.GetEntityPool().IsValid(MD.Member)) return;
 		FSeinAbilityData* AC = World.GetComponent<FSeinAbilityData>(MD.Member);
 		if (!AC) return;
-		USeinAbility* Ability = AC->FindAbilityByTag(MD.AbilityTag);
+		USeinAbility* Ability = AC->FindAbilityByTag(World, MD.AbilityTag);
 		if (!Ability) return;
 
 		if (Ability->IsOnCooldown()) return;
@@ -48,8 +48,9 @@ namespace SeinCommandBrokerDispatch
 		// Cancel OTHER abilities with matching tags; explicitly skip self so a
 		// duplicate broker dispatch doesn't cancel-then-reactivate on every
 		// command frame (see the matching block in SeinWorldSubsystem::ProcessCommands).
-		for (USeinAbility* Other : AC->AbilityInstances)
+		for (int32 OtherID : AC->AbilityInstanceIDs)
 		{
+			USeinAbility* Other = World.GetAbilityInstance(OtherID);
 			if (Other && Other != Ability && Other->bIsActive &&
 				Other->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
 			{
@@ -66,7 +67,13 @@ namespace SeinCommandBrokerDispatch
 		Ability->ActivateAbility(MD.TargetEntity, MD.TargetLocation);
 		if (!Ability->bIsPassive)
 		{
-			AC->ActiveAbility = Ability;
+			// Find the ID of `Ability` in this entity's ability instances.
+			int32 ActiveID = INDEX_NONE;
+			for (int32 ID : AC->AbilityInstanceIDs)
+			{
+				if (World.GetAbilityInstance(ID) == Ability) { ActiveID = ID; break; }
+			}
+			AC->ActiveAbilityID = ActiveID;
 		}
 	}
 
@@ -77,8 +84,9 @@ namespace SeinCommandBrokerDispatch
 		{
 			const FSeinAbilityData* AC = World.GetComponent<FSeinAbilityData>(M);
 			if (!AC) continue;
-			for (const USeinAbility* Ab : AC->AbilityInstances)
+			for (int32 ID : AC->AbilityInstanceIDs)
 			{
+				const USeinAbility* Ab = World.GetAbilityInstance(ID);
 				if (Ab && Ab->AbilityTag.IsValid())
 				{
 					Broker.CapabilityMap.FindOrAdd(Ab->AbilityTag).Members.AddUnique(M);
@@ -118,7 +126,8 @@ namespace SeinCommandBrokerDispatch
 		FSeinCommandBrokerData& Broker)
 	{
 		if (Broker.OrderQueue.Num() == 0 || Broker.Members.Num() == 0) return false;
-		if (!Broker.Resolver) return false;
+		USeinCommandBrokerResolver* Resolver = World.GetCommandBrokerResolver(Broker.ResolverID);
+		if (!Resolver) return false;
 
 		if (Broker.bCapabilityMapDirty)
 		{
@@ -144,7 +153,7 @@ namespace SeinCommandBrokerDispatch
 		Input.FormationEnd = Front.FormationEnd;
 		Input.EffectiveMembers = Effective;
 
-		const FSeinBrokerDispatchPlan Plan = Broker.Resolver->ResolveDispatch(&World, BrokerHandle, Input);
+		const FSeinBrokerDispatchPlan Plan = Resolver->ResolveDispatch(&World, BrokerHandle, Input);
 
 		Broker.CurrentOrderContext = Front.Context;
 		Broker.Anchor = Front.TargetLocation;
@@ -235,7 +244,8 @@ public:
 				for (const FSeinEntityHandle& M : Effective)
 				{
 					const FSeinAbilityData* AC = World.GetComponent<FSeinAbilityData>(M);
-					if (AC && AC->ActiveAbility && AC->ActiveAbility->bIsActive)
+					const USeinAbility* Active = AC ? AC->GetActiveAbility(World) : nullptr;
+					if (Active && Active->bIsActive)
 					{
 						bAllDone = false;
 						break;

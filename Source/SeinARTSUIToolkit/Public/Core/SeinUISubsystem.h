@@ -16,6 +16,7 @@
 class USeinEntityViewModel;
 class USeinPlayerViewModel;
 class USeinSelectionModel;
+class USeinLobbyViewModel;
 class USeinWorldSubsystem;
 
 /**
@@ -68,6 +69,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "SeinARTS|UI")
 	USeinSelectionModel* GetSelectionModel() const { return SelectionModel; }
 
+	/**
+	 * Get or create the lobby view model (singleton per world). Lazily
+	 * initializes against this world's `USeinLobbySubsystem` on first access.
+	 * Multiple widgets share this instance + its change-event subscription —
+	 * BindEventToLobbyChanged once, refresh many.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|UI|Lobby")
+	USeinLobbyViewModel* GetOrCreateLobbyViewModel();
+
 private:
 	/** Called after each sim tick — refreshes all active ViewModels. */
 	void HandleSimTick(int32 Tick);
@@ -90,6 +100,10 @@ private:
 	/** Selection model (singleton). */
 	UPROPERTY()
 	TObjectPtr<USeinSelectionModel> SelectionModel;
+
+	/** Lobby view model (lazy singleton). */
+	UPROPERTY()
+	TObjectPtr<USeinLobbyViewModel> LobbyViewModel;
 
 	/** Delegate handle for sim tick. */
 	FDelegateHandle SimTickDelegateHandle;

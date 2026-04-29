@@ -32,6 +32,12 @@ public:
 	/** Cancel all latent actions belonging to the given ability */
 	void CancelActionsForAbility(USeinAbility* Ability);
 
+	/** Cancel every active latent action across the entire sim. Used by the
+	 *  snapshot-restore path to drop in-flight latent state before the
+	 *  ability pool is rebuilt — without this, latent actions hold stale
+	 *  refs into the about-to-be-replaced ability instances. */
+	void CancelAllActions();
+
 	/** Remove completed and cancelled actions from the active list */
 	void CleanupCompleted();
 

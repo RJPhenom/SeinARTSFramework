@@ -105,15 +105,32 @@ nav:
       - Overview: getting-started/index.md
       - Installation: getting-started/installation.md
       - Architecture: getting-started/architecture.md
-  - Guides:
-      - Building UI with the Toolkit: guides/ui-toolkit.md
-      - Creating a Unit Info Panel: guides/unit-info-panel.md
-      - Selection & Control Groups: guides/selection.md
-  - Core Concepts:
+  - Concepts:
       - Sim/Render Separation: concepts/sim-render.md
       - Entities & Components: concepts/entities.md
       - Abilities: concepts/abilities.md
       - Fixed-Point Math: concepts/fixed-point.md
+  - Systems:
+      - Navigation:
+          - Overview: systems/navigation/index.md
+          - Default A* Implementation: systems/navigation/default-astar.md
+          - Bake Pipeline: systems/navigation/bake-pipeline.md
+          - Layers & Blockers: systems/navigation/layers-blockers.md
+          - Custom Implementations: systems/navigation/custom.md
+      - Fog of War:
+          - Overview: systems/fog-of-war/index.md
+          - Default Implementation: systems/fog-of-war/default-impl.md
+          - Bake Pipeline: systems/fog-of-war/bake-pipeline.md
+          - Vision Layers: systems/fog-of-war/vision-layers.md
+          - Sources & Blockers: systems/fog-of-war/sources-blockers.md
+          - Custom Implementations: systems/fog-of-war/custom.md
+      - Snapshots:
+          - Overview: systems/snapshots/index.md
+          - Custom Camera Provider: systems/snapshots/custom-camera.md
+  - Guides:
+      - Building UI with the Toolkit: guides/ui-toolkit.md
+      - Creating a Unit Info Panel: guides/unit-info-panel.md
+      - Selection & Control Groups: guides/selection.md
   - Reference:
       - Overview: reference/index.md
       - UI Toolkit Nodes: reference/ui-toolkit.md

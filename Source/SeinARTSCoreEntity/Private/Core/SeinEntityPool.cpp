@@ -181,6 +181,72 @@ void FSeinEntityPool::Reset()
 	Capacity = 0;
 }
 
+void FSeinEntityPool::RebuildFromSnapshot(int32 MaxSlotIndex,
+	const TArray<int32>& SlotIndices,
+	const TArray<int32>& SlotGenerations,
+	const TArray<FFixedTransform>& SlotTransforms,
+	const TArray<FSeinPlayerID>& SlotOwners,
+	const TArray<bool>& SlotAliveFlags)
+{
+	const int32 N = SlotIndices.Num();
+	check(N == SlotGenerations.Num());
+	check(N == SlotTransforms.Num());
+	check(N == SlotOwners.Num());
+	check(N == SlotAliveFlags.Num());
+
+	const int32 TotalSlots = MaxSlotIndex + 1;
+
+	Entities.Empty();
+	Generations.Empty();
+	OwnerPlayerIDs.Empty();
+	FreeList.Empty();
+
+	Entities.SetNum(TotalSlots);
+	Generations.SetNum(TotalSlots);
+	OwnerPlayerIDs.SetNum(TotalSlots);
+	FMemory::Memzero(Generations.GetData(), TotalSlots * sizeof(int32));
+
+	// Slot 0 is always reserved.
+	Entities[0].SetAlive(false);
+	Entities[0].Flags = 0;
+	OwnerPlayerIDs[0] = FSeinPlayerID::Neutral();
+
+	// Default-initialize every slot before applying records, so any slot
+	// the snapshot didn't include lands in the free list.
+	for (int32 i = 1; i < TotalSlots; ++i)
+	{
+		Entities[i].SetAlive(false);
+		Entities[i].Flags = 0;
+		OwnerPlayerIDs[i] = FSeinPlayerID::Neutral();
+	}
+
+	// Apply records.
+	int32 NewActiveCount = 0;
+	for (int32 i = 0; i < N; ++i)
+	{
+		const int32 Idx = SlotIndices[i];
+		if (Idx <= 0 || Idx >= TotalSlots) continue;
+		Generations[Idx] = SlotGenerations[i];
+		Entities[Idx].Transform = SlotTransforms[i];
+		Entities[Idx].SetAlive(SlotAliveFlags[i]);
+		OwnerPlayerIDs[Idx] = SlotOwners[i];
+		if (SlotAliveFlags[i]) ++NewActiveCount;
+	}
+
+	// Rebuild the free list: any slot in [1, TotalSlots) that's not alive
+	// is free. Push in reverse so lower indices pop first (matches Initialize).
+	for (int32 i = TotalSlots - 1; i >= 1; --i)
+	{
+		if (!Entities[i].IsAlive())
+		{
+			FreeList.Push(i);
+		}
+	}
+
+	ActiveCount = NewActiveCount;
+	Capacity = MaxSlotIndex;
+}
+
 void FSeinEntityPool::Grow(int32 MinCapacity)
 {
 	const int32 OldTotalSlots = Entities.Num();

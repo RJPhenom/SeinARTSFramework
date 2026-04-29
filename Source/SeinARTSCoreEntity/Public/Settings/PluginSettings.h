@@ -21,6 +21,7 @@
 #include "PluginSettings.generated.h"
 
 class USeinCommandBrokerResolver;
+class USeinFaction;
 
 /**
  * Global settings for SeinARTS.
@@ -75,6 +76,26 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Economy", meta = (TitleProperty = "ResourceTag"))
 	TArray<FSeinResourceDefinition> ResourceCatalog;
 
+	/**
+	 * Project-wide faction registry. Every `USeinFaction` data asset that should
+	 * be playable / available for resource-kit lookup must be listed here.
+	 *
+	 * Why settings-driven (not auto-discovered): determinism. Both server and
+	 * client read from the same `DefaultEngine.ini`, so iteration order +
+	 * registered set is bit-identical. `USeinWorldSubsystem::RegisterFactionsFromSettings`
+	 * loads + registers in a single pass at world-init time on each peer; without
+	 * this, a server that registers factions via game-side code while clients do
+	 * not produces an empty `Factions` map on clients → empty `ResourceKit` lookup
+	 * → divergent starting resources → state-hash desync from tick 1.
+	 *
+	 * Designers add their faction assets here (or via a Project Settings panel
+	 * once Phase 3c lobby UI ships). Empty array is fine for projects that don't
+	 * use the faction-driven `ResourceKit` path — `StartingResources` on the
+	 * GameMode CDO covers the common case.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Economy", meta = (DisplayName = "Registered Factions"))
+	TArray<TSoftObjectPtr<USeinFaction>> RegisteredFactions;
+
 	// Effects
 	// ====================================================================================================
 
@@ -110,7 +131,7 @@ public:
 	 * bake button, and ability validation all route through this class — the
 	 * rest of the plugin is wholly decoupled from nav semantics.
 	 *
-	 * Ships with `USeinNavigationAStar` as the default: single-layer 2D grid +
+	 * Ships with `USeinNavigationDefaultAStar` as the default: single-layer 2D grid +
 	 * synchronous A* + line-of-sight smoothing, suitable as a minimal reference
 	 * and for small-to-medium RTS maps. Game teams can subclass or replace
 	 * entirely without touching any framework code.

@@ -48,6 +48,21 @@ public:
 	 * Owner is the UObject the subsystem passes through for diagnostic attribution.
 	 */
 	virtual void CollectReferences(FReferenceCollector& Collector, UObject* Owner) = 0;
+
+	/**
+	 * Snapshot serialize (Phase 4 architecture). Writes (or reads) every alive
+	 * slot's payload through the archive. Wire format:
+	 *   int32 EntryCount
+	 *   for each:
+	 *     int32 SlotIndex
+	 *     UScriptStruct::SerializeBin(payload, archive)
+	 *
+	 * On restore, the storage is cleared first; entries then re-populated. The
+	 * caller (USeinWorldSubsystem) is responsible for resizing the storage to
+	 * match the restored entity pool capacity BEFORE calling this with a load
+	 * archive. The returned int is the number of entries written/read.
+	 */
+	virtual int32 SerializeFromArchive(FArchive& Ar) = 0;
 };
 
 /**
@@ -296,6 +311,47 @@ public:
 		for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
 		{
 			Collector.AddPropertyReferencesWithStructARO(StructType, GetSlotPtr(It.GetIndex()), Owner);
+		}
+	}
+
+	virtual int32 SerializeFromArchive(FArchive& Ar) override
+	{
+		if (!StructType) { int32 Zero = 0; Ar << Zero; return 0; }
+
+		if (Ar.IsSaving())
+		{
+			// Count alive slots first; write count, then per-entry write
+			// (slot, payload).
+			int32 EntryCount = ComponentCount;
+			Ar << EntryCount;
+			for (TConstSetBitIterator<> It(HasComponentBits); It; ++It)
+			{
+				int32 Slot = It.GetIndex();
+				Ar << Slot;
+				StructType->SerializeBin(Ar, GetSlotPtr(Slot));
+			}
+			return EntryCount;
+		}
+		else
+		{
+			// Loading: caller has already resized capacity (via Grow). Clear
+			// existing slots, then read EntryCount entries.
+			Clear();
+			int32 EntryCount = 0;
+			Ar << EntryCount;
+			for (int32 i = 0; i < EntryCount; ++i)
+			{
+				int32 Slot = 0;
+				Ar << Slot;
+				EnsureSlotCapacity(Slot);
+				if (!HasComponentBits[Slot])
+				{
+					HasComponentBits[Slot] = true;
+					++ComponentCount;
+				}
+				StructType->SerializeBin(Ar, GetSlotPtr(Slot));
+			}
+			return EntryCount;
 		}
 	}
 

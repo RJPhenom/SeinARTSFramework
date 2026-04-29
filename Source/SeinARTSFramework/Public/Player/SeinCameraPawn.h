@@ -10,6 +10,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "Core/SeinEntityHandle.h"
+#include "Simulation/SeinSnapshotCameraProvider.h"
 #include "SeinCameraPawn.generated.h"
 
 class USpringArmComponent;
@@ -23,9 +24,14 @@ struct FInputActionValue;
  * The pivot moves on the XY plane; the spring arm provides zoom and pitch.
  *
  * All tuning properties are exposed for Blueprint subclasses and per-instance overrides.
+ *
+ * Implements ISeinSnapshotCameraProvider so save-game snapshot capture/restore
+ * round-trips this pawn's camera state. Custom camera pawns (e.g. third-party
+ * marketplace assets) opt in by implementing the same interface — the framework
+ * isn't hard-coupled to this specific class.
  */
 UCLASS(Blueprintable)
-class SEINARTSFRAMEWORK_API ASeinCameraPawn : public APawn
+class SEINARTSFRAMEWORK_API ASeinCameraPawn : public APawn, public ISeinSnapshotCameraProvider
 {
 	GENERATED_BODY()
 
@@ -175,6 +181,23 @@ public:
 	/** Get the current camera pitch in degrees. */
 	UFUNCTION(BlueprintPure, Category = "SeinARTS|Camera")
 	float GetCameraPitch() const;
+
+	/**
+	 * Snap the camera to a saved state (used by snapshot restore + future
+	 * load-game flows). Sets pivot location, yaw, pitch, and target zoom in
+	 * one call so the camera lands exactly where it was at capture time.
+	 *
+	 * Skips the smooth-interpolation logic that normal input drives — the
+	 * jump should be instantaneous on restore (otherwise the camera lerps
+	 * from current state, which feels wrong for a save-load).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "SeinARTS|Camera")
+	void SetCameraState(FVector PivotLocation, float Yaw, float Pitch, float ZoomDistance);
+
+	// ========== ISeinSnapshotCameraProvider ==========
+
+	virtual void CaptureCameraState_Implementation(FSeinCameraSnapshotData& OutData) override;
+	virtual void RestoreCameraState_Implementation(const FSeinCameraSnapshotData& Data) override;
 
 protected:
 	/** Current target zoom distance (interpolated toward each tick). */

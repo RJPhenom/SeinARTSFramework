@@ -5,11 +5,16 @@
  */
 
 #include "Simulation/SeinWorldSubsystem.h"
+#include "Simulation/SeinActorBridgeSubsystem.h"
 #include "Actor/SeinActor.h"
 #include "AI/SeinAIController.h"
 #include "HAL/IConsoleManager.h"
+#include "Serialization/MemoryWriter.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "Data/SeinArchetypeDefinition.h"
 #include "Data/SeinFaction.h"
+#include "Data/SeinWorldSnapshot.h"
 #include "Settings/PluginSettings.h"
 #include "Core/SeinSimContext.h"
 #include "Abilities/SeinAbility.h"
@@ -305,7 +310,32 @@ bool USeinWorldSubsystem::TickSimulation(float DeltaTime)
 
 	if (TicksProcessed >= MaxTicks && TimeAccumulator > FixedDeltaTimeSeconds)
 	{
-		UE_LOG(LogSeinSim, Warning, TEXT("Simulation falling behind! Clamping accumulator."));
+		// Persistence-escalated log: most clamps are single-frame hitches
+		// (PIE multi-window, GC, level streaming) — recovers on the next
+		// frame. Only escalate to Warning when the sim has been clamping
+		// CONTINUOUSLY for ≥1 second (i.e. genuinely can't keep up). Below
+		// the threshold, stay at Verbose so the log isn't drowned.
+		const double NowSec = FPlatformTime::Seconds();
+		if (LastClampTime <= 0.0 || (NowSec - LastClampTime) > 0.25)
+		{
+			// Not been clamping recently — start a fresh clamp window.
+			ClampWindowStartTime = NowSec;
+			bClampWarningEmitted = false;
+		}
+		LastClampTime = NowSec;
+		const double ClampDuration = NowSec - ClampWindowStartTime;
+		if (ClampDuration < 1.0)
+		{
+			UE_LOG(LogSeinSim, Verbose, TEXT("Simulation falling behind (transient clamp). Accumulator clamped."));
+		}
+		else if (!bClampWarningEmitted || (NowSec - LastClampWarnTime) >= 2.0)
+		{
+			UE_LOG(LogSeinSim, Warning,
+				TEXT("Simulation falling behind for %.1fs (continuous). Sim cannot keep up — drop SimulationTickRate or raise MaxTicksPerFrame in plugin settings."),
+				ClampDuration);
+			LastClampWarnTime = NowSec;
+			bClampWarningEmitted = true;
+		}
 		TimeAccumulator = FixedDeltaTimeSeconds;
 	}
 
@@ -619,12 +649,12 @@ void USeinWorldSubsystem::ProcessCommands()
 				continue;
 			}
 
-			USeinAbility* Ability = AbilityComp->FindAbilityByTag(Cmd.AbilityTag);
+			USeinAbility* Ability = AbilityComp->FindAbilityByTag(*this, Cmd.AbilityTag);
 			if (!Ability)
 			{
 				UE_LOG(LogSeinSim, Warning, TEXT("ActivateAbility[%s]: entity %s has no ability with that tag (%d instances from %d granted classes)"),
 					*Cmd.AbilityTag.ToString(), *Cmd.EntityHandle.ToString(),
-					AbilityComp->AbilityInstances.Num(), AbilityComp->GrantedAbilityClasses.Num());
+					AbilityComp->AbilityInstanceIDs.Num(), AbilityComp->GrantedAbilityClasses.Num());
 				RejectCommand(SeinARTSTags::Command_Reject_InvalidTarget);
 				continue;
 			}
@@ -676,7 +706,7 @@ void USeinWorldSubsystem::ProcessCommands()
 				{
 					// Member must have a Move ability to fulfill the prefix. If not,
 					// there's nothing to auto-move with — reject as OutOfRange.
-					if (!AbilityComp->HasAbilityWithTag(SeinARTSTags::Ability_Move))
+					if (!AbilityComp->HasAbilityWithTag(*this, SeinARTSTags::Ability_Move))
 					{
 						UE_LOG(LogSeinSim, Warning,
 							TEXT("ActivateAbility[%s]: AutoMoveThen requested but entity has no Move ability; rejecting"),
@@ -827,8 +857,9 @@ void USeinWorldSubsystem::ProcessCommands()
 			// nothing actually moves. Self-cancelling-reissue is handled below.
 			if (!Ability->CancelAbilitiesWithTag.IsEmpty())
 			{
-				for (USeinAbility* Other : AbilityComp->AbilityInstances)
+				for (int32 OtherID : AbilityComp->AbilityInstanceIDs)
 				{
+					USeinAbility* Other = GetAbilityInstance(OtherID);
 					if (Other && Other != Ability && Other->bIsActive &&
 						Other->OwnedTags.HasAny(Ability->CancelAbilitiesWithTag))
 					{
@@ -853,16 +884,24 @@ void USeinWorldSubsystem::ProcessCommands()
 			Ability->ActivateAbility(Cmd.TargetEntity, Cmd.TargetLocation);
 			if (!Ability->bIsPassive)
 			{
-				AbilityComp->ActiveAbility = Ability;
+				// Find the ID of `Ability` in this entity's instances. Linear
+				// scan; ability count per entity is small.
+				int32 ActiveID = INDEX_NONE;
+				for (int32 ID : AbilityComp->AbilityInstanceIDs)
+				{
+					if (GetAbilityInstance(ID) == Ability) { ActiveID = ID; break; }
+				}
+				AbilityComp->ActiveAbilityID = ActiveID;
 			}
 		}
 		else if (Cmd.CommandType == SeinARTSTags::Command_Type_CancelAbility)
 		{
 			FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Cmd.EntityHandle);
-			if (AbilityComp && AbilityComp->ActiveAbility && AbilityComp->ActiveAbility->bIsActive)
+			USeinAbility* Active = AbilityComp ? AbilityComp->GetActiveAbility(*this) : nullptr;
+			if (Active && Active->bIsActive)
 			{
-				AbilityComp->ActiveAbility->CancelAbility();
-				AbilityComp->ActiveAbility = nullptr;
+				Active->CancelAbility();
+				AbilityComp->ActiveAbilityID = INDEX_NONE;
 			}
 			else
 			{
@@ -1337,6 +1376,22 @@ void USeinWorldSubsystem::ProcessDeferredDestroys()
 		UnindexEntityTags(Handle);
 		UnregisterHandleFromNames(Handle);
 
+		// Phase 4 architecture: release this entity's ability + resolver pool
+		// slots BEFORE component storage clears. The pool slots own the
+		// UObject lifetime via UPROPERTY; freeing the slot lets the GC reap
+		// the ability/resolver instance the next pass.
+		if (const FSeinAbilityData* AbilityComp = GetComponent<FSeinAbilityData>(Handle))
+		{
+			for (int32 ID : AbilityComp->AbilityInstanceIDs)
+			{
+				UnregisterAbilityInstance(ID);
+			}
+		}
+		if (const FSeinCommandBrokerData* BrokerComp = GetComponent<FSeinCommandBrokerData>(Handle))
+		{
+			UnregisterCommandBrokerResolver(BrokerComp->ResolverID);
+		}
+
 		// Remove all components
 		for (auto& Pair : ComponentStorages)
 		{
@@ -1463,7 +1518,501 @@ void USeinWorldSubsystem::RegisterFaction(USeinFaction* Faction)
 {
 	if (!Faction) return;
 	Factions.Add(Faction->FactionID, Faction);
-	UE_LOG(LogSeinSim, Log, TEXT("Registered faction: %s"), *Faction->FactionName.ToString());
+	UE_LOG(LogSeinSim, Log, TEXT("Registered faction: %s (FactionID=%u)"),
+		*Faction->FactionName.ToString(), Faction->FactionID.Value);
+}
+
+void USeinWorldSubsystem::SeedSimRandom(int64 Seed)
+{
+	SimRandom.SetSeed(static_cast<uint64>(Seed));
+	UE_LOG(LogSeinSim, Log, TEXT("SeedSimRandom: PRNG seeded with %lld."), Seed);
+}
+
+// ============================================================================
+// Ability + Resolver pools (Phase 4 architecture cleanup)
+// ============================================================================
+//
+// Generic pool primitive shared between abilities and resolvers. Free-list-
+// recycled, deterministic by allocation order, GC-rooted via UPROPERTY-tagged
+// pool arrays on the subsystem.
+
+namespace
+{
+	template <typename T>
+	int32 PoolRegister(TArray<TObjectPtr<T>>& Pool, TArray<int32>& FreeList, T* Obj)
+	{
+		if (!Obj) return INDEX_NONE;
+		if (FreeList.Num() > 0)
+		{
+			const int32 ID = FreeList.Pop(EAllowShrinking::No);
+			Pool[ID] = Obj;
+			return ID;
+		}
+		return Pool.Add(Obj);
+	}
+
+	template <typename T>
+	void PoolUnregister(TArray<TObjectPtr<T>>& Pool, TArray<int32>& FreeList, int32 ID)
+	{
+		if (!Pool.IsValidIndex(ID)) return;
+		if (Pool[ID] == nullptr) return; // already released
+		Pool[ID] = nullptr;
+		FreeList.Add(ID);
+	}
+
+	template <typename T>
+	T* PoolGet(const TArray<TObjectPtr<T>>& Pool, int32 ID)
+	{
+		return Pool.IsValidIndex(ID) ? Pool[ID].Get() : nullptr;
+	}
+}
+
+int32 USeinWorldSubsystem::RegisterAbilityInstance(USeinAbility* Ability)
+{
+	return PoolRegister(AbilityPool, AbilityPoolFreeList, Ability);
+}
+
+void USeinWorldSubsystem::UnregisterAbilityInstance(int32 AbilityID)
+{
+	PoolUnregister(AbilityPool, AbilityPoolFreeList, AbilityID);
+}
+
+USeinAbility* USeinWorldSubsystem::GetAbilityInstance(int32 AbilityID) const
+{
+	return PoolGet(AbilityPool, AbilityID);
+}
+
+int32 USeinWorldSubsystem::RegisterCommandBrokerResolver(USeinCommandBrokerResolver* Resolver)
+{
+	return PoolRegister(CommandBrokerResolverPool, CommandBrokerResolverPoolFreeList, Resolver);
+}
+
+void USeinWorldSubsystem::UnregisterCommandBrokerResolver(int32 ResolverID)
+{
+	PoolUnregister(CommandBrokerResolverPool, CommandBrokerResolverPoolFreeList, ResolverID);
+}
+
+USeinCommandBrokerResolver* USeinWorldSubsystem::GetCommandBrokerResolver(int32 ResolverID) const
+{
+	return PoolGet(CommandBrokerResolverPool, ResolverID);
+}
+
+// ============================================================================
+// World Snapshot — Capture + Restore (Phase 4 architecture)
+// ============================================================================
+
+void USeinWorldSubsystem::CaptureSnapshot(FSeinWorldSnapshot& OutSnapshot)
+{
+	OutSnapshot.SnapshotVersion = 1;
+	OutSnapshot.FrameworkVersion = TEXT("0.1.0");
+	OutSnapshot.GameVersion = TEXT("unset");
+	OutSnapshot.MapIdentifier = GetWorld() ? FName(*GetWorld()->GetMapName()) : NAME_None;
+	OutSnapshot.CapturedAt = FDateTime::UtcNow();
+
+	OutSnapshot.CurrentTick = CurrentTick;
+	OutSnapshot.SessionSeed = 0;
+	OutSnapshot.PRNGState0 = static_cast<int64>(SimRandom.State0);
+	OutSnapshot.PRNGState1 = static_cast<int64>(SimRandom.State1);
+
+	OutSnapshot.MatchSettings = CurrentMatchSettings;
+	OutSnapshot.MatchState = static_cast<uint8>(MatchState);
+	OutSnapshot.MatchStartTick = MatchStartTick;
+	OutSnapshot.StartingStateDeadlineTick = StartingStateDeadlineTick;
+
+	OutSnapshot.PlayerStates = PlayerStates;
+
+	OutSnapshot.Entities.Reset();
+	EntityPool.ForEachEntity([&OutSnapshot, this](FSeinEntityHandle Handle, const FSeinEntity& Entity)
+	{
+		FSeinSnapshotEntityRecord Rec;
+		Rec.SlotIndex = Handle.Index;
+		Rec.Generation = Handle.Generation;
+		Rec.Transform = Entity.Transform;
+		Rec.Owner = EntityPool.GetOwner(Handle);
+		Rec.bAlive = Entity.IsAlive();
+		if (const TSubclassOf<ASeinActor>* SpawnedClass = EntityActorClassMap.Find(Handle))
+		{
+			if (UClass* CRef = SpawnedClass->Get())
+			{
+				Rec.ActorClassPath = CRef->GetPathName();
+			}
+		}
+		OutSnapshot.Entities.Add(Rec);
+	});
+
+	OutSnapshot.ComponentStorageBlobs.Reset();
+	for (auto& Pair : ComponentStorages)
+	{
+		UScriptStruct* StructType = Pair.Key;
+		ISeinComponentStorage* Storage = Pair.Value;
+		if (!StructType || !Storage) continue;
+
+		// Wrap the FMemoryWriter in FObjectAndNameAsStringProxyArchive — the
+		// base FMemoryArchive asserts (check(0)) on any UObject* serialization.
+		// Component data may carry TSubclassOf<...> / FInstancedStruct / soft
+		// refs that hit that path through UScriptStruct::SerializeBin. The
+		// proxy archive stringifies UObject refs as paths (matches the replay
+		// writer pattern, see SeinReplayWriter.cpp).
+		FSeinSnapshotComponentStorageBlob Blob;
+		FMemoryWriter MemWriter(Blob.Bytes, /*bIsPersistent*/ true);
+		FObjectAndNameAsStringProxyArchive Writer(MemWriter, /*bInLoadIfFindFails*/ false);
+		Blob.EntryCount = Storage->SerializeFromArchive(Writer);
+		OutSnapshot.ComponentStorageBlobs.Add(StructType->GetPathName(), MoveTemp(Blob));
+	}
+
+	// ---- Ability pool ----
+	// Capture per-slot UObject state via reflection. Cooldowns + bIsActive
+	// + every UPROPERTY-tagged field on USeinAbility subclasses round-trips
+	// through UObject::Serialize wrapped in the proxy archive. Free slots
+	// are written too so the free-list reconstructs exactly on restore.
+	OutSnapshot.AbilityPoolRecords.Reset(AbilityPool.Num());
+	for (int32 ID = 0; ID < AbilityPool.Num(); ++ID)
+	{
+		FSeinSnapshotPoolInstanceRecord Rec;
+		Rec.PoolID = ID;
+		USeinAbility* A = AbilityPool[ID].Get();
+		if (A)
+		{
+			Rec.bAlive = true;
+			Rec.ClassPath = A->GetClass()->GetPathName();
+			FMemoryWriter MemW(Rec.StateBytes, /*bIsPersistent*/ true);
+			FObjectAndNameAsStringProxyArchive Writer(MemW, /*bInLoadIfFindFails*/ false);
+			// CRITICAL: use SerializeTaggedProperties (UPROPERTY-only) instead
+			// of UObject::Serialize. Full Serialize writes the object's
+			// identity (Outer / Name / Class refs); deserializing those into
+			// a fresh NewObject corrupts the outer chain → GetWorld() returns
+			// null → BPs see "No world was found" → movement / nav / anything
+			// world-context-aware silently fails. SerializeTaggedProperties
+			// only round-trips UPROPERTY-tagged fields, leaving identity
+			// intact, which is exactly what we want for state-only snapshot.
+			UClass* Cls = A->GetClass();
+			Cls->SerializeTaggedProperties(Writer, reinterpret_cast<uint8*>(A), Cls, nullptr);
+		}
+		OutSnapshot.AbilityPoolRecords.Add(MoveTemp(Rec));
+	}
+
+	// ---- Resolver pool ---- (same shape, same SerializeTaggedProperties rationale)
+	OutSnapshot.ResolverPoolRecords.Reset(CommandBrokerResolverPool.Num());
+	for (int32 ID = 0; ID < CommandBrokerResolverPool.Num(); ++ID)
+	{
+		FSeinSnapshotPoolInstanceRecord Rec;
+		Rec.PoolID = ID;
+		USeinCommandBrokerResolver* R = CommandBrokerResolverPool[ID].Get();
+		if (R)
+		{
+			Rec.bAlive = true;
+			Rec.ClassPath = R->GetClass()->GetPathName();
+			FMemoryWriter MemW(Rec.StateBytes, /*bIsPersistent*/ true);
+			FObjectAndNameAsStringProxyArchive Writer(MemW, /*bInLoadIfFindFails*/ false);
+			UClass* Cls = R->GetClass();
+			Cls->SerializeTaggedProperties(Writer, reinterpret_cast<uint8*>(R), Cls, nullptr);
+		}
+		OutSnapshot.ResolverPoolRecords.Add(MoveTemp(Rec));
+	}
+
+	UE_LOG(LogSeinSim, Log,
+		TEXT("CaptureSnapshot: tick=%d  entities=%d  componentStorages=%d  playerStates=%d  abilityPool=%d  resolverPool=%d"),
+		OutSnapshot.CurrentTick, OutSnapshot.Entities.Num(),
+		OutSnapshot.ComponentStorageBlobs.Num(), OutSnapshot.PlayerStates.Num(),
+		OutSnapshot.AbilityPoolRecords.Num(), OutSnapshot.ResolverPoolRecords.Num());
+
+	// Let upstream modules (Framework: camera, UI; designer extensions) stamp
+	// their own snapshot slots. See header for cycle-avoidance rationale.
+	OnCaptureSnapshotPostSim.Broadcast(OutSnapshot);
+}
+
+bool USeinWorldSubsystem::RestoreSnapshot(const FSeinWorldSnapshot& InSnapshot)
+{
+	if (InSnapshot.SnapshotVersion != 1)
+	{
+		UE_LOG(LogSeinSim, Error, TEXT("RestoreSnapshot: unsupported version %d (expected 1)."), InSnapshot.SnapshotVersion);
+		return false;
+	}
+
+	if (bIsRunning) StopSimulation();
+
+	CurrentTick = InSnapshot.CurrentTick;
+	SimRandom.State0 = static_cast<uint64>(InSnapshot.PRNGState0);
+	SimRandom.State1 = static_cast<uint64>(InSnapshot.PRNGState1);
+
+	CurrentMatchSettings = InSnapshot.MatchSettings;
+	MatchState = static_cast<ESeinMatchState>(InSnapshot.MatchState);
+	MatchStartTick = InSnapshot.MatchStartTick;
+	StartingStateDeadlineTick = InSnapshot.StartingStateDeadlineTick;
+
+	PlayerStates = InSnapshot.PlayerStates;
+
+	// Wipe the actor-class map so reconcile spawns the right classes from
+	// the snapshot's ActorClassPath records (rebuilt below).
+	EntityActorClassMap.Reset();
+
+	{
+		int32 MaxSlot = 0;
+		TArray<int32> Indices;
+		TArray<int32> Gens;
+		TArray<FFixedTransform> Transforms;
+		TArray<FSeinPlayerID> Owners;
+		TArray<bool> Alives;
+		Indices.Reserve(InSnapshot.Entities.Num());
+		Gens.Reserve(InSnapshot.Entities.Num());
+		Transforms.Reserve(InSnapshot.Entities.Num());
+		Owners.Reserve(InSnapshot.Entities.Num());
+		Alives.Reserve(InSnapshot.Entities.Num());
+		for (const FSeinSnapshotEntityRecord& Rec : InSnapshot.Entities)
+		{
+			Indices.Add(Rec.SlotIndex);
+			Gens.Add(Rec.Generation);
+			Transforms.Add(Rec.Transform);
+			Owners.Add(Rec.Owner);
+			Alives.Add(Rec.bAlive);
+			MaxSlot = FMath::Max(MaxSlot, Rec.SlotIndex);
+
+			// Rebuild EntityActorClassMap so the bridge's reconcile pass
+			// (ReconcileBridgeAfterRestore, called below) can spawn the
+			// correct class for entities the world has no actor for.
+			if (!Rec.ActorClassPath.IsEmpty() && Rec.bAlive)
+			{
+				if (UClass* CRef = LoadClass<ASeinActor>(nullptr, *Rec.ActorClassPath))
+				{
+					const FSeinEntityHandle H(Rec.SlotIndex, Rec.Generation);
+					EntityActorClassMap.Add(H, TSubclassOf<ASeinActor>(CRef));
+				}
+			}
+		}
+		EntityPool.RebuildFromSnapshot(MaxSlot, Indices, Gens, Transforms, Owners, Alives);
+	}
+
+	for (const auto& Pair : InSnapshot.ComponentStorageBlobs)
+	{
+		const FString& StructPath = Pair.Key;
+		const FSeinSnapshotComponentStorageBlob& Blob = Pair.Value;
+
+		UScriptStruct* StructType = FindObject<UScriptStruct>(nullptr, *StructPath);
+		if (!StructType)
+		{
+			UE_LOG(LogSeinSim, Warning, TEXT("RestoreSnapshot: failed to resolve struct %s — skipping %d entries."),
+				*StructPath, Blob.EntryCount);
+			continue;
+		}
+
+		ISeinComponentStorage* Storage = GetOrCreateStorageForType(StructType);
+		if (!Storage)
+		{
+			UE_LOG(LogSeinSim, Warning, TEXT("RestoreSnapshot: no storage for %s — skipping."), *StructPath);
+			continue;
+		}
+		Storage->Grow(EntityPool.GetCapacity());
+
+		// Mirror Capture's proxy-archive wrap. bInLoadIfFindFails=true so
+		// referenced UObjects (typically class refs) resolve cleanly on load.
+		FMemoryReader MemReader(Blob.Bytes, /*bIsPersistent*/ true);
+		FObjectAndNameAsStringProxyArchive Reader(MemReader, /*bInLoadIfFindFails*/ true);
+		const int32 Read = Storage->SerializeFromArchive(Reader);
+		if (Read != Blob.EntryCount)
+		{
+			UE_LOG(LogSeinSim, Warning,
+				TEXT("RestoreSnapshot: storage %s entry-count mismatch (read %d, blob said %d)."),
+				*StructPath, Read, Blob.EntryCount);
+		}
+	}
+
+	// ---- Ability + resolver pool reconstruction ----
+	//
+	// Defensive: cancel every running latent action FIRST. The latent action
+	// manager holds raw refs into ability instances we're about to replace —
+	// if we leave those running, they'd act on stale pointers + drive abilities
+	// whose state we just clobbered. Latent-action serialization is a separate
+	// concern; for now any in-flight latent execution is dropped on restore.
+	if (LatentActionManager)
+	{
+		LatentActionManager->CancelAllActions();
+	}
+
+	// Wipe the existing pools. UPROPERTY arrays let GC reap the old instances
+	// once we drop them. Then rebuild slot-by-slot: NewObject by class, walk
+	// UObject::Serialize through the proxy archive to replay every UPROPERTY
+	// (including CooldownRemaining + bIsActive on USeinAbility), place at the
+	// original PoolID. Free slots stay null + go on the free list.
+	auto RestorePool = [this](auto& Pool, auto& FreeList, const TArray<FSeinSnapshotPoolInstanceRecord>& Records, const TCHAR* PoolName)
+	{
+		using TPtr = typename TRemoveReference<decltype(Pool)>::Type::ElementType;
+		using TObj = typename TPtr::ElementType;
+
+		Pool.Reset();
+		FreeList.Reset();
+		Pool.SetNum(Records.Num());
+
+		int32 Restored = 0;
+		int32 FreeSlots = 0;
+		for (const FSeinSnapshotPoolInstanceRecord& Rec : Records)
+		{
+			if (!Rec.bAlive)
+			{
+				Pool[Rec.PoolID] = nullptr;
+				FreeList.Add(Rec.PoolID);
+				++FreeSlots;
+				continue;
+			}
+			UClass* Cls = LoadClass<TObj>(nullptr, *Rec.ClassPath);
+			if (!Cls)
+			{
+				UE_LOG(LogSeinSim, Warning,
+					TEXT("RestoreSnapshot: failed to load %s class %s — slot %d will be empty."),
+					PoolName, *Rec.ClassPath, Rec.PoolID);
+				Pool[Rec.PoolID] = nullptr;
+				FreeList.Add(Rec.PoolID);
+				++FreeSlots;
+				continue;
+			}
+			TObj* Obj = NewObject<TObj>(this, Cls);
+			TArray<uint8> Mutable = Rec.StateBytes;
+			FMemoryReader MemR(Mutable, /*bIsPersistent*/ true);
+			FObjectAndNameAsStringProxyArchive Reader(MemR, /*bInLoadIfFindFails*/ true);
+			// Mirror Capture's SerializeTaggedProperties — UPROPERTY-only,
+			// preserves identity. See Capture for the full rationale.
+			Cls->SerializeTaggedProperties(Reader, reinterpret_cast<uint8*>(Obj), Cls, nullptr);
+			Pool[Rec.PoolID] = Obj;
+			++Restored;
+		}
+
+		UE_LOG(LogSeinSim, Log,
+			TEXT("RestoreSnapshot: %s pool restored — %d instances, %d free slots."),
+			PoolName, Restored, FreeSlots);
+	};
+
+	RestorePool(AbilityPool, AbilityPoolFreeList, InSnapshot.AbilityPoolRecords, TEXT("ability"));
+	RestorePool(CommandBrokerResolverPool, CommandBrokerResolverPoolFreeList, InSnapshot.ResolverPoolRecords, TEXT("resolver"));
+
+	// Re-bind the cached WorldSubsystem ref on each restored ability. The field
+	// is `UPROPERTY(Transient)` (correctly — it shouldn't be in the snapshot
+	// blob), but SerializeTaggedProperties skips Transient fields, so after
+	// restore the ref is null. Without this, USeinAbility::GetWorld() (which
+	// routes through the cached subsystem) returns null → BP nodes that need
+	// a world context fail with "No world was found for object". Rebind to
+	// `this` so the ability's world chain works again.
+	for (TObjectPtr<USeinAbility>& Slot : AbilityPool)
+	{
+		if (USeinAbility* A = Slot.Get())
+		{
+			A->WorldSubsystem = this;
+		}
+	}
+
+	// Post-restore: any ability whose bIsActive=true was captured mid-execution.
+	// Cooldowns are preserved (CooldownRemaining round-tripped via the tagged-
+	// property serialize), but the latent action that was driving the BP graph
+	// is gone (we CancelAllActions'd them above to avoid stale-pointer crashes
+	// — latent-action serialization is a follow-up phase). Force these
+	// abilities back to idle so the entity's next command activates them
+	// cleanly. ActiveAbilityID on the component remains valid; ProcessCommands
+	// just sees bIsActive=false and runs the normal activation path.
+	int32 NumWedgedReset = 0;
+	for (TObjectPtr<USeinAbility>& Slot : AbilityPool)
+	{
+		USeinAbility* A = Slot.Get();
+		if (A && A->bIsActive)
+		{
+			A->bIsActive = false;
+			++NumWedgedReset;
+		}
+	}
+	// Component-side ActiveAbilityID also needs clearing — otherwise the
+	// AbilityTickSystem's GetActiveAbility() lookup still returns a non-null
+	// ability (just one with bIsActive=false), which is benign but visually
+	// suggests "still active" to debug overlays. Walk every entity with an
+	// ability component and reset.
+	if (FSeinGenericComponentStorage* AbilityStorage = static_cast<FSeinGenericComponentStorage*>(
+		ComponentStorages.FindRef(FSeinAbilityData::StaticStruct())))
+	{
+		EntityPool.ForEachEntity([this, AbilityStorage](FSeinEntityHandle Handle, FSeinEntity& /*E*/)
+		{
+			if (FSeinAbilityData* Comp = static_cast<FSeinAbilityData*>(AbilityStorage->GetComponentRaw(Handle)))
+			{
+				Comp->ActiveAbilityID = INDEX_NONE;
+			}
+		});
+	}
+	if (NumWedgedReset > 0)
+	{
+		UE_LOG(LogSeinSim, Log,
+			TEXT("RestoreSnapshot: reset %d ability(ies) that were active at capture (latent action serialization is a follow-up — cooldowns preserved, mid-execution state cleared)."),
+			NumWedgedReset);
+	}
+
+	UE_LOG(LogSeinSim, Log,
+		TEXT("RestoreSnapshot: tick=%d  entities=%d  componentStorages=%d  playerStates=%d  abilityPool=%d  resolverPool=%d"),
+		CurrentTick, InSnapshot.Entities.Num(),
+		InSnapshot.ComponentStorageBlobs.Num(), PlayerStates.Num(),
+		AbilityPool.Num(), CommandBrokerResolverPool.Num());
+
+	// Reconcile the actor bridge against the new sim state — cull orphaned
+	// actors (entities that no longer exist) + spawn missing actors (entities
+	// the snapshot has but the world doesn't). Bridge knows which class to
+	// spawn from the EntityActorClassMap entries we rehydrated above.
+	if (UWorld* W = GetWorld())
+	{
+		if (USeinActorBridgeSubsystem* Bridge = W->GetSubsystem<USeinActorBridgeSubsystem>())
+		{
+			Bridge->ReconcileBridgeAfterRestore();
+		}
+	}
+
+	// Auto-restart the sim. Without this the actor bridge never sees the
+	// new transforms — HandleSimTick (sim → render transform sync) is only
+	// fired by the ticker, which StopSimulation (above) tore down. Once
+	// the sim resumes, the very next tick fires the sync and every render
+	// actor snaps to its restored sim transform.
+	StartSimulation();
+
+	// Let upstream modules consume their own slots (camera, UI). Fired
+	// after the sim is fully live + bridge reconciled, so the restore
+	// handlers can read a coherent world.
+	OnRestoreSnapshotPostSim.Broadcast(InSnapshot);
+
+	return true;
+}
+
+void USeinWorldSubsystem::RegisterFactionsFromSettings()
+{
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	if (!Settings) return;
+
+	int32 NumLoaded = 0;
+	int32 NumSkipped = 0;
+	for (const TSoftObjectPtr<USeinFaction>& SoftRef : Settings->RegisteredFactions)
+	{
+		if (SoftRef.IsNull())
+		{
+			++NumSkipped;
+			continue;
+		}
+		// LoadSynchronous because we need the asset before any RegisterPlayer
+		// looks it up. Settings-driven enumeration runs once per world init,
+		// not per-tick, so the sync load is fine.
+		USeinFaction* Faction = SoftRef.LoadSynchronous();
+		if (!Faction)
+		{
+			UE_LOG(LogSeinSim, Warning,
+				TEXT("RegisterFactionsFromSettings: failed to load %s — skipping. Asset moved or deleted?"),
+				*SoftRef.ToString());
+			++NumSkipped;
+			continue;
+		}
+		if (!Faction->FactionID.IsValid())
+		{
+			UE_LOG(LogSeinSim, Warning,
+				TEXT("RegisterFactionsFromSettings: %s has invalid FactionID (=0). Set a non-zero FactionID on the data asset."),
+				*Faction->FactionName.ToString());
+			++NumSkipped;
+			continue;
+		}
+		RegisterFaction(Faction);
+		++NumLoaded;
+	}
+
+	UE_LOG(LogSeinSim, Log,
+		TEXT("RegisterFactionsFromSettings: registered %d faction(s) from settings (%d skipped)."),
+		NumLoaded, NumSkipped);
 }
 
 // ==================== Tags ====================
@@ -2486,18 +3035,24 @@ void USeinWorldSubsystem::InitializeEntityAbilities(FSeinEntityHandle Handle)
 
 		USeinAbility* AbilityInstance = NewObject<USeinAbility>(this, AbilityClass);
 		AbilityInstance->InitializeAbility(Handle, this);
-		AbilityComp->AbilityInstances.Add(AbilityInstance);
 
-		UE_LOG(LogSeinSim, Verbose, TEXT("Entity %s: granted ability %s [tag=%s passive=%d]"),
+		// Phase 4 architecture: register in the world's ability pool, store
+		// the int32 ID on the component (deterministic + snapshot-portable),
+		// not a TObjectPtr ref.
+		const int32 AbilityID = RegisterAbilityInstance(AbilityInstance);
+		AbilityComp->AbilityInstanceIDs.Add(AbilityID);
+
+		UE_LOG(LogSeinSim, Verbose, TEXT("Entity %s: granted ability %s [tag=%s passive=%d id=%d]"),
 			*Handle.ToString(),
 			*AbilityClass->GetName(),
 			*AbilityInstance->AbilityTag.ToString(),
-			AbilityInstance->bIsPassive ? 1 : 0);
+			AbilityInstance->bIsPassive ? 1 : 0,
+			AbilityID);
 
 		if (AbilityInstance->bIsPassive)
 		{
 			AbilityInstance->ActivateAbility(Handle, FFixedVector::ZeroVector);
-			AbilityComp->ActivePassives.Add(AbilityInstance);
+			AbilityComp->ActivePassiveIDs.Add(AbilityID);
 		}
 	}
 }
@@ -2639,7 +3194,10 @@ FSeinEntityHandle USeinWorldSubsystem::CreateBrokerForMembers(
 	{
 		ResolverClass = USeinDefaultCommandBrokerResolver::StaticClass();
 	}
-	BrokerData.Resolver = NewObject<USeinCommandBrokerResolver>(this, ResolverClass);
+	// Phase 4 architecture: resolver is registered in the world's resolver
+	// pool; component stores the int32 ID, not a TObjectPtr.
+	USeinCommandBrokerResolver* ResolverInstance = NewObject<USeinCommandBrokerResolver>(this, ResolverClass);
+	BrokerData.ResolverID = RegisterCommandBrokerResolver(ResolverInstance);
 
 	AddComponent(BrokerHandle, BrokerData);
 
@@ -2992,11 +3550,12 @@ void USeinWorldSubsystem::TickAIControllers(FFixedPoint DeltaTime)
 	// PlayerID.Value pins tick order network-wide. If two controllers somehow share
 	// a PlayerID, we fall back to pointer-index stability — indeterminate but rare
 	// (would be a misconfiguration; log as warning).
-	Snapshot.StableSort([](const TObjectPtr<USeinAIController>& A, const TObjectPtr<USeinAIController>& B)
+	// UE 5.7 quirk: TArray<TObjectPtr<>>::StableSort dereferences via
+	// TDereferenceWrapper before invoking the lambda, so the lambda's params
+	// must be raw `T*` (not `const TObjectPtr<T>&`).
+	Snapshot.StableSort([](const USeinAIController& A, const USeinAIController& B)
 	{
-		if (!A) return false;
-		if (!B) return true;
-		return A->OwnedPlayerID < B->OwnedPlayerID;
+		return A.OwnedPlayerID < B.OwnedPlayerID;
 	});
 
 	for (const TObjectPtr<USeinAIController>& Ctrl : Snapshot)
