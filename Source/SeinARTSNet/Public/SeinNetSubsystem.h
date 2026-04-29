@@ -34,6 +34,7 @@ class AGameModeBase;
 class AController;
 class USeinReplayWriter;
 class USeinReplayReader;
+class USeinAIController;
 struct FSeinSlotHashEntry;
 
 /**
@@ -370,10 +371,51 @@ private:
 	 *  transition after `DroppedToAITakeoverSeconds` of continuous drop. */
 	TMap<FSeinPlayerID, double> SlotDroppedAtTime;
 
-	/** Server-only: how long a slot can stay Dropped before transitioning to
-	 *  AI takeover (per match settings' `ESeinHostDropAction::AITakeover`).
-	 *  Static const for now — future: read from match settings. */
-	static constexpr double DroppedToAITakeoverSeconds = 30.0;
+	/** Server-side: AI-emitted commands buffered until the next turn boundary,
+	 *  keyed by the AI's owned slot. Populated by the AIEmitInterceptor
+	 *  delegate (bound on USeinWorldSubsystem in NotifyLocalSlotAssigned) and
+	 *  drained by InjectDroppedSlotHeartbeats when assembling the outgoing
+	 *  turn — replaces the empty heartbeat for slots whose AI emitted this
+	 *  tick. Without this, AI commands would call EnqueueCommand directly on
+	 *  the host's sim and immediately desync from every client.
+	 *
+	 *  Cleared per-slot in TeardownAIForSlot (reconnect) and across-the-board
+	 *  in Deinitialize. */
+	TMap<FSeinPlayerID, TArray<FSeinCommand>> PendingAICommands;
+
+	/** Interceptor body bound to USeinWorldSubsystem::AIEmitInterceptor. Returns
+	 *  true iff the command was routed onto the lockstep wire (server +
+	 *  networking active); false signals the AI controller should fall back
+	 *  to direct local enqueue. */
+	bool HandleAIEmit(FSeinPlayerID OwnedSlot, const FSeinCommand& Command);
+
+	/** Server-side: per-slot AI controller instantiated on the
+	 *  `Dropped → AITakeover` transition (when SlotDropPolicy is BasicAI).
+	 *  Tracked here so reconnect can find + unregister the controller — the
+	 *  WorldSubsystem holds a TObjectPtr to it for ticking, but we own the
+	 *  per-slot lookup back. Empty map outside of an active dropped session.
+	 *
+	 *  Strong UPROPERTY ref so the controller stays alive even if the
+	 *  WorldSubsystem's tracking array is briefly empty during edge cases
+	 *  (subsystem shutdown ordering, level transitions). */
+	UPROPERTY()
+	TMap<FSeinPlayerID, TObjectPtr<USeinAIController>> AITakeoverControllers;
+
+	/** Server-side helper: read DroppedToAITakeoverSeconds from plugin
+	 *  settings with a sane fallback if settings aren't yet available. */
+	double GetDroppedToAITakeoverSeconds() const;
+
+	/** Server-side: instantiate + register the configured AI controller for
+	 *  `Slot` on its Dropped → AITakeover transition. No-op if SlotDropPolicy
+	 *  isn't BasicAI, or if a controller is already tracked for `Slot`.
+	 *  Resolves `DefaultAIControllerClass` from settings (falls back to
+	 *  USeinNullAIController if empty / failed to load). */
+	void TryAutoRegisterAIForSlot(FSeinPlayerID Slot);
+
+	/** Server-side: unregister + null any AI controller previously installed
+	 *  for `Slot`. Called on reconnect (AITakeover → Connected). Safe to
+	 *  call when no controller is tracked. */
+	void TeardownAIForSlot(FSeinPlayerID Slot);
 
 	/** Server-side: per-Dropped-slot heartbeat injection — called from
 	 *  OnSimTickCompleted. For each slot in Dropped state, submit an empty

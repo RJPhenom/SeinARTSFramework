@@ -22,6 +22,37 @@
 
 class USeinCommandBrokerResolver;
 class USeinFaction;
+class USeinAIController;
+
+/**
+ * What happens when a player disconnects mid-match and the slot's grace
+ * period expires (`DroppedToAITakeoverSeconds`). Per-project policy: an
+ * RTS demanding match completion picks `BasicAI`, a competitive ladder
+ * map could pick `RemovePlayer` for forfeits, a casual coop project could
+ * pick `KeepUnitsAlive` to leave the dropped player's units idle until
+ * teammates can shepherd them.
+ *
+ *   KeepUnitsAlive — flip lifecycle to AITakeover, no AI registered.
+ *                    Units sit idle (no commands issued on the slot's behalf
+ *                    beyond the framework's empty heartbeats). Closest to
+ *                    pre-Phase-4 behavior.
+ *   BasicAI        — instantiate `DefaultAIControllerClass`, register it
+ *                    with the sim. Default; framework ships
+ *                    `USeinNullAIController` as a no-op fallback so the
+ *                    pipeline is exercised even before designers author
+ *                    their own AI subclass.
+ *   RemovePlayer   — (RESERVED — not yet implemented) destroy the slot's
+ *                    units on AI-takeover transition. Forfeit semantics.
+ *                    Currently behaves as `KeepUnitsAlive` until the unit-
+ *                    teardown path lands.
+ */
+UENUM(BlueprintType)
+enum class ESeinSlotDropPolicy : uint8
+{
+	KeepUnitsAlive UMETA(DisplayName = "Keep Units Alive (no AI)"),
+	BasicAI        UMETA(DisplayName = "Auto-Spawn Default AI Controller"),
+	RemovePlayer   UMETA(DisplayName = "Remove Player on Drop (forfeit) [RESERVED]"),
+};
 
 /**
  * Global settings for SeinARTS.
@@ -261,6 +292,56 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category = "Network", meta = (ClampMin = "1", ClampMax = "300", UIMin = "1", UIMax = "60", EditCondition = "bDeterminismChecksEnabled"))
 	int32 DeterminismCheckIntervalTurns;
+
+	// Drop-in / drop-out policy (Phase 4)
+	// ----------------------------------------------------------------------------------------------------
+
+	/**
+	 * What the server does when a player disconnects mid-match and the
+	 * `DroppedToAITakeoverSeconds` grace period expires. See `ESeinSlotDropPolicy`
+	 * for the per-mode semantics.
+	 *
+	 * Default: `BasicAI` — auto-spawn `DefaultAIControllerClass` and register
+	 * it with the sim. Framework ships `USeinNullAIController` as a no-op
+	 * fallback if no project-specific AI is configured, so the pipeline is
+	 * exercised end-to-end even before designers author real strategic AI.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network",
+		meta = (DisplayName = "Slot Drop Policy"))
+	ESeinSlotDropPolicy SlotDropPolicy;
+
+	/**
+	 * AI controller class instantiated for a slot on the `Dropped → AITakeover`
+	 * transition when `SlotDropPolicy == BasicAI`. Filtered to `USeinAIController`
+	 * subclasses. Empty path falls back to the framework-shipped
+	 * `USeinNullAIController` (no-op idle controller — the slot's units stand
+	 * still but the registration pipeline is exercised, useful for shaking
+	 * out wiring before authoring real AI).
+	 *
+	 * Soft path because game projects ship their AI in their own module; this
+	 * settings module deliberately doesn't depend on game code.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network",
+		meta = (DisplayName = "Default AI Controller Class",
+				MetaClass = "/Script/SeinARTSCoreEntity.SeinAIController",
+				EditCondition = "SlotDropPolicy == ESeinSlotDropPolicy::BasicAI"))
+	FSoftClassPath DefaultAIControllerClass;
+
+	/**
+	 * Seconds a slot can stay in `Dropped` state before the server transitions
+	 * it to `AITakeover` (per `SlotDropPolicy`). The grace period exists for
+	 * brief network blips — a stutter under this threshold lets the player's
+	 * relay resume submitting without ever flipping to AI.
+	 *
+	 * Set to 0 for instant AI takeover (useful for testing); higher values give
+	 * more reconnect leeway. While the slot is `Dropped` the server is already
+	 * injecting empty heartbeats so the lockstep gate doesn't stall, so this
+	 * value is purely "how long do we hope the human comes back."
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Network",
+		meta = (DisplayName = "Dropped → AI Takeover Seconds",
+				ClampMin = "0.0", UIMin = "0.0", UIMax = "120.0"))
+	double DroppedToAITakeoverSeconds;
 
 	/**
 	 * DEBUG ONLY. When nonzero, USeinNetSubsystem uses this exact value as

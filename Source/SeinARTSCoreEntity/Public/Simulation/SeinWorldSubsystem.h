@@ -125,6 +125,23 @@ DECLARE_DELEGATE_RetVal_OneParam(bool, FSeinTurnReadyResolver, int32 /*Turn*/);
 DECLARE_DELEGATE_OneParam(FSeinTurnConsumeNotifier, int32 /*Turn*/);
 
 /**
+ * Lockstep-routing interceptor for `USeinAIController::EmitCommand`.
+ * Bound by `USeinNetSubsystem` on the server when networking is active so
+ * AI-emitted commands cross the lockstep wire (every peer applies them in
+ * the same per-turn order) instead of bypassing the network and only
+ * landing in the host's local sim — which would desync immediately.
+ *
+ * Return `true` to indicate the interceptor handled the command (it's been
+ * routed onto the lockstep wire); the AI controller's fallback path skips
+ * its own direct enqueue. Return `false` (or leave unbound) to fall through
+ * to the legacy direct-enqueue behavior, which is correct for Standalone
+ * (no network, no other peers to sync with) and for projects that disable
+ * networking in plugin settings.
+ */
+DECLARE_DELEGATE_RetVal_TwoParams(bool, FSeinAIEmitInterceptor,
+	FSeinPlayerID /*OwnedSlot*/, const FSeinCommand& /*Command*/);
+
+/**
  * World subsystem that owns and ticks the deterministic simulation.
  * Manages entity pool, component storage, phase-based tick loop,
  * player states, command processing, and visual event dispatch.
@@ -292,6 +309,14 @@ public:
 	 *  (Standalone or networking disabled). */
 	FSeinTurnReadyResolver     TurnReadyResolver;
 	FSeinTurnConsumeNotifier   TurnConsumeNotifier;
+
+	/** Lockstep-routing interceptor for `USeinAIController::EmitCommand`.
+	 *  Bound by `USeinNetSubsystem` on the server when networking is active.
+	 *  Routes the command onto the per-turn wire so every peer sees it in
+	 *  lockstep order — without this, AI-emitted commands would only run on
+	 *  the host's sim and immediately desync from clients on the next state
+	 *  hash check. Unbound = direct local enqueue (correct for Standalone). */
+	FSeinAIEmitInterceptor     AIEmitInterceptor;
 
 	// ========== Entity Management ==========
 

@@ -127,6 +127,11 @@ nav:
       - Snapshots:
           - Overview: systems/snapshots/index.md
           - Custom Camera Provider: systems/snapshots/custom-camera.md
+      - Command Brokers:
+          - Overview: systems/command-brokers/index.md
+          - Default Resolver: systems/command-brokers/default-resolver.md
+          - Order Lifecycle: systems/command-brokers/order-lifecycle.md
+          - Custom Resolvers: systems/command-brokers/custom.md
   - Guides:
       - Building UI with the Toolkit: guides/ui-toolkit.md
       - Creating a Unit Info Panel: guides/unit-info-panel.md

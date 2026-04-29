@@ -10,6 +10,9 @@
 #include "SeinReplayReader.h"
 #include "Settings/PluginSettings.h"
 #include "Simulation/SeinWorldSubsystem.h"
+#include "AI/SeinAIController.h"
+#include "AI/SeinNullAIController.h"
+#include "UObject/SoftObjectPath.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -60,13 +63,28 @@ void USeinNetSubsystem::Deinitialize()
 		{
 			WorldSub->TurnReadyResolver.Unbind();
 			WorldSub->TurnConsumeNotifier.Unbind();
+			WorldSub->AIEmitInterceptor.Unbind();
 			if (TickCompletedHandle.IsValid())
 			{
 				WorldSub->OnSimTickCompleted.Remove(TickCompletedHandle);
 			}
+
+			// Unregister any AI controllers we auto-spawned for AITakeover
+			// slots so the WorldSubsystem doesn't hold dangling refs after
+			// session teardown. The strong UPROPERTY on AITakeoverControllers
+			// keeps them alive long enough to call Unregister cleanly.
+			for (auto& Pair : AITakeoverControllers)
+			{
+				if (USeinAIController* C = Pair.Value.Get())
+				{
+					WorldSub->UnregisterAIController(C);
+				}
+			}
 		}
 	}
 	TickCompletedHandle.Reset();
+	AITakeoverControllers.Reset();
+	PendingAICommands.Reset();
 
 	Relays.Reset();
 	LocalRelay.Reset();
@@ -253,8 +271,17 @@ void USeinNetSubsystem::ServerSpawnRelayForController(APlayerController* PC, FSe
 
 	// Drop-in/drop-out: mark this slot Connected. If it was previously
 	// Dropped (a reconnect), this also clears the heartbeat-injection.
+	// If it was AITakeover (reconnect after the grace period elapsed and
+	// the framework auto-spawned an AI), tear down the AI so it doesn't
+	// fight the now-live human player for command authorship.
+	const ESeinSlotLifecycle* Prior = SlotLifecycle.Find(Slot);
+	const bool bWasAITakeover = Prior && *Prior == ESeinSlotLifecycle::AITakeover;
 	SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Connected);
 	SlotDroppedAtTime.Remove(Slot);
+	if (bWasAITakeover)
+	{
+		TeardownAIForSlot(Slot);
+	}
 
 	Relay->FinishSpawning(FTransform::Identity);
 
@@ -321,7 +348,7 @@ void USeinNetSubsystem::OnLogout(AGameModeBase* GameMode, AController* Exiting)
 
 		UE_LOG(LogSeinNet, Log,
 			TEXT("OnLogout: slot %u marked DROPPED (owner=%s left). Server will inject heartbeats; AI takeover scheduled in %.1fs."),
-			Slot.Value, *GetNameSafe(Exiting), DroppedToAITakeoverSeconds);
+			Slot.Value, *GetNameSafe(Exiting), GetDroppedToAITakeoverSeconds());
 	}
 
 	// Re-check open turns — the just-dropped slot might be the one we were
@@ -423,6 +450,18 @@ void USeinNetSubsystem::NotifyLocalSlotAssigned(ASeinNetRelay* Relay, FSeinPlaye
 		{
 			Self->ConsumeTurn(Turn);
 		}
+	});
+
+	// AI emit interceptor — routes USeinAIController::EmitCommand through
+	// the lockstep wire instead of the host's local sim, so AI commands
+	// are deterministically applied on every peer. Returns false outside
+	// active networked sessions so AI falls back to direct enqueue
+	// (correct for Standalone). DESIGN §16: AI runs on the host only;
+	// the lockstep wire is what makes the COMMANDS shared.
+	WorldSub->AIEmitInterceptor.BindLambda([WeakSelf](FSeinPlayerID Slot, const FSeinCommand& Cmd) -> bool
+	{
+		USeinNetSubsystem* Self = WeakSelf.Get();
+		return Self ? Self->HandleAIEmit(Slot, Cmd) : false;
 	});
 
 	if (!TickCompletedHandle.IsValid())
@@ -863,7 +902,6 @@ void USeinNetSubsystem::InjectDroppedSlotHeartbeats(int32 Turn)
 	if (CompletedTurns.Contains(Turn)) return;
 
 	TMap<FSeinPlayerID, TArray<FSeinCommand>>& BufferForTurn = ServerTurnBuffer.FindOrAdd(Turn);
-	const TArray<FSeinCommand> Empty;
 
 	for (const auto& Pair : SlotLifecycle)
 	{
@@ -876,12 +914,55 @@ void USeinNetSubsystem::InjectDroppedSlotHeartbeats(int32 Turn)
 
 		if (!Slot.IsValid()) continue;
 		if (BufferForTurn.Contains(Slot)) continue; // already submitted (race)
-		BufferForTurn.Add(Slot, Empty);
 
-		UE_LOG(LogSeinNet, Verbose,
-			TEXT("[Server] injected heartbeat on behalf of dropped/AI slot=%u for turn=%d"),
-			Slot.Value, Turn);
+		// Drain any AI-emitted commands buffered for this slot since the
+		// last turn boundary. If empty, this is a true heartbeat (no
+		// commands this turn). Either way the slot's submission is now
+		// complete for `Turn`, so the gate can finalize.
+		TArray<FSeinCommand>* Pending = PendingAICommands.Find(Slot);
+		if (Pending && Pending->Num() > 0)
+		{
+			BufferForTurn.Add(Slot, MoveTemp(*Pending));
+			Pending->Reset();
+
+			UE_LOG(LogSeinNet, Verbose,
+				TEXT("[Server] drained %d AI-emitted command(s) for slot=%u into turn=%d"),
+				BufferForTurn[Slot].Num(), Slot.Value, Turn);
+		}
+		else
+		{
+			BufferForTurn.Add(Slot, TArray<FSeinCommand>());
+			UE_LOG(LogSeinNet, Verbose,
+				TEXT("[Server] injected heartbeat on behalf of dropped/AI slot=%u for turn=%d"),
+				Slot.Value, Turn);
+		}
 	}
+}
+
+bool USeinNetSubsystem::HandleAIEmit(FSeinPlayerID OwnedSlot, const FSeinCommand& Command)
+{
+	// Standalone / networking disabled: return false so the AI controller
+	// falls back to direct local enqueue. There are no other peers to keep
+	// in sync, so the lockstep wire isn't needed.
+	if (!IsServer() || !IsNetworkingActive()) return false;
+
+	if (!OwnedSlot.IsValid())
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("HandleAIEmit: AI controller emitted with invalid OwnedPlayerID — dropping command."));
+		return true; // we still claim ownership of the routing decision
+	}
+
+	// Buffer until the next turn boundary, where InjectDroppedSlotHeartbeats
+	// drains us into the OutgoingTurn buffer slot for this player. Stamping
+	// the turn here would race with what the heartbeat injector picks; we
+	// let the injector own the turn assignment so AI commands land in the
+	// same turn slot a heartbeat would have.
+	PendingAICommands.FindOrAdd(OwnedSlot).Add(Command);
+	UE_LOG(LogSeinNet, Verbose,
+		TEXT("[Server] AI emit buffered: slot=%u  (pending=%d)"),
+		OwnedSlot.Value, PendingAICommands[OwnedSlot].Num());
+	return true;
 }
 
 void USeinNetSubsystem::EvaluateDroppedSlots()
@@ -903,19 +984,148 @@ void USeinNetSubsystem::EvaluateDroppedSlots()
 		}
 
 		const double Elapsed = NowSec - DroppedAt;
-		if (Elapsed < DroppedToAITakeoverSeconds) continue;
+		if (Elapsed < GetDroppedToAITakeoverSeconds()) continue;
 
-		// Transition: Dropped → AITakeover. Designer's AI controller is
-		// expected to claim the slot via USeinWorldSubsystem::RegisterAIController
-		// (DESIGN §16). The framework just flips the lifecycle bit + keeps
-		// injecting heartbeats; the actual sim-side AI behavior is the
-		// designer's responsibility.
+		// Transition: Dropped → AITakeover. The framework flips the lifecycle
+		// bit (server keeps injecting heartbeats so the gate doesn't stall)
+		// and — when SlotDropPolicy is BasicAI — auto-instantiates the
+		// configured AI controller class + registers it with the sim. Per
+		// DESIGN §16 the AI internal reasoning runs on the host only; only
+		// emitted commands cross the lockstep boundary.
 		*StatusPtr = ESeinSlotLifecycle::AITakeover;
 		UE_LOG(LogSeinNet, Warning,
-			TEXT("[Drop] slot=%u transition Dropped → AITakeover (was dropped %.1fs). Designer AI controller should claim now."),
+			TEXT("[Drop] slot=%u transition Dropped → AITakeover (was dropped %.1fs)."),
 			Slot.Value, Elapsed);
+
+		TryAutoRegisterAIForSlot(Slot);
 		It.RemoveCurrent();
 	}
+}
+
+double USeinNetSubsystem::GetDroppedToAITakeoverSeconds() const
+{
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	return Settings ? Settings->DroppedToAITakeoverSeconds : 30.0;
+}
+
+void USeinNetSubsystem::TryAutoRegisterAIForSlot(FSeinPlayerID Slot)
+{
+	if (!IsServer() || !Slot.IsValid()) return;
+
+	const USeinARTSCoreSettings* Settings = GetDefault<USeinARTSCoreSettings>();
+	if (!Settings) return;
+
+	// Policy gate. KeepUnitsAlive: just leave the slot in AITakeover — units
+	// idle, no AI registered, the framework's empty-heartbeat injection
+	// keeps the gate green. RemovePlayer: forfeit semantics — currently
+	// behaves identically to KeepUnitsAlive at the AI layer (the unit-
+	// teardown path is reserved for a follow-up; doing the destroy here
+	// cleanly requires walking the slot's entities and we want that gated
+	// on a deliberate API rather than a side effect of disconnect).
+	if (Settings->SlotDropPolicy != ESeinSlotDropPolicy::BasicAI)
+	{
+		UE_LOG(LogSeinNet, Log,
+			TEXT("[Drop] slot=%u AITakeover: SlotDropPolicy=%d, no AI auto-spawn."),
+			Slot.Value, (int32)Settings->SlotDropPolicy);
+		return;
+	}
+
+	// Already have a controller for this slot? (Edge case: simulate-disconnect
+	// fired twice without reconnect in between.) Don't double-register.
+	if (AITakeoverControllers.Contains(Slot))
+	{
+		UE_LOG(LogSeinNet, Verbose,
+			TEXT("[Drop] slot=%u already has an AI controller registered; skipping re-register."),
+			Slot.Value);
+		return;
+	}
+
+	// Resolve the configured class. Empty path or failed load → fall back to
+	// the framework-shipped null controller. Both branches log; designers
+	// see in the log what class actually got picked.
+	UClass* AIClass = nullptr;
+	if (!Settings->DefaultAIControllerClass.IsNull())
+	{
+		AIClass = Settings->DefaultAIControllerClass.TryLoadClass<USeinAIController>();
+		if (!AIClass)
+		{
+			UE_LOG(LogSeinNet, Warning,
+				TEXT("[Drop] slot=%u DefaultAIControllerClass='%s' failed to load — falling back to USeinNullAIController."),
+				Slot.Value, *Settings->DefaultAIControllerClass.ToString());
+		}
+	}
+	if (!AIClass)
+	{
+		AIClass = USeinNullAIController::StaticClass();
+	}
+
+	// Need the world subsystem to register against.
+	UWorld* World = GetWorld();
+	USeinWorldSubsystem* WorldSub = World ? World->GetSubsystem<USeinWorldSubsystem>() : nullptr;
+	if (!WorldSub)
+	{
+		UE_LOG(LogSeinNet, Warning,
+			TEXT("[Drop] slot=%u AITakeover: no USeinWorldSubsystem — skipping AI auto-register."),
+			Slot.Value);
+		return;
+	}
+
+	// Outer the controller on the world subsystem so its lifetime is bound
+	// to the same scope the registration array uses (matches how the
+	// resolver pool entries are outered). NewObject also fires PostInit /
+	// any UCLASS-level cdo-init the subclass needs.
+	USeinAIController* Controller = NewObject<USeinAIController>(WorldSub, AIClass);
+	if (!Controller)
+	{
+		UE_LOG(LogSeinNet, Error,
+			TEXT("[Drop] slot=%u failed to NewObject<USeinAIController> from class %s."),
+			Slot.Value, *GetNameSafe(AIClass));
+		return;
+	}
+
+	WorldSub->RegisterAIController(Controller, Slot);
+	AITakeoverControllers.Add(Slot, Controller);
+
+	UE_LOG(LogSeinNet, Log,
+		TEXT("[Drop] slot=%u registered AI controller %s (class=%s)."),
+		Slot.Value, *GetNameSafe(Controller), *GetNameSafe(AIClass));
+}
+
+void USeinNetSubsystem::TeardownAIForSlot(FSeinPlayerID Slot)
+{
+	if (!IsServer() || !Slot.IsValid()) return;
+
+	TObjectPtr<USeinAIController>* Found = AITakeoverControllers.Find(Slot);
+	if (!Found) return;
+
+	USeinAIController* Controller = Found->Get();
+	if (Controller)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (USeinWorldSubsystem* WorldSub = World->GetSubsystem<USeinWorldSubsystem>())
+			{
+				WorldSub->UnregisterAIController(Controller);
+			}
+		}
+		// MarkAsGarbage isn't strictly required — losing the strong ref via
+		// the map removal below makes it eligible — but it makes the
+		// teardown intent explicit + lets GC reclaim sooner if there's no
+		// other refholder lingering on a designer subclass.
+		Controller->MarkAsGarbage();
+	}
+
+	AITakeoverControllers.Remove(Slot);
+
+	// Drop any AI-emitted commands buffered for this slot but not yet drained
+	// into a turn — once the human reclaims the slot, the lockstep wire will
+	// carry their submissions, and stale AI commands surfacing one tick later
+	// would silently overwrite their first input.
+	PendingAICommands.Remove(Slot);
+
+	UE_LOG(LogSeinNet, Log,
+		TEXT("[Drop] slot=%u AI controller torn down (slot reconnected or session ended)."),
+		Slot.Value);
 }
 
 void USeinNetSubsystem::SimulateSlotDisconnect(FSeinPlayerID Slot)
@@ -932,7 +1142,7 @@ void USeinNetSubsystem::SimulateSlotDisconnect(FSeinPlayerID Slot)
 
 	UE_LOG(LogSeinNet, Warning,
 		TEXT("[Drop] SimulateSlotDisconnect: slot %u marked DROPPED. Heartbeat injection active; AI takeover scheduled in %.1fs."),
-		Slot.Value, DroppedToAITakeoverSeconds);
+		Slot.Value, GetDroppedToAITakeoverSeconds());
 
 	// Inject heartbeats for any open turns so the gate doesn't stall.
 	if (!ServerTurnBuffer.IsEmpty())
@@ -965,8 +1175,13 @@ void USeinNetSubsystem::SimulateSlotReconnect(FSeinPlayerID Slot)
 		return;
 	}
 
+	const bool bWasAITakeover = (*Prev == ESeinSlotLifecycle::AITakeover);
 	SlotLifecycle.Add(Slot, ESeinSlotLifecycle::Connected);
 	SlotDroppedAtTime.Remove(Slot);
+	if (bWasAITakeover)
+	{
+		TeardownAIForSlot(Slot);
+	}
 
 	UE_LOG(LogSeinNet, Log,
 		TEXT("[Drop] SimulateSlotReconnect: slot %u back to CONNECTED. NOTE: full snapshot+tail catch-up is a follow-up phase — slot resumes from current sim state, not from where it disconnected."),

@@ -37,6 +37,15 @@ USeinARTSCoreSettings::USeinARTSCoreSettings()
 	, RelayActorClass(FSoftClassPath(TEXT("/Script/SeinARTSNet.SeinNetRelay")))
 	, bDeterminismChecksEnabled(true)
 	, DeterminismCheckIntervalTurns(10)
+	// Drop-in/drop-out: BasicAI policy + 30s grace period default. Ships
+	// `USeinNullAIController` as the framework no-op fallback so the
+	// auto-spawn path is exercised end-to-end even before designers wire
+	// their own AI subclass — same "minimal reference impl" pattern as the
+	// shipped A* nav and default fog. Soft-class-path string because this
+	// module deliberately can't reach into project code.
+	, SlotDropPolicy(ESeinSlotDropPolicy::BasicAI)
+	, DefaultAIControllerClass(FSoftClassPath(TEXT("/Script/SeinARTSCoreEntity.SeinNullAIController")))
+	, DroppedToAITakeoverSeconds(30.0)
 	, DebugFixedSessionSeed(0)
 	, FogOfWarClass(FSoftClassPath(TEXT("/Script/SeinARTSFogOfWar.SeinFogOfWarDefault")))
 	, VisionCellSize(FFixedPoint::FromInt(100))
